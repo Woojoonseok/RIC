@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Align Tree Editor</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <div>
+          <h1>Align Tree Editor</h1>
+          <p id="projectMeta">No project loaded</p>
+        </div>
+        <nav class="tabs" aria-label="Views">
+          <button class="tab active" data-view="home">Home</button>
+          <button class="tab" data-view="import">Import</button>
+          <button class="tab" data-view="editor">Editor</button>
+          <button class="tab" data-view="export">Export</button>
+        </nav>
+      </header>
+
+      <main>
+        <section id="home" class="view active">
+          <div class="home-grid">
+            <section class="panel">
+              <h2>Project</h2>
+              <div class="row">
+                <input id="projectName" type="text" placeholder="Project name" />
+                <button id="createProject">New</button>
+              </div>
+              <div class="row">
+                <button id="loadSample">Load Sample</button>
+                <button id="downloadTemplate">Excel Template</button>
+              </div>
+            </section>
+            <section class="panel">
+              <h2>Recent Projects</h2>
+              <div id="projectList" class="list empty">No projects yet.</div>
+            </section>
+          </div>
+        </section>
+
+        <section id="import" class="view">
+          <div class="split">
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Align Input</h2>
+                <div class="button-strip">
+                  <button data-add-row="align">Add Row</button>
+                  <button data-upload-target="align">Excel Upload</button>
+                  <button data-paste-target="align">Clipboard Paste</button>
+                </div>
+              </div>
+              <div id="alignTable" class="grid-table"></div>
+            </section>
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Layer Relation</h2>
+                <div class="button-strip">
+                  <button data-add-row="relation">Add Row</button>
+                  <button data-upload-target="relation">Excel Upload</button>
+                  <button data-paste-target="relation">Clipboard Paste</button>
+                </div>
+              </div>
+              <div id="relationTable" class="grid-table"></div>
+            </section>
+          </div>
+          <section class="panel validation-panel">
+            <div class="panel-head">
+              <h2>Validation Result</h2>
+              <div class="button-strip">
+                <button id="validateImport">Validate</button>
+                <button id="buildTree">Build Align Tree</button>
+              </div>
+            </div>
+            <div id="validationList" class="validation-list empty">Run validation.</div>
+          </section>
+        </section>
+
+        <section id="editor" class="view editor-layout">
+          <aside class="panel input-side">
+            <h2>Input Table</h2>
+            <div id="miniTable" class="mini-table"></div>
+          </aside>
+          <section class="canvas-wrap">
+            <div class="toolbar">
+              <button id="saveProject">Save</button>
+              <button id="autoLayout">Auto Layout</button>
+              <button id="validateEditor">Validate</button>
+              <button id="exportExcelTop">Export Excel</button>
+              <button id="exportPptTop">Export PPT</button>
+            </div>
+            <svg id="treeCanvas" role="img" aria-label="Align tree canvas"></svg>
+          </section>
+          <aside class="panel property-side">
+            <h2>Property</h2>
+            <div id="propertyPanel" class="property-empty">Select a node.</div>
+          </aside>
+        </section>
+
+        <section id="export" class="view">
+          <section class="panel export-panel">
+            <h2>Export</h2>
+            <label><input id="includeValidation" type="checkbox" checked /> Validation Result sheet</label>
+            <label><input id="includeHistory" type="checkbox" checked /> Change History sheet</label>
+            <div class="row">
+              <button id="exportExcel">Excel Export</button>
+              <button id="exportSvg">PPT Image Export</button>
+              <button id="exportPpt">PPT Outline Export</button>
+            </div>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="pasteDialog">
+      <form method="dialog">
+        <h2 id="pasteTitle">Clipboard Paste</h2>
+        <textarea id="pasteText" rows="12" placeholder="Paste tab-separated Excel rows here"></textarea>
+        <menu>
+          <button value="cancel">Cancel</button>
+          <button id="applyPaste" value="default">Apply</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <input id="fileUpload" type="file" accept=".csv,.tsv,.txt,.xls,.html" hidden />
+
+    <script src="./app.js"></script>
+  </body>
+</html>
