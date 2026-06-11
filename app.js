@@ -297,9 +297,9 @@ function renderAlignTable() {
       const project = ensureProject();
       deleteLayerWithConfirmation(project.layers[rowIndex]);
     },
-    (rowIndex) => {
+    (rowIndex, event) => {
       const layer = project?.layers[rowIndex];
-      if (layer) selectLayer(layer.layer_id, true, false);
+      if (layer) selectLayer(layer.layer_id, !isAdditiveEvent(event), isAdditiveEvent(event));
     },
     (rowIndex) => state.selectedLayerIds.has(project?.layers[rowIndex]?.layer_id)
   );
@@ -364,7 +364,7 @@ function renderEditableTable(selector, columns, rows, getValue, onChange, onDele
   rows.forEach((row, rowIndex) => {
     const tr = document.createElement("tr");
     if (isSelected?.(rowIndex)) tr.className = "active-row";
-    tr.addEventListener("click", () => onRowSelect?.(rowIndex));
+    tr.addEventListener("click", (event) => onRowSelect?.(rowIndex, event));
     columns.forEach((column) => {
       const td = document.createElement("td");
       let input;
@@ -652,8 +652,8 @@ function renderMiniTable() {
     const searchable = `${layer.step} ${layer.layer_name} ${layer.layer_property} ${layer.align_name} ${layer.align_side}`.toLowerCase();
     row.className = `mini-row ${state.selectedLayerIds.has(layer.layer_id) ? "active" : ""} ${query && !searchable.includes(query) ? "hidden" : ""}`;
     row.innerHTML = `<strong>${escapeHtml(layer.step)} ${escapeHtml(layer.layer_name)}</strong><span>${escapeHtml(layer.align_name)} / ${escapeHtml(layer.align_side || "-")}</span>`;
-    row.addEventListener("click", () => {
-      selectLayer(layer.layer_id, true, false);
+    row.addEventListener("click", (event) => {
+      selectLayer(layer.layer_id, !isAdditiveEvent(event), isAdditiveEvent(event));
     });
     root.append(row);
   });
@@ -819,7 +819,7 @@ function renderProperty() {
     renderAll();
   });
   document.querySelector("#deleteLayer").addEventListener("click", () => {
-    deleteLayerWithConfirmation(layer);
+    deleteSelectedObjects();
   });
   ["#shapeFill", "#shapeStroke", "#shapeStrokeWidth", "#shapeTextColor", "#shapeFontSize", "#shapeWidth", "#shapeHeight"].forEach((selector) => {
     document.querySelector(selector).addEventListener("input", () => {
@@ -922,15 +922,19 @@ function renderCanvas() {
     `;
     node.addEventListener("mousedown", (event) => {
       event.stopPropagation();
+      if (event.altKey) {
+        startPan(event);
+        return;
+      }
       if (state.mode === "connect") {
         selectLayer(layer.layer_id, false, false);
         return;
       }
-      const additive = event.ctrlKey || event.metaKey || event.shiftKey;
+      const additive = isAdditiveEvent(event);
       if (additive || !state.selectedLayerIds.has(layer.layer_id)) {
         selectLayer(layer.layer_id, false, additive);
       }
-      if (event.altKey && state.selectedLayerIds.has(layer.layer_id)) startSelectionDrag(event);
+      if (state.selectedLayerIds.has(layer.layer_id)) startSelectionDrag(event);
     });
     viewport.append(node);
     if (layer.layer_id === state.selectedLayerId || state.mode === "connect" || state.connectStart) {
@@ -952,11 +956,15 @@ function renderCanvas() {
     `;
     group.addEventListener("mousedown", (event) => {
       event.stopPropagation();
-      const additive = event.ctrlKey || event.metaKey || event.shiftKey;
+      if (event.altKey) {
+        startPan(event);
+        return;
+      }
+      const additive = isAdditiveEvent(event);
       if (additive || !state.selectedTextBoxIds.has(box.id)) {
         selectTextBox(box.id, additive);
       }
-      if (event.altKey && state.selectedTextBoxIds.has(box.id)) startSelectionDrag(event);
+      if (state.selectedTextBoxIds.has(box.id)) startSelectionDrag(event);
     });
     viewport.append(group);
     if (box.id === state.selectedTextBoxId) renderTextResizeHandles(viewport, box);
@@ -1112,12 +1120,22 @@ function startSelectionDrag(event) {
   };
 }
 
+function startPan(event) {
+  state.isPanning = { startX: event.clientX, startY: event.clientY, x: state.pan.x, y: state.pan.y };
+  state.selectionBox = null;
+  renderCanvas();
+}
+
+function isAdditiveEvent(event) {
+  return Boolean(event?.ctrlKey || event?.metaKey || event?.shiftKey);
+}
+
 function startMarqueeSelection(event) {
   const start = screenToWorld(event.clientX, event.clientY);
   state.selectionBox = {
     start,
     current: start,
-    additive: event.ctrlKey || event.metaKey || event.shiftKey,
+    additive: isAdditiveEvent(event),
     moved: false,
   };
 }
@@ -1384,6 +1402,57 @@ function deleteLayerWithConfirmation(layer) {
   renderAll();
 }
 
+function deleteSelectedObjects() {
+  const project = currentProject();
+  if (!project) return;
+  const selectedLayerIds = [...state.selectedLayerIds];
+  const selectedTextBoxIds = [...state.selectedTextBoxIds];
+  const relation = project.relations.find((item) => item.relation_id === state.selectedRelationId);
+  if (!selectedLayerIds.length && !selectedTextBoxIds.length && !relation) return;
+
+  const selectedLayerNames = project.layers
+    .filter((layer) => selectedLayerIds.includes(layer.layer_id))
+    .map((layer) => layer.layer_name);
+  const linkedRelations = project.relations.filter(
+    (item) => selectedLayerNames.includes(item.parent_layer) || selectedLayerNames.includes(item.child_layer)
+  );
+  const relationLines = linkedRelations.length
+    ? linkedRelations.map((item) => `- ${item.parent_layer} -> ${item.child_layer} (${item.relation_type})`).join("\n")
+    : "- No incoming/outgoing relations.";
+  const message = [
+    `Delete selected objects?`,
+    `Layers: ${selectedLayerNames.length ? selectedLayerNames.join(", ") : "none"}`,
+    `Text Boxes: ${selectedTextBoxIds.length}`,
+    relation ? `Relation: ${relation.parent_layer} -> ${relation.child_layer}` : "Relation: none",
+    "",
+    "Incoming / Outgoing Relations:",
+    relationLines,
+  ].join("\n");
+  if (!confirm(message)) return;
+
+  pushUndo(project);
+  project.layers = project.layers.filter((layer) => !selectedLayerIds.includes(layer.layer_id));
+  project.textBoxes = project.textBoxes.filter((box) => !selectedTextBoxIds.includes(box.id));
+  selectedLayerIds.forEach((id) => {
+    delete project.layouts[id];
+    delete project.styles[id];
+  });
+  project.relations = project.relations.filter(
+    (item) =>
+      item.relation_id !== state.selectedRelationId &&
+      !selectedLayerNames.includes(item.parent_layer) &&
+      !selectedLayerNames.includes(item.child_layer)
+  );
+  state.selectedLayerId = null;
+  state.selectedLayerIds = new Set();
+  state.selectedTextBoxId = null;
+  state.selectedTextBoxIds = new Set();
+  state.selectedRelationId = null;
+  validateProject(project);
+  touch(project, "Deleted selected objects");
+  renderAll();
+}
+
 function canvasCenterWorld() {
   const svg = document.querySelector("#treeCanvas");
   const rect = svg.getBoundingClientRect();
@@ -1552,7 +1621,7 @@ function renderToolbar() {
   const hint = document.querySelector("#modeHint");
   if (hint) {
     if (state.connectStart) hint.textContent = "Connector: choose target point";
-    else hint.textContent = state.mode === "connect" ? "Connector: choose start point" : "Drag canvas to select. Alt+drag selection to move.";
+    else hint.textContent = state.mode === "connect" ? "Connector: choose start point" : "Drag canvas to select. Drag selected objects to move. Alt+drag pans.";
   }
 }
 
@@ -1846,7 +1915,11 @@ document.querySelector("#treeCanvas").addEventListener("mousedown", (event) => {
   ) {
     return;
   }
-  if (!(event.ctrlKey || event.metaKey || event.shiftKey)) {
+  if (event.altKey) {
+    startPan(event);
+    return;
+  }
+  if (!isAdditiveEvent(event)) {
     state.selectedLayerId = null;
     state.selectedLayerIds = new Set();
     state.selectedRelationId = null;
@@ -1957,6 +2030,15 @@ window.addEventListener("mouseup", () => {
     touch(ensureProject(), "Shape resized");
     state.resize = null;
     renderAll();
+  }
+});
+
+window.addEventListener("keydown", (event) => {
+  const tag = document.activeElement?.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+  if (event.key === "Delete" || event.key === "Backspace") {
+    event.preventDefault();
+    deleteSelectedObjects();
   }
 });
 
