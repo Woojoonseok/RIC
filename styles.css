@@ -41,7 +41,8 @@ button {
 }
 
 button:hover,
-.tab.active {
+.tab.active,
+button.active {
   border-color: var(--blue);
   color: var(--blue);
 }
@@ -249,7 +250,7 @@ td.row-actions button {
 
 .editor-layout {
   padding: 0;
-  grid-template-columns: 260px minmax(520px, 1fr) 300px;
+  grid-template-columns: 280px minmax(520px, 1fr) 320px;
   gap: 0;
   overflow: hidden;
 }
@@ -269,17 +270,67 @@ td.row-actions button {
 
 .canvas-wrap {
   display: grid;
-  grid-template-rows: 54px 1fr;
+  grid-template-rows: 74px 1fr;
   min-width: 0;
 }
 
 .toolbar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
+  gap: 10px;
+  padding: 8px 10px;
   background: #fff;
   border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.tool-group {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: max-content;
+  align-items: end;
+  gap: 6px;
+  padding: 0 10px 0 0;
+  border-right: 1px solid var(--line);
+}
+
+.tool-group:last-child {
+  border-right: 0;
+}
+
+.tool-group > span:first-child {
+  align-self: center;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  text-transform: uppercase;
+}
+
+.toolbar button {
+  flex: 0 0 auto;
+  padding: 6px 9px;
+  min-height: 32px;
+}
+
+.toolbar-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+#zoomLabel {
+  min-width: 48px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.canvas-stage {
+  position: relative;
+  min-height: 0;
 }
 
 #treeCanvas {
@@ -287,6 +338,43 @@ td.row-actions button {
   height: 100%;
   background: #fbfcfe;
   cursor: default;
+  display: block;
+}
+
+#treeCanvas.connecting {
+  cursor: crosshair;
+}
+
+#treeCanvas.text-tool {
+  cursor: text;
+}
+
+#treeCanvas.panning {
+  cursor: grabbing;
+}
+
+#miniMap {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  width: 180px;
+  height: 120px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: var(--shadow);
+}
+
+#modeHint {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .mini-table {
@@ -304,6 +392,10 @@ td.row-actions button {
 .mini-row.active {
   border-color: var(--blue);
   background: #f0f5ff;
+}
+
+.mini-row.hidden {
+  display: none;
 }
 
 .mini-row strong {
@@ -325,6 +417,23 @@ td.row-actions button {
 .property-form {
   display: grid;
   gap: 10px;
+}
+
+.property-section {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.property-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.danger {
+  color: var(--red);
 }
 
 .property-form label,
@@ -373,6 +482,12 @@ dialog menu {
   rx: 6;
 }
 
+.node.connect-source rect {
+  stroke: var(--green);
+  stroke-width: 3;
+  fill: #f0fbf5;
+}
+
 .node.active rect {
   stroke: var(--blue);
   stroke-width: 3;
@@ -383,12 +498,26 @@ dialog menu {
   fill: var(--ink);
   font-size: 12px;
   pointer-events: none;
+  dominant-baseline: middle;
 }
 
 .edge {
   fill: none;
   stroke: #53657d;
   stroke-width: 2;
+  marker-end: url(#arrow);
+}
+
+.edge-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  cursor: pointer;
+}
+
+.edge.active {
+  stroke: var(--blue);
+  stroke-width: 3;
 }
 
 .edge.overlay {
@@ -401,4 +530,115 @@ dialog menu {
 
 .edge.warning {
   stroke: var(--red);
+}
+
+.port-handle {
+  fill: #fff;
+  stroke: var(--green);
+  stroke-width: 2;
+  cursor: crosshair;
+}
+
+.port-handle:hover,
+.port-handle.active {
+  fill: var(--green);
+}
+
+.resize-handle {
+  fill: #fff;
+  stroke: var(--blue);
+  stroke-width: 1.5;
+  cursor: nwse-resize;
+}
+
+.resize-handle.n,
+.resize-handle.s {
+  cursor: ns-resize;
+}
+
+.resize-handle.e,
+.resize-handle.w {
+  cursor: ew-resize;
+}
+
+.resize-handle.ne,
+.resize-handle.sw {
+  cursor: nesw-resize;
+}
+
+.connector-preview {
+  fill: none;
+  stroke: var(--green);
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+}
+
+.text-box rect {
+  fill: transparent;
+  stroke: transparent;
+}
+
+.text-box.active rect {
+  stroke: var(--blue);
+  stroke-dasharray: 4 3;
+}
+
+.text-box text {
+  fill: var(--ink);
+  font-size: 14px;
+  pointer-events: none;
+}
+
+.swatches {
+  display: grid;
+  grid-template-columns: repeat(5, 28px);
+  gap: 6px;
+}
+
+.swatch {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  padding: 0;
+}
+
+.grid-line {
+  stroke: #edf1f6;
+  stroke-width: 1;
+}
+
+.minimap-node {
+  fill: #d9e4f7;
+  stroke: #7a8aa3;
+}
+
+.minimap-node.active {
+  fill: #2457d6;
+  stroke: #2457d6;
+}
+
+.minimap-view {
+  fill: rgba(36, 87, 214, 0.08);
+  stroke: #2457d6;
+  stroke-width: 1.5;
+}
+
+.panel-head.compact {
+  display: grid;
+  grid-template-columns: auto 1fr;
+}
+
+.panel-head.compact h2 {
+  margin: 0;
+}
+
+.panel-head.compact input {
+  min-width: 0;
+}
+
+tr.active-row {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
+  background: #f0f5ff;
 }

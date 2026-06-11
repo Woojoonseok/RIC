@@ -14,7 +14,14 @@ Open `index.html` in a browser.
 - CSV/TSV/TXT/HTML `.xls` upload for each table
 - Validation with errors and warnings
 - Auto-generated Align Tree SVG canvas
-- Node click, property editing, delete, drag layout, and save
+- PowerPoint/Visio-like Select and Connect modes
+- Layer-only node rendering with details in the Property panel
+- Visio-like connection points on each side of a selected Layer
+- Port-based arrow creation, selection, editing, deletion, and validation
+- Node click, property editing, confirmed delete, drag layout, resize handles, and save
+- Shape formatting for fill, line, text color, line width, and font size
+- Insert tools for new Layer shapes and free text boxes
+- Zoom, pan, fit view, mini map, search, snap to grid, align/distribute, undo/redo, and auto layout
 - Excel-readable `.xls` template and export
 - SVG PPT image export and PowerPoint-readable outline export
 

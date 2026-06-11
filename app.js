@@ -3,6 +3,21 @@ const RELATION_COLUMNS = ["Parent_Layer", "Child_Layer", "Relation_Type"];
 const ALLOWED_SIDES = ["LEFT", "RIGHT", "CENTER", "TOP", "BOTTOM"];
 const RELATION_TYPES = ["Align", "Overlay", "Reference", "Warning"];
 const STORE_KEY = "align-tree-editor-projects";
+const PORTS = ["top", "right", "bottom", "left"];
+const DEFAULT_LAYER_STYLE = {
+  fill: "#ffffff",
+  stroke: "#30435f",
+  strokeWidth: 1.5,
+  textColor: "#18202c",
+  fontSize: 13,
+};
+const DEFAULT_TEXT_STYLE = {
+  fill: "transparent",
+  stroke: "transparent",
+  strokeWidth: 1,
+  textColor: "#18202c",
+  fontSize: 16,
+};
 
 const sampleProject = {
   project_id: crypto.randomUUID(),
@@ -17,6 +32,8 @@ const sampleProject = {
   ],
   relations: [],
   layouts: {},
+  styles: {},
+  textBoxes: [],
   history: [],
   validation: [],
 };
@@ -30,13 +47,53 @@ let state = {
   projects: loadProjects(),
   currentId: null,
   selectedLayerId: null,
+  selectedRelationId: null,
+  selectedTextBoxId: null,
+  mode: "select",
+  pendingConnectLayerId: null,
+  connectStart: null,
+  pointerWorld: null,
   pasteTarget: "align",
   uploadTarget: "align",
   drag: null,
+  resize: null,
+  pan: { x: 0, y: 0 },
+  scale: 1,
+  isPanning: null,
+  snapToGrid: true,
+  search: "",
+  undoStack: [],
+  redoStack: [],
 };
 
 function currentProject() {
-  return state.projects.find((project) => project.project_id === state.currentId) || null;
+  const project = state.projects.find((project) => project.project_id === state.currentId) || null;
+  if (project) normalizeProject(project);
+  return project;
+}
+
+function normalizeProject(project) {
+  project.styles ||= {};
+  project.textBoxes ||= [];
+  project.layouts ||= {};
+  project.layers ||= [];
+  project.relations ||= [];
+  project.layers.forEach((layer, index) => {
+    project.styles[layer.layer_id] = { ...DEFAULT_LAYER_STYLE, ...(project.styles[layer.layer_id] || {}) };
+    project.layouts[layer.layer_id] ||= { x: 80 + index * 30, y: 80 + index * 30, width: 150, height: 64 };
+    project.layouts[layer.layer_id].width ||= 150;
+    project.layouts[layer.layer_id].height ||= 64;
+  });
+  project.relations.forEach((relation) => {
+    relation.source_port ||= "right";
+    relation.target_port ||= "left";
+    relation.connector_type ||= "straight";
+  });
+  project.textBoxes.forEach((box) => {
+    box.style = { ...DEFAULT_TEXT_STYLE, ...(box.style || {}) };
+    box.width ||= 180;
+    box.height ||= 52;
+  });
 }
 
 function loadProjects() {
@@ -59,10 +116,44 @@ function touch(project, message) {
   persist();
 }
 
+function snapshotProject(project) {
+  return JSON.stringify({
+    layers: project.layers,
+    relations: project.relations,
+    layouts: project.layouts,
+    styles: project.styles,
+    textBoxes: project.textBoxes,
+    validation: project.validation,
+  });
+}
+
+function restoreProject(project, snapshot) {
+  const data = JSON.parse(snapshot);
+  project.layers = data.layers || [];
+  project.relations = data.relations || [];
+  project.layouts = data.layouts || {};
+  project.styles = data.styles || {};
+  project.textBoxes = data.textBoxes || [];
+  project.validation = data.validation || [];
+  normalizeProject(project);
+  project.updated_at = new Date().toISOString();
+  persist();
+}
+
+function pushUndo(project) {
+  state.undoStack.push(snapshotProject(project));
+  if (state.undoStack.length > 80) state.undoStack.shift();
+  state.redoStack = [];
+}
+
 function switchView(viewName) {
   document.querySelectorAll(".view").forEach((view) => view.classList.toggle("active", view.id === viewName));
   document.querySelectorAll(".tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.view === viewName));
   if (viewName === "editor") renderCanvas();
+}
+
+function fitSoon() {
+  setTimeout(() => fitViewToGraph(), 0);
 }
 
 function renderMeta() {
@@ -93,6 +184,11 @@ function renderProjectList() {
       open.addEventListener("click", () => {
         state.currentId = project.project_id;
         state.selectedLayerId = project.layers[0]?.layer_id || null;
+        state.selectedRelationId = null;
+        state.pendingConnectLayerId = null;
+        state.mode = "select";
+        state.undoStack = [];
+        state.redoStack = [];
         renderAll();
         switchView("editor");
       });
@@ -110,6 +206,7 @@ function renderAll() {
   renderMiniTable();
   renderProperty();
   renderCanvas();
+  renderToolbar();
 }
 
 function ensureProject() {
@@ -129,11 +226,18 @@ function createProject(name) {
     layers: [],
     relations: [],
     layouts: {},
+    styles: {},
+    textBoxes: [],
     history: [],
     validation: [],
   };
   state.projects.push(project);
   state.currentId = project.project_id;
+  state.selectedLayerId = null;
+  state.selectedRelationId = null;
+  state.selectedTextBoxId = null;
+  state.undoStack = [];
+  state.redoStack = [];
   touch(project, "Project created");
   return project;
 }
@@ -155,6 +259,7 @@ function renderAlignTable() {
       const project = ensureProject();
       const layer = project.layers[rowIndex];
       if (!layer) return;
+      pushUndo(project);
       const previousName = layer.layer_name;
       if (column === "Step") layer.step = value;
       if (column === "Layer") {
@@ -172,14 +277,13 @@ function renderAlignTable() {
     },
     (rowIndex) => {
       const project = ensureProject();
-      const [removed] = project.layers.splice(rowIndex, 1);
-      if (removed) {
-        project.relations = project.relations.filter((relation) => relation.parent_layer !== removed.layer_name && relation.child_layer !== removed.layer_name);
-        delete project.layouts[removed.layer_id];
-        touch(project, `Deleted layer ${removed.layer_name}`);
-      }
-      renderAll();
-    }
+      deleteLayerWithConfirmation(project.layers[rowIndex]);
+    },
+    (rowIndex) => {
+      const layer = project?.layers[rowIndex];
+      if (layer) selectLayer(layer.layer_id, true);
+    },
+    (rowIndex) => project?.layers[rowIndex]?.layer_id === state.selectedLayerId
   );
 }
 
@@ -198,22 +302,42 @@ function renderRelationTable() {
       const project = ensureProject();
       const relation = project.relations[rowIndex];
       if (!relation) return;
+      const draft = { ...relation };
+      if (column === "Parent_Layer") draft.parent_layer = value;
+      if (column === "Child_Layer") draft.child_layer = value;
+      if (column === "Relation_Type") draft.relation_type = value;
+      const issue = validateRelationDraft(project, draft, relation.relation_id);
+      if (issue) {
+        alert(issue);
+        renderAll();
+        return;
+      }
+      pushUndo(project);
       if (column === "Parent_Layer") relation.parent_layer = value;
       if (column === "Child_Layer") relation.child_layer = value;
       if (column === "Relation_Type") relation.relation_type = value;
+      state.selectedRelationId = relation.relation_id;
+      state.selectedLayerId = null;
       touch(project, `Updated ${column}`);
       renderAll();
     },
     (rowIndex) => {
       const project = ensureProject();
+      pushUndo(project);
       project.relations.splice(rowIndex, 1);
+      state.selectedRelationId = null;
       touch(project, "Deleted relation");
       renderAll();
-    }
+    },
+    (rowIndex) => {
+      const relation = project?.relations[rowIndex];
+      if (relation) selectRelation(relation.relation_id);
+    },
+    (rowIndex) => project?.relations[rowIndex]?.relation_id === state.selectedRelationId
   );
 }
 
-function renderEditableTable(selector, columns, rows, getValue, onChange, onDelete) {
+function renderEditableTable(selector, columns, rows, getValue, onChange, onDelete, onRowSelect = null, isSelected = null) {
   const root = document.querySelector(selector);
   const table = document.createElement("table");
   const thead = document.createElement("thead");
@@ -221,6 +345,8 @@ function renderEditableTable(selector, columns, rows, getValue, onChange, onDele
   const tbody = document.createElement("tbody");
   rows.forEach((row, rowIndex) => {
     const tr = document.createElement("tr");
+    if (isSelected?.(rowIndex)) tr.className = "active-row";
+    tr.addEventListener("click", () => onRowSelect?.(rowIndex));
     columns.forEach((column) => {
       const td = document.createElement("td");
       let input;
@@ -241,7 +367,10 @@ function renderEditableTable(selector, columns, rows, getValue, onChange, onDele
     const remove = document.createElement("button");
     remove.textContent = "X";
     remove.title = "Delete row";
-    remove.addEventListener("click", () => onDelete(rowIndex));
+    remove.addEventListener("click", (event) => {
+      event.stopPropagation();
+      onDelete(rowIndex);
+    });
     action.append(remove);
     tr.append(action);
     tbody.append(tr);
@@ -252,6 +381,7 @@ function renderEditableTable(selector, columns, rows, getValue, onChange, onDele
 
 function addRow(type) {
   const project = ensureProject();
+  pushUndo(project);
   if (type === "align") {
     project.layers.push({ layer_id: crypto.randomUUID(), step: "", layer_name: "", layer_property: "", align_name: "", align_side: "" });
     touch(project, "Added align row");
@@ -295,6 +425,7 @@ function parseHtmlTable(text, columns) {
 
 function replaceRowsFromText(target, text) {
   const project = ensureProject();
+  pushUndo(project);
   if (target === "align") {
     project.layers = parsePaste(text, ALIGN_COLUMNS).map((row) => ({
       layer_id: crypto.randomUUID(),
@@ -345,6 +476,7 @@ function validateProject(project) {
   const knownLayers = new Set(project.layers.map((layer) => layer.layer_name).filter(Boolean));
   const adjacency = new Map([...knownLayers].map((name) => [name, []]));
   const connected = new Set();
+  const relationPairs = new Map();
   project.relations.forEach((relation, index) => {
     const row = index + 1;
     if (!relation.parent_layer || !relation.child_layer) results.push(error(row, "Parent_Layer and Child_Layer are required."));
@@ -352,6 +484,11 @@ function validateProject(project) {
     if (relation.parent_layer && !knownLayers.has(relation.parent_layer)) results.push(error(row, `Parent_Layer '${relation.parent_layer}' does not exist in Align_Input.`));
     if (relation.child_layer && !knownLayers.has(relation.child_layer)) results.push(error(row, `Child_Layer '${relation.child_layer}' does not exist in Align_Input.`));
     if (!RELATION_TYPES.includes(relation.relation_type)) results.push(error(row, `Relation_Type '${relation.relation_type}' is not allowed.`));
+    const pairKey = `${relation.parent_layer}->${relation.child_layer}`;
+    if (relation.parent_layer && relation.child_layer) {
+      if (relationPairs.has(pairKey)) results.push(error(row, `Relation '${pairKey}' is duplicated with row ${relationPairs.get(pairKey)}.`));
+      else relationPairs.set(pairKey, row);
+    }
     if (knownLayers.has(relation.parent_layer) && knownLayers.has(relation.child_layer)) {
       adjacency.get(relation.parent_layer).push(relation.child_layer);
       connected.add(relation.parent_layer);
@@ -376,6 +513,32 @@ function error(row, message) {
 
 function warn(row, message) {
   return { level: "WARNING", row, message };
+}
+
+function validateRelationDraft(project, draft, currentRelationId = null) {
+  const knownLayers = new Set(project.layers.map((layer) => layer.layer_name).filter(Boolean));
+  if (!draft.parent_layer || !draft.child_layer) return "Parent Layer and Child Layer are required.";
+  if (!knownLayers.has(draft.parent_layer)) return `Parent Layer '${draft.parent_layer}' does not exist.`;
+  if (!knownLayers.has(draft.child_layer)) return `Child Layer '${draft.child_layer}' does not exist.`;
+  if (draft.parent_layer === draft.child_layer) return "Self-loop relation is not allowed.";
+  if (!RELATION_TYPES.includes(draft.relation_type)) return `Relation Type '${draft.relation_type}' is not allowed.`;
+  const duplicated = project.relations.some(
+    (relation) =>
+      relation.relation_id !== currentRelationId &&
+      relation.parent_layer === draft.parent_layer &&
+      relation.child_layer === draft.child_layer
+  );
+  if (duplicated) return `Relation '${draft.parent_layer} -> ${draft.child_layer}' already exists.`;
+  const adjacency = new Map(project.layers.map((layer) => [layer.layer_name, []]));
+  project.relations.forEach((relation) => {
+    if (relation.relation_id !== currentRelationId && adjacency.has(relation.parent_layer)) {
+      adjacency.get(relation.parent_layer).push(relation.child_layer);
+    }
+  });
+  adjacency.get(draft.parent_layer)?.push(draft.child_layer);
+  const cycle = findCycle(adjacency);
+  if (cycle.length) return `Cycle is not allowed: ${cycle.join(" -> ")}.`;
+  return "";
 }
 
 function addDuplicate(map, value, row, label, results) {
@@ -430,7 +593,8 @@ function renderValidation() {
   });
 }
 
-function autoLayoutProject(project) {
+function autoLayoutProject(project, record = true) {
+  if (record) pushUndo(project);
   const children = new Map(project.layers.map((layer) => [layer.layer_name, []]));
   const incoming = new Set();
   project.relations.forEach((relation) => {
@@ -453,10 +617,10 @@ function autoLayoutProject(project) {
   const depthCounts = new Map();
   ordered.forEach(({ layer, depth }) => {
     const index = depthCounts.get(depth) || 0;
-    project.layouts[layer.layer_id] = { x: 90 + depth * 210, y: 70 + index * 135, width: 150, height: 92 };
+    project.layouts[layer.layer_id] = { x: 90 + depth * 210, y: 70 + index * 105, width: 150, height: 56 };
     depthCounts.set(depth, index + 1);
   });
-  touch(project, "Auto layout applied");
+  if (record) touch(project, "Auto layout applied");
 }
 
 function renderMiniTable() {
@@ -464,15 +628,14 @@ function renderMiniTable() {
   const root = document.querySelector("#miniTable");
   root.innerHTML = "";
   if (!project) return;
+  const query = state.search.trim().toLowerCase();
   project.layers.forEach((layer) => {
     const row = document.createElement("div");
-    row.className = `mini-row ${layer.layer_id === state.selectedLayerId ? "active" : ""}`;
+    const searchable = `${layer.step} ${layer.layer_name} ${layer.layer_property} ${layer.align_name} ${layer.align_side}`.toLowerCase();
+    row.className = `mini-row ${layer.layer_id === state.selectedLayerId ? "active" : ""} ${query && !searchable.includes(query) ? "hidden" : ""}`;
     row.innerHTML = `<strong>${escapeHtml(layer.step)} ${escapeHtml(layer.layer_name)}</strong><span>${escapeHtml(layer.align_name)} / ${escapeHtml(layer.align_side || "-")}</span>`;
     row.addEventListener("click", () => {
-      state.selectedLayerId = layer.layer_id;
-      renderMiniTable();
-      renderProperty();
-      renderCanvas();
+      selectLayer(layer.layer_id, true);
     });
     root.append(row);
   });
@@ -482,28 +645,134 @@ function renderProperty() {
   const project = currentProject();
   const root = document.querySelector("#propertyPanel");
   const layer = project?.layers.find((item) => item.layer_id === state.selectedLayerId);
-  if (!project || !layer) {
-    root.className = "property-empty";
-    root.textContent = "Select a node.";
+  const relation = project?.relations.find((item) => item.relation_id === state.selectedRelationId);
+  const textBox = project?.textBoxes.find((item) => item.id === state.selectedTextBoxId);
+  if (project && textBox) {
+    root.className = "property-form";
+    root.innerHTML = `
+      <div class="property-section">Text Box</div>
+      <label>Text<textarea id="textBoxText" rows="4">${escapeHtml(textBox.text || "")}</textarea></label>
+      <label>Font Size<input id="textFontSize" type="number" min="8" max="48" value="${textBox.style.fontSize}"></label>
+      <label>Text Color<input id="textColor" type="color" value="${textBox.style.textColor}"></label>
+      <label>Fill<input id="textFill" type="color" value="${textBox.style.fill === "transparent" ? "#ffffff" : textBox.style.fill}"></label>
+      <label><input id="textTransparent" type="checkbox" ${textBox.style.fill === "transparent" ? "checked" : ""}> Transparent Fill</label>
+      <div class="property-actions">
+        <button id="applyTextBox">Apply</button>
+        <button id="deleteTextBox" class="danger">Delete</button>
+      </div>
+    `;
+    document.querySelector("#applyTextBox").addEventListener("click", () => {
+      pushUndo(project);
+      textBox.text = document.querySelector("#textBoxText").value;
+      textBox.style.fontSize = Number(document.querySelector("#textFontSize").value) || 16;
+      textBox.style.textColor = document.querySelector("#textColor").value;
+      textBox.style.fill = document.querySelector("#textTransparent").checked ? "transparent" : document.querySelector("#textFill").value;
+      touch(project, "Updated text box");
+      renderAll();
+    });
+    document.querySelector("#deleteTextBox").addEventListener("click", () => {
+      pushUndo(project);
+      project.textBoxes = project.textBoxes.filter((item) => item.id !== textBox.id);
+      state.selectedTextBoxId = null;
+      touch(project, "Deleted text box");
+      renderAll();
+    });
     return;
   }
+  if (project && relation) {
+    root.className = "property-form";
+    root.innerHTML = `
+      <div class="property-section">Selected Arrow</div>
+      <label>Parent Layer<select id="relParent">${project.layers.map((item) => `<option ${item.layer_name === relation.parent_layer ? "selected" : ""}>${escapeHtml(item.layer_name)}</option>`).join("")}</select></label>
+      <label>Child Layer<select id="relChild">${project.layers.map((item) => `<option ${item.layer_name === relation.child_layer ? "selected" : ""}>${escapeHtml(item.layer_name)}</option>`).join("")}</select></label>
+      <label>Start Port<select id="relSourcePort">${PORTS.map((port) => `<option ${port === relation.source_port ? "selected" : ""}>${port}</option>`).join("")}</select></label>
+      <label>End Port<select id="relTargetPort">${PORTS.map((port) => `<option ${port === relation.target_port ? "selected" : ""}>${port}</option>`).join("")}</select></label>
+      <label>Relation Type<select id="relType">${RELATION_TYPES.map((type) => `<option ${type === relation.relation_type ? "selected" : ""}>${type}</option>`).join("")}</select></label>
+      <div class="property-actions">
+        <button id="applyRelation">Apply</button>
+        <button id="deleteRelation" class="danger">Delete</button>
+      </div>
+    `;
+    document.querySelector("#applyRelation").addEventListener("click", () => {
+      const draft = {
+        ...relation,
+        parent_layer: document.querySelector("#relParent").value,
+        child_layer: document.querySelector("#relChild").value,
+        source_port: document.querySelector("#relSourcePort").value,
+        target_port: document.querySelector("#relTargetPort").value,
+        relation_type: document.querySelector("#relType").value,
+      };
+      const issue = validateRelationDraft(project, draft, relation.relation_id);
+      if (issue) {
+        alert(issue);
+        return;
+      }
+      pushUndo(project);
+      relation.parent_layer = draft.parent_layer;
+      relation.child_layer = draft.child_layer;
+      relation.source_port = draft.source_port;
+      relation.target_port = draft.target_port;
+      relation.relation_type = draft.relation_type;
+      validateProject(project);
+      touch(project, "Updated relation");
+      renderAll();
+    });
+    document.querySelector("#deleteRelation").addEventListener("click", () => {
+      pushUndo(project);
+      project.relations = project.relations.filter((item) => item.relation_id !== relation.relation_id);
+      state.selectedRelationId = null;
+      validateProject(project);
+      touch(project, "Deleted relation");
+      renderAll();
+    });
+    return;
+  }
+  if (!project || !layer) {
+    root.className = "property-empty";
+    root.textContent = state.mode === "connect" ? "Pick a connection point, then another shape point." : "Select a layer, arrow, or text box.";
+    return;
+  }
+  const layout = project.layouts[layer.layer_id];
+  const style = project.styles[layer.layer_id];
   root.className = "property-form";
   root.innerHTML = `
+    <div class="property-section">Selected Layer</div>
     <label>Layer<input id="propLayer" value="${escapeAttr(layer.layer_name)}"></label>
     <label>Step<input id="propStep" value="${escapeAttr(layer.step)}"></label>
     <label>Property<input id="propProperty" value="${escapeAttr(layer.layer_property)}"></label>
     <label>Align<input id="propAlign" value="${escapeAttr(layer.align_name)}"></label>
     <label>Side<select id="propSide">${["", ...ALLOWED_SIDES].map((side) => `<option ${side === layer.align_side ? "selected" : ""}>${side}</option>`).join("")}</select></label>
-    <button id="applyProperty">Apply</button>
-    <button id="deleteLayer">Delete</button>
+    <div class="property-section">Shape Format</div>
+    <label>Width<input id="shapeWidth" type="number" min="70" value="${Math.round(layout.width)}"></label>
+    <label>Height<input id="shapeHeight" type="number" min="36" value="${Math.round(layout.height)}"></label>
+    <label>Fill<input id="shapeFill" type="color" value="${style.fill}"></label>
+    <label>Line<input id="shapeStroke" type="color" value="${style.stroke}"></label>
+    <label>Line Width<input id="shapeStrokeWidth" type="number" min="1" max="8" step="0.5" value="${style.strokeWidth}"></label>
+    <label>Text Color<input id="shapeTextColor" type="color" value="${style.textColor}"></label>
+    <label>Font Size<input id="shapeFontSize" type="number" min="9" max="28" value="${style.fontSize}"></label>
+    <div class="swatches">
+      ${["#ffffff", "#fef3c7", "#dbeafe", "#dcfce7", "#fee2e2"].map((color) => `<button class="swatch" data-fill="${color}" style="background:${color}"></button>`).join("")}
+    </div>
+    <div class="property-actions">
+      <button id="applyProperty">Apply</button>
+      <button id="deleteLayer" class="danger">Delete</button>
+    </div>
   `;
   document.querySelector("#applyProperty").addEventListener("click", () => {
+    pushUndo(project);
     const previousName = layer.layer_name;
     layer.layer_name = document.querySelector("#propLayer").value.trim();
     layer.step = document.querySelector("#propStep").value.trim();
     layer.layer_property = document.querySelector("#propProperty").value.trim();
     layer.align_name = document.querySelector("#propAlign").value.trim();
     layer.align_side = document.querySelector("#propSide").value;
+    layout.width = Math.max(70, Number(document.querySelector("#shapeWidth").value) || layout.width);
+    layout.height = Math.max(36, Number(document.querySelector("#shapeHeight").value) || layout.height);
+    style.fill = document.querySelector("#shapeFill").value;
+    style.stroke = document.querySelector("#shapeStroke").value;
+    style.strokeWidth = Number(document.querySelector("#shapeStrokeWidth").value) || 1.5;
+    style.textColor = document.querySelector("#shapeTextColor").value;
+    style.fontSize = Number(document.querySelector("#shapeFontSize").value) || 13;
     project.relations.forEach((relation) => {
       if (relation.parent_layer === previousName) relation.parent_layer = layer.layer_name;
       if (relation.child_layer === previousName) relation.child_layer = layer.layer_name;
@@ -512,12 +781,12 @@ function renderProperty() {
     renderAll();
   });
   document.querySelector("#deleteLayer").addEventListener("click", () => {
-    project.layers = project.layers.filter((item) => item.layer_id !== layer.layer_id);
-    project.relations = project.relations.filter((relation) => relation.parent_layer !== layer.layer_name && relation.child_layer !== layer.layer_name);
-    delete project.layouts[layer.layer_id];
-    state.selectedLayerId = project.layers[0]?.layer_id || null;
-    touch(project, `Deleted node ${layer.layer_name}`);
-    renderAll();
+    deleteLayerWithConfirmation(layer);
+  });
+  document.querySelectorAll(".swatch").forEach((button) => {
+    button.addEventListener("click", () => {
+      document.querySelector("#shapeFill").value = button.dataset.fill;
+    });
   });
 }
 
@@ -526,10 +795,43 @@ function renderCanvas() {
   const svg = document.querySelector("#treeCanvas");
   svg.innerHTML = "";
   if (!project) return;
-  if (!Object.keys(project.layouts).length && project.layers.length) autoLayoutProject(project);
+  if (!Object.keys(project.layouts).length && project.layers.length) autoLayoutProject(project, false);
+  svg.classList.toggle("connecting", state.mode === "connect");
+  svg.classList.toggle("text-tool", state.mode === "text");
+  svg.classList.toggle("panning", Boolean(state.isPanning));
   const defs = createSvgElement("defs");
-  defs.innerHTML = `<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#53657d"></path></marker>`;
+  defs.innerHTML = `<marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#53657d"></path></marker>`;
   svg.append(defs);
+
+  const viewport = createSvgElement("g");
+  viewport.setAttribute("transform", `translate(${state.pan.x}, ${state.pan.y}) scale(${state.scale})`);
+  svg.append(viewport);
+
+  const bounds = getGraphBounds(project);
+  const grid = createSvgElement("g");
+  const gridMinX = Math.floor((bounds.minX - 200) / 40) * 40;
+  const gridMaxX = Math.ceil((bounds.maxX + 200) / 40) * 40;
+  const gridMinY = Math.floor((bounds.minY - 200) / 40) * 40;
+  const gridMaxY = Math.ceil((bounds.maxY + 200) / 40) * 40;
+  for (let x = gridMinX; x <= gridMaxX; x += 40) {
+    const line = createSvgElement("line");
+    line.setAttribute("x1", x);
+    line.setAttribute("x2", x);
+    line.setAttribute("y1", gridMinY);
+    line.setAttribute("y2", gridMaxY);
+    line.setAttribute("class", "grid-line");
+    grid.append(line);
+  }
+  for (let y = gridMinY; y <= gridMaxY; y += 40) {
+    const line = createSvgElement("line");
+    line.setAttribute("x1", gridMinX);
+    line.setAttribute("x2", gridMaxX);
+    line.setAttribute("y1", y);
+    line.setAttribute("y2", y);
+    line.setAttribute("class", "grid-line");
+    grid.append(line);
+  }
+  viewport.append(grid);
 
   const layerByName = new Map(project.layers.map((layer) => [layer.layer_name, layer]));
   project.relations.forEach((relation) => {
@@ -540,43 +842,549 @@ function renderCanvas() {
     const b = project.layouts[child.layer_id];
     if (!a || !b) return;
     const path = createSvgElement("path");
-    const startX = a.x + a.width;
-    const startY = a.y + a.height / 2;
-    const endX = b.x;
-    const endY = b.y + b.height / 2;
-    const mid = Math.max(40, (endX - startX) / 2);
-    path.setAttribute("d", `M ${startX} ${startY} C ${startX + mid} ${startY}, ${endX - mid} ${endY}, ${endX} ${endY}`);
-    path.setAttribute("class", `edge ${relation.relation_type.toLowerCase()}`);
-    path.setAttribute("marker-end", "url(#arrow)");
-    svg.append(path);
+    const start = getPortPoint(a, relation.source_port || "right");
+    const end = getPortPoint(b, relation.target_port || "left");
+    const d = `M ${start.x} ${start.y} L ${end.x} ${end.y}`;
+    path.setAttribute("d", d);
+    path.setAttribute("class", `edge ${relation.relation_type.toLowerCase()} ${relation.relation_id === state.selectedRelationId ? "active" : ""}`);
+    const hit = createSvgElement("path");
+    hit.setAttribute("d", d);
+    hit.setAttribute("class", "edge-hit");
+    hit.addEventListener("mousedown", (event) => event.stopPropagation());
+    hit.addEventListener("click", (event) => {
+      event.stopPropagation();
+      selectRelation(relation.relation_id);
+    });
+    viewport.append(path, hit);
   });
 
   project.layers.forEach((layer) => {
-    const layout = project.layouts[layer.layer_id] || { x: 80, y: 80, width: 150, height: 92 };
+    const layout = project.layouts[layer.layer_id] || { x: 80, y: 80, width: 150, height: 64 };
+    const style = project.styles[layer.layer_id] || DEFAULT_LAYER_STYLE;
+    const isActive = layer.layer_id === state.selectedLayerId;
+    const isConnectSource = state.connectStart?.layerId === layer.layer_id;
+    layout.width = layout.width || 150;
+    layout.height = layout.height || 64;
     const node = createSvgElement("g");
-    node.setAttribute("class", `node ${layer.layer_id === state.selectedLayerId ? "active" : ""}`);
+    node.setAttribute(
+      "class",
+      `node ${isActive ? "active" : ""} ${isConnectSource ? "connect-source" : ""}`
+    );
     node.setAttribute("transform", `translate(${layout.x}, ${layout.y})`);
     node.dataset.layerId = layer.layer_id;
     node.innerHTML = `
-      <rect width="${layout.width}" height="${layout.height}"></rect>
-      <text x="12" y="23" font-weight="700">${escapeHtml(layer.layer_name || "(Layer)")}</text>
-      <text x="12" y="43">${escapeHtml(layer.step || "-")}</text>
-      <text x="12" y="62">${escapeHtml(layer.layer_property || "-")}</text>
-      <text x="12" y="81">${escapeHtml(layer.align_name || "-")} / ${escapeHtml(layer.align_side || "-")}</text>
+      <rect width="${layout.width}" height="${layout.height}" style="fill:${isConnectSource ? "#f0fbf5" : style.fill};stroke:${isConnectSource ? "#157a52" : isActive ? "#2457d6" : style.stroke};stroke-width:${isActive || isConnectSource ? 3 : style.strokeWidth}"></rect>
+      <text x="${layout.width / 2}" y="${layout.height / 2}" font-weight="700" text-anchor="middle" style="fill:${style.textColor};font-size:${style.fontSize}px">${escapeHtml(layer.layer_name || "(Layer)")}</text>
     `;
     node.addEventListener("mousedown", (event) => {
-      state.selectedLayerId = layer.layer_id;
-      state.drag = { layerId: layer.layer_id, startX: event.clientX, startY: event.clientY, x: layout.x, y: layout.y };
-      renderMiniTable();
-      renderProperty();
-      renderCanvas();
+      event.stopPropagation();
+      if (state.mode === "connect") {
+        selectLayer(layer.layer_id, false);
+        return;
+      }
+      pushUndo(project);
+      selectLayer(layer.layer_id, false);
+      state.drag = { layerId: layer.layer_id, startX: event.clientX, startY: event.clientY, x: layout.x, y: layout.y, moved: false };
     });
-    svg.append(node);
+    viewport.append(node);
+    if (layer.layer_id === state.selectedLayerId || state.mode === "connect" || state.connectStart) {
+      renderPortHandles(viewport, layer, layout);
+    }
+    if (layer.layer_id === state.selectedLayerId) {
+      renderResizeHandles(viewport, layer, layout);
+    }
+  });
+  project.textBoxes.forEach((box) => {
+    const group = createSvgElement("g");
+    const isActive = box.id === state.selectedTextBoxId;
+    group.setAttribute("class", `text-box ${isActive ? "active" : ""}`);
+    group.setAttribute("transform", `translate(${box.x}, ${box.y})`);
+    group.dataset.textBoxId = box.id;
+    group.innerHTML = `
+      <rect width="${box.width}" height="${box.height}" style="fill:${box.style.fill};stroke:${isActive ? "#2457d6" : box.style.stroke};stroke-width:${isActive ? 1.5 : box.style.strokeWidth};stroke-dasharray:${isActive ? "4 3" : "none"}"></rect>
+      <text x="8" y="${box.style.fontSize + 8}" style="fill:${box.style.textColor};font-size:${box.style.fontSize}px">${escapeHtml(box.text || "Text Box")}</text>
+    `;
+    group.addEventListener("mousedown", (event) => {
+      event.stopPropagation();
+      pushUndo(project);
+      selectTextBox(box.id);
+      state.drag = { textBoxId: box.id, startX: event.clientX, startY: event.clientY, x: box.x, y: box.y, moved: false };
+    });
+    viewport.append(group);
+    if (box.id === state.selectedTextBoxId) renderTextResizeHandles(viewport, box);
+  });
+  if (state.connectStart && state.pointerWorld) {
+    const sourceLayer = project.layers.find((layer) => layer.layer_id === state.connectStart.layerId);
+    const sourceLayout = sourceLayer ? project.layouts[sourceLayer.layer_id] : null;
+    if (sourceLayout) {
+      const start = getPortPoint(sourceLayout, state.connectStart.port);
+      const preview = createSvgElement("path");
+      preview.setAttribute("d", `M ${start.x} ${start.y} L ${state.pointerWorld.x} ${state.pointerWorld.y}`);
+      preview.setAttribute("class", "connector-preview");
+      viewport.append(preview);
+    }
+  }
+  renderMiniMap();
+}
+
+function getPortPoint(layout, port) {
+  const points = {
+    top: { x: layout.x + layout.width / 2, y: layout.y },
+    right: { x: layout.x + layout.width, y: layout.y + layout.height / 2 },
+    bottom: { x: layout.x + layout.width / 2, y: layout.y + layout.height },
+    left: { x: layout.x, y: layout.y + layout.height / 2 },
+  };
+  return points[port] || points.right;
+}
+
+function getPortHandlePoint(layout, port) {
+  const point = getPortPoint(layout, port);
+  const offset = 14;
+  if (port === "top") return { x: point.x, y: point.y - offset };
+  if (port === "right") return { x: point.x + offset, y: point.y };
+  if (port === "bottom") return { x: point.x, y: point.y + offset };
+  return { x: point.x - offset, y: point.y };
+}
+
+function renderPortHandles(viewport, layer, layout) {
+  PORTS.forEach((port) => {
+    const point = getPortHandlePoint(layout, port);
+    const handle = createSvgElement("circle");
+    handle.setAttribute("cx", point.x);
+    handle.setAttribute("cy", point.y);
+    handle.setAttribute("r", 7);
+    handle.dataset.layerId = layer.layer_id;
+    handle.dataset.port = port;
+    handle.setAttribute("class", `port-handle ${state.connectStart?.layerId === layer.layer_id && state.connectStart?.port === port ? "active" : ""}`);
+    const startConnection = (event) => {
+      event.stopPropagation();
+      event.preventDefault();
+      startOrFinishConnection(layer, port);
+    };
+    handle.addEventListener("mousedown", startConnection);
+    viewport.append(handle);
+  });
+}
+
+function renderResizeHandles(viewport, layer, layout) {
+  const handles = [
+    ["nw", layout.x, layout.y],
+    ["n", layout.x + layout.width / 2, layout.y],
+    ["ne", layout.x + layout.width, layout.y],
+    ["e", layout.x + layout.width, layout.y + layout.height / 2],
+    ["se", layout.x + layout.width, layout.y + layout.height],
+    ["s", layout.x + layout.width / 2, layout.y + layout.height],
+    ["sw", layout.x, layout.y + layout.height],
+    ["w", layout.x, layout.y + layout.height / 2],
+  ];
+  handles.forEach(([handleName, x, y]) => {
+    const handle = createSvgElement("rect");
+    handle.setAttribute("x", x - 4);
+    handle.setAttribute("y", y - 4);
+    handle.setAttribute("width", 8);
+    handle.setAttribute("height", 8);
+    handle.setAttribute("class", `resize-handle ${handleName}`);
+    handle.addEventListener("mousedown", (event) => {
+      event.stopPropagation();
+      pushUndo(currentProject());
+      state.resize = {
+        type: "layer",
+        id: layer.layer_id,
+        handle: handleName,
+        startX: event.clientX,
+        startY: event.clientY,
+        x: layout.x,
+        y: layout.y,
+        width: layout.width,
+        height: layout.height,
+      };
+    });
+    viewport.append(handle);
+  });
+}
+
+function renderTextResizeHandles(viewport, box) {
+  [["se", box.x + box.width, box.y + box.height], ["e", box.x + box.width, box.y + box.height / 2], ["s", box.x + box.width / 2, box.y + box.height]].forEach(([handleName, x, y]) => {
+    const handle = createSvgElement("rect");
+    handle.setAttribute("x", x - 4);
+    handle.setAttribute("y", y - 4);
+    handle.setAttribute("width", 8);
+    handle.setAttribute("height", 8);
+    handle.setAttribute("class", `resize-handle ${handleName}`);
+    handle.addEventListener("mousedown", (event) => {
+      event.stopPropagation();
+      pushUndo(currentProject());
+      state.resize = {
+        type: "text",
+        id: box.id,
+        handle: handleName,
+        startX: event.clientX,
+        startY: event.clientY,
+        x: box.x,
+        y: box.y,
+        width: box.width,
+        height: box.height,
+      };
+    });
+    viewport.append(handle);
   });
 }
 
 function createSvgElement(name) {
   return document.createElementNS("http://www.w3.org/2000/svg", name);
+}
+
+function selectLayer(layerId, center = false) {
+  state.selectedLayerId = layerId;
+  state.selectedRelationId = null;
+  state.selectedTextBoxId = null;
+  if (center) centerNode(layerId);
+  renderMiniTable();
+  renderRelationTable();
+  renderProperty();
+  renderCanvas();
+  renderToolbar();
+}
+
+function selectRelation(relationId) {
+  state.selectedRelationId = relationId;
+  state.selectedLayerId = null;
+  state.selectedTextBoxId = null;
+  renderAlignTable();
+  renderRelationTable();
+  renderMiniTable();
+  renderProperty();
+  renderCanvas();
+  renderToolbar();
+}
+
+function selectTextBox(textBoxId) {
+  state.selectedTextBoxId = textBoxId;
+  state.selectedLayerId = null;
+  state.selectedRelationId = null;
+  renderAlignTable();
+  renderRelationTable();
+  renderMiniTable();
+  renderProperty();
+  renderCanvas();
+  renderToolbar();
+}
+
+function handleConnectNode(layer) {
+  const project = ensureProject();
+  if (!state.pendingConnectLayerId) {
+    state.pendingConnectLayerId = layer.layer_id;
+    state.selectedLayerId = layer.layer_id;
+    state.selectedRelationId = null;
+    renderAll();
+    return;
+  }
+  const parent = project.layers.find((item) => item.layer_id === state.pendingConnectLayerId);
+  const draft = {
+    relation_id: crypto.randomUUID(),
+    parent_layer: parent?.layer_name || "",
+    child_layer: layer.layer_name,
+    relation_type: "Align",
+  };
+  const issue = validateRelationDraft(project, draft);
+  if (issue) {
+    alert(issue);
+    state.pendingConnectLayerId = null;
+    state.mode = "select";
+    renderAll();
+    return;
+  }
+  pushUndo(project);
+  project.relations.push(draft);
+  state.selectedRelationId = draft.relation_id;
+  state.selectedLayerId = null;
+  state.pendingConnectLayerId = null;
+  state.mode = "select";
+  validateProject(project);
+  touch(project, `Added relation ${draft.parent_layer} -> ${draft.child_layer}`);
+  renderAll();
+}
+
+function startOrFinishConnection(layer, port) {
+  const project = ensureProject();
+  if (!state.connectStart) {
+    state.mode = "connect";
+    state.connectStart = { layerId: layer.layer_id, port };
+    state.selectedLayerId = layer.layer_id;
+    state.selectedRelationId = null;
+    state.selectedTextBoxId = null;
+    renderAll();
+    return;
+  }
+  const parent = project.layers.find((item) => item.layer_id === state.connectStart.layerId);
+  const draft = {
+    relation_id: crypto.randomUUID(),
+    parent_layer: parent?.layer_name || "",
+    child_layer: layer.layer_name,
+    relation_type: "Align",
+    source_port: state.connectStart.port,
+    target_port: port,
+    connector_type: "straight",
+  };
+  const issue = validateRelationDraft(project, draft);
+  if (issue) {
+    alert(issue);
+    state.connectStart = null;
+    state.mode = "select";
+    renderAll();
+    return;
+  }
+  pushUndo(project);
+  project.relations.push(draft);
+  state.selectedRelationId = draft.relation_id;
+  state.selectedLayerId = null;
+  state.selectedTextBoxId = null;
+  state.connectStart = null;
+  state.pendingConnectLayerId = null;
+  state.mode = "select";
+  validateProject(project);
+  touch(project, `Added relation ${draft.parent_layer} -> ${draft.child_layer}`);
+  renderAll();
+}
+
+function deleteLayerWithConfirmation(layer) {
+  const project = currentProject();
+  if (!project || !layer) return;
+  const linked = project.relations.filter((relation) => relation.parent_layer === layer.layer_name || relation.child_layer === layer.layer_name);
+  const relationLines = linked.length
+    ? linked.map((relation) => `- ${relation.parent_layer} -> ${relation.child_layer} (${relation.relation_type})`).join("\n")
+    : "- No incoming/outgoing relations.";
+  const ok = confirm(`Delete layer '${layer.layer_name}'?\n\nIncoming / Outgoing Relations:\n${relationLines}`);
+  if (!ok) return;
+  pushUndo(project);
+  project.layers = project.layers.filter((item) => item.layer_id !== layer.layer_id);
+  project.relations = project.relations.filter((relation) => relation.parent_layer !== layer.layer_name && relation.child_layer !== layer.layer_name);
+  delete project.layouts[layer.layer_id];
+  state.selectedLayerId = project.layers[0]?.layer_id || null;
+  state.selectedRelationId = null;
+  validateProject(project);
+  touch(project, `Deleted layer ${layer.layer_name}`);
+  renderAll();
+}
+
+function canvasCenterWorld() {
+  const svg = document.querySelector("#treeCanvas");
+  const rect = svg.getBoundingClientRect();
+  return screenToWorld(rect.left + rect.width / 2, rect.top + rect.height / 2);
+}
+
+function addLayerShape() {
+  const project = ensureProject();
+  pushUndo(project);
+  const next = project.layers.length + 1;
+  let name = `LAYER_${String(next).padStart(2, "0")}`;
+  let suffix = next;
+  const existing = new Set(project.layers.map((layer) => layer.layer_name));
+  while (existing.has(name)) {
+    suffix += 1;
+    name = `LAYER_${String(suffix).padStart(2, "0")}`;
+  }
+  const layer = {
+    layer_id: crypto.randomUUID(),
+    step: `S${String(next).padStart(2, "0")}`,
+    layer_name: name,
+    layer_property: "",
+    align_name: `AA${String(next).padStart(2, "0")}`,
+    align_side: "CENTER",
+  };
+  const center = canvasCenterWorld();
+  project.layers.push(layer);
+  project.layouts[layer.layer_id] = { x: snap(center.x - 75), y: snap(center.y - 32), width: 150, height: 64 };
+  project.styles[layer.layer_id] = { ...DEFAULT_LAYER_STYLE };
+  state.selectedLayerId = layer.layer_id;
+  state.selectedRelationId = null;
+  state.selectedTextBoxId = null;
+  validateProject(project);
+  touch(project, `Added layer ${name}`);
+  renderAll();
+}
+
+function addTextBoxShape() {
+  const project = ensureProject();
+  pushUndo(project);
+  const center = canvasCenterWorld();
+  const box = {
+    id: crypto.randomUUID(),
+    text: "Text Box",
+    x: snap(center.x - 90),
+    y: snap(center.y - 26),
+    width: 180,
+    height: 52,
+    style: { ...DEFAULT_TEXT_STYLE },
+  };
+  project.textBoxes.push(box);
+  state.selectedTextBoxId = box.id;
+  state.selectedLayerId = null;
+  state.selectedRelationId = null;
+  state.mode = "select";
+  touch(project, "Added text box");
+  renderAll();
+}
+
+function getGraphBounds(project) {
+  const boxes = [
+    ...project.layers.map((layer) => project.layouts[layer.layer_id]).filter(Boolean),
+    ...(project.textBoxes || []),
+  ];
+  if (!boxes.length) return { minX: 0, minY: 0, maxX: 800, maxY: 500, width: 800, height: 500 };
+  const minX = Math.min(...boxes.map((layout) => layout.x));
+  const minY = Math.min(...boxes.map((layout) => layout.y));
+  const maxX = Math.max(...boxes.map((layout) => layout.x + layout.width));
+  const maxY = Math.max(...boxes.map((layout) => layout.y + layout.height));
+  return { minX, minY, maxX, maxY, width: Math.max(1, maxX - minX), height: Math.max(1, maxY - minY) };
+}
+
+function centerNode(layerId) {
+  const project = currentProject();
+  const svg = document.querySelector("#treeCanvas");
+  const layout = project?.layouts[layerId];
+  if (!layout) return;
+  const rect = svg.getBoundingClientRect();
+  state.pan.x = rect.width / 2 - (layout.x + layout.width / 2) * state.scale;
+  state.pan.y = rect.height / 2 - (layout.y + layout.height / 2) * state.scale;
+}
+
+function fitViewToGraph() {
+  const project = currentProject();
+  const svg = document.querySelector("#treeCanvas");
+  if (!project || !project.layers.length) return;
+  const rect = svg.getBoundingClientRect();
+  const bounds = getGraphBounds(project);
+  const padding = 90;
+  state.scale = Math.min(2, Math.max(0.25, Math.min((rect.width - padding) / bounds.width, (rect.height - padding) / bounds.height)));
+  state.pan.x = rect.width / 2 - (bounds.minX + bounds.width / 2) * state.scale;
+  state.pan.y = rect.height / 2 - (bounds.minY + bounds.height / 2) * state.scale;
+  renderCanvas();
+  renderToolbar();
+}
+
+function zoomAt(factor) {
+  const svg = document.querySelector("#treeCanvas");
+  const rect = svg.getBoundingClientRect();
+  const center = { x: rect.width / 2, y: rect.height / 2 };
+  const world = screenToWorld(center.x + rect.left, center.y + rect.top);
+  state.scale = Math.min(2.5, Math.max(0.25, state.scale * factor));
+  state.pan.x = center.x - world.x * state.scale;
+  state.pan.y = center.y - world.y * state.scale;
+  renderCanvas();
+  renderToolbar();
+}
+
+function screenToWorld(clientX, clientY) {
+  const rect = document.querySelector("#treeCanvas").getBoundingClientRect();
+  return {
+    x: (clientX - rect.left - state.pan.x) / state.scale,
+    y: (clientY - rect.top - state.pan.y) / state.scale,
+  };
+}
+
+function snap(value) {
+  return state.snapToGrid ? Math.round(value / 20) * 20 : value;
+}
+
+function renderMiniMap() {
+  const project = currentProject();
+  const mini = document.querySelector("#miniMap");
+  if (!mini || !project) return;
+  mini.innerHTML = "";
+  const bounds = getGraphBounds(project);
+  const width = 180;
+  const height = 120;
+  mini.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  const pad = 10;
+  const scale = Math.min((width - pad * 2) / Math.max(1, bounds.width), (height - pad * 2) / Math.max(1, bounds.height));
+  project.layers.forEach((layer) => {
+    const layout = project.layouts[layer.layer_id];
+    if (!layout) return;
+    const rect = createSvgElement("rect");
+    rect.setAttribute("x", pad + (layout.x - bounds.minX) * scale);
+    rect.setAttribute("y", pad + (layout.y - bounds.minY) * scale);
+    rect.setAttribute("width", Math.max(4, layout.width * scale));
+    rect.setAttribute("height", Math.max(4, layout.height * scale));
+    rect.setAttribute("class", `minimap-node ${layer.layer_id === state.selectedLayerId ? "active" : ""}`);
+    mini.append(rect);
+  });
+  const canvasRect = document.querySelector("#treeCanvas").getBoundingClientRect();
+  const view = createSvgElement("rect");
+  view.setAttribute("x", pad + ((-state.pan.x / state.scale) - bounds.minX) * scale);
+  view.setAttribute("y", pad + ((-state.pan.y / state.scale) - bounds.minY) * scale);
+  view.setAttribute("width", (canvasRect.width / state.scale) * scale);
+  view.setAttribute("height", (canvasRect.height / state.scale) * scale);
+  view.setAttribute("class", "minimap-view");
+  mini.append(view);
+}
+
+function renderToolbar() {
+  document.querySelector("#selectMode")?.classList.toggle("active", state.mode === "select");
+  document.querySelector("#connectMode")?.classList.toggle("active", state.mode === "connect");
+  const zoomLabel = document.querySelector("#zoomLabel");
+  if (zoomLabel) zoomLabel.textContent = `${Math.round(state.scale * 100)}%`;
+  const snapInput = document.querySelector("#snapToGrid");
+  if (snapInput) snapInput.checked = state.snapToGrid;
+  const hint = document.querySelector("#modeHint");
+  if (hint) {
+    if (state.connectStart) hint.textContent = "Connector: choose target point";
+    else hint.textContent = state.mode === "connect" ? "Connector: choose start point" : "Select Mode";
+  }
+}
+
+function undoAction() {
+  const project = currentProject();
+  if (!project || !state.undoStack.length) return;
+  state.redoStack.push(snapshotProject(project));
+  restoreProject(project, state.undoStack.pop());
+  state.selectedLayerId = project.layers.find((layer) => layer.layer_id === state.selectedLayerId)?.layer_id || project.layers[0]?.layer_id || null;
+  state.selectedRelationId = null;
+  state.selectedTextBoxId = null;
+  renderAll();
+}
+
+function redoAction() {
+  const project = currentProject();
+  if (!project || !state.redoStack.length) return;
+  state.undoStack.push(snapshotProject(project));
+  restoreProject(project, state.redoStack.pop());
+  state.selectedLayerId = project.layers.find((layer) => layer.layer_id === state.selectedLayerId)?.layer_id || project.layers[0]?.layer_id || null;
+  state.selectedRelationId = null;
+  state.selectedTextBoxId = null;
+  renderAll();
+}
+
+function alignSelectedHorizontal() {
+  const project = currentProject();
+  if (!project || !state.selectedLayerId) return;
+  const target = project.layouts[state.selectedLayerId];
+  if (!target) return;
+  pushUndo(project);
+  project.layers.forEach((layer) => {
+    if (layer.layer_id !== state.selectedLayerId && project.layouts[layer.layer_id]) project.layouts[layer.layer_id].y = target.y;
+  });
+  touch(project, "Aligned nodes horizontally");
+  renderAll();
+}
+
+function distributeVertical() {
+  const project = currentProject();
+  if (!project || project.layers.length < 3) return;
+  const ordered = project.layers
+    .map((layer) => ({ layer, layout: project.layouts[layer.layer_id] }))
+    .filter((item) => item.layout)
+    .sort((a, b) => a.layout.y - b.layout.y);
+  if (ordered.length < 3) return;
+  pushUndo(project);
+  const top = ordered[0].layout.y;
+  const bottom = ordered[ordered.length - 1].layout.y;
+  const step = (bottom - top) / (ordered.length - 1);
+  ordered.forEach((item, index) => {
+    item.layout.y = snap(top + step * index);
+  });
+  touch(project, "Distributed nodes vertically");
+  renderAll();
 }
 
 function downloadTemplate() {
@@ -632,6 +1440,7 @@ function arrayToTable(rows) {
 function exportSvg(filenameSuffix = "tree") {
   const project = ensureProject();
   const svg = document.querySelector("#treeCanvas").cloneNode(true);
+  svg.querySelectorAll(".port-handle,.resize-handle,.edge-hit,.grid-line,.connector-preview").forEach((item) => item.remove());
   svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
   svg.setAttribute("width", "1280");
   svg.setAttribute("height", "720");
@@ -689,10 +1498,18 @@ document.querySelector("#loadSample").addEventListener("click", () => {
   clone.history = [{ at: clone.created_at, message: "Sample loaded" }];
   state.projects.push(clone);
   state.currentId = clone.project_id;
+  normalizeProject(clone);
   state.selectedLayerId = clone.layers[0].layer_id;
-  autoLayoutProject(clone);
+  state.selectedRelationId = null;
+  state.selectedTextBoxId = null;
+  state.mode = "select";
+  state.pendingConnectLayerId = null;
+  state.undoStack = [];
+  state.redoStack = [];
+  autoLayoutProject(clone, false);
   renderAll();
   switchView("editor");
+  fitSoon();
 });
 document.querySelector("#downloadTemplate").addEventListener("click", downloadTemplate);
 document.querySelectorAll("[data-add-row]").forEach((button) => button.addEventListener("click", () => addRow(button.dataset.addRow)));
@@ -734,11 +1551,44 @@ document.querySelector("#buildTree").addEventListener("click", () => {
   state.selectedLayerId = project.layers[0]?.layer_id || null;
   renderAll();
   switchView("editor");
+  fitSoon();
 });
 document.querySelector("#saveProject").addEventListener("click", () => touch(ensureProject(), "Project saved"));
+document.querySelector("#selectMode").addEventListener("click", () => {
+  state.mode = "select";
+  state.pendingConnectLayerId = null;
+  state.connectStart = null;
+  renderAll();
+});
+document.querySelector("#connectMode").addEventListener("click", () => {
+  state.mode = "connect";
+  state.pendingConnectLayerId = null;
+  state.connectStart = null;
+  state.selectedRelationId = null;
+  state.selectedTextBoxId = null;
+  renderAll();
+});
+document.querySelector("#addLayer").addEventListener("click", addLayerShape);
+document.querySelector("#addTextBox").addEventListener("click", addTextBoxShape);
+document.querySelector("#undoAction").addEventListener("click", undoAction);
+document.querySelector("#redoAction").addEventListener("click", redoAction);
+document.querySelector("#zoomOut").addEventListener("click", () => zoomAt(0.85));
+document.querySelector("#zoomIn").addEventListener("click", () => zoomAt(1.15));
+document.querySelector("#fitView").addEventListener("click", fitViewToGraph);
+document.querySelector("#snapToGrid").addEventListener("change", (event) => {
+  state.snapToGrid = event.target.checked;
+  renderToolbar();
+});
+document.querySelector("#alignHorizontal").addEventListener("click", alignSelectedHorizontal);
+document.querySelector("#distributeVertical").addEventListener("click", distributeVertical);
+document.querySelector("#layerSearch").addEventListener("input", (event) => {
+  state.search = event.target.value;
+  renderMiniTable();
+});
 document.querySelector("#autoLayout").addEventListener("click", () => {
   autoLayoutProject(ensureProject());
   renderAll();
+  fitSoon();
 });
 document.querySelector("#exportExcel").addEventListener("click", exportExcel);
 document.querySelector("#exportExcelTop").addEventListener("click", exportExcel);
@@ -746,19 +1596,107 @@ document.querySelector("#exportSvg").addEventListener("click", () => exportSvg("
 document.querySelector("#exportPptTop").addEventListener("click", () => exportSvg("ppt_image"));
 document.querySelector("#exportPpt").addEventListener("click", exportPptOutline);
 
-window.addEventListener("mousemove", (event) => {
-  if (!state.drag) return;
-  const project = currentProject();
-  const layout = project.layouts[state.drag.layerId];
-  layout.x = Math.max(20, state.drag.x + event.clientX - state.drag.startX);
-  layout.y = Math.max(20, state.drag.y + event.clientY - state.drag.startY);
+document.querySelector("#treeCanvas").addEventListener("mousedown", (event) => {
+  if (
+    event.target.closest?.(".node") ||
+    event.target.closest?.(".text-box") ||
+    event.target.classList.contains("edge-hit") ||
+    event.target.classList.contains("port-handle") ||
+    event.target.classList.contains("resize-handle")
+  ) {
+    return;
+  }
+  state.selectedLayerId = null;
+  state.selectedRelationId = null;
+  state.selectedTextBoxId = null;
+  state.pendingConnectLayerId = null;
+  state.connectStart = null;
+  if (state.mode === "connect") {
+    state.mode = "select";
+    renderAll();
+    return;
+  }
+  state.isPanning = { startX: event.clientX, startY: event.clientY, x: state.pan.x, y: state.pan.y };
+  renderProperty();
   renderCanvas();
 });
 
+document.querySelector("#treeCanvas").addEventListener("wheel", (event) => {
+  event.preventDefault();
+  const before = screenToWorld(event.clientX, event.clientY);
+  state.scale = Math.min(2.5, Math.max(0.25, state.scale * (event.deltaY > 0 ? 0.9 : 1.1)));
+  const rect = event.currentTarget.getBoundingClientRect();
+  state.pan.x = event.clientX - rect.left - before.x * state.scale;
+  state.pan.y = event.clientY - rect.top - before.y * state.scale;
+  renderCanvas();
+  renderToolbar();
+});
+
+window.addEventListener("mousemove", (event) => {
+  if (state.connectStart) {
+    state.pointerWorld = screenToWorld(event.clientX, event.clientY);
+    renderCanvas();
+    return;
+  }
+  if (state.isPanning) {
+    state.pan.x = state.isPanning.x + event.clientX - state.isPanning.startX;
+    state.pan.y = state.isPanning.y + event.clientY - state.isPanning.startY;
+    renderCanvas();
+    return;
+  }
+  if (state.resize) {
+    const project = currentProject();
+    const dx = (event.clientX - state.resize.startX) / state.scale;
+    const dy = (event.clientY - state.resize.startY) / state.scale;
+    const target = state.resize.type === "layer" ? project.layouts[state.resize.id] : project.textBoxes.find((box) => box.id === state.resize.id);
+    if (!target) return;
+    const minWidth = state.resize.type === "layer" ? 70 : 50;
+    const minHeight = state.resize.type === "layer" ? 36 : 24;
+    const movesLeft = state.resize.handle.includes("w");
+    const movesRight = state.resize.handle.includes("e");
+    const movesTop = state.resize.handle.includes("n");
+    const movesBottom = state.resize.handle.includes("s");
+    if (movesLeft) {
+      target.x = snap(state.resize.x + dx);
+      target.width = Math.max(minWidth, snap(state.resize.width - dx));
+    }
+    if (movesRight) target.width = Math.max(minWidth, snap(state.resize.width + dx));
+    if (movesTop) {
+      target.y = snap(state.resize.y + dy);
+      target.height = Math.max(minHeight, snap(state.resize.height - dy));
+    }
+    if (movesBottom) target.height = Math.max(minHeight, snap(state.resize.height + dy));
+    renderCanvas();
+    return;
+  }
+  if (state.drag) {
+    const project = currentProject();
+    const layout = state.drag.layerId
+      ? project.layouts[state.drag.layerId]
+      : project.textBoxes.find((box) => box.id === state.drag.textBoxId);
+    if (!layout) return;
+    layout.x = Math.max(20, snap(state.drag.x + (event.clientX - state.drag.startX) / state.scale));
+    layout.y = Math.max(20, snap(state.drag.y + (event.clientY - state.drag.startY) / state.scale));
+    state.drag.moved = true;
+    renderCanvas();
+  }
+});
+
 window.addEventListener("mouseup", () => {
-  if (!state.drag) return;
-  touch(ensureProject(), "Node position changed");
-  state.drag = null;
+  if (state.isPanning) {
+    state.isPanning = null;
+    renderCanvas();
+  }
+  if (state.drag) {
+    if (state.drag.moved) touch(ensureProject(), "Node position changed");
+    state.drag = null;
+    renderAll();
+  }
+  if (state.resize) {
+    touch(ensureProject(), "Shape resized");
+    state.resize = null;
+    renderAll();
+  }
 });
 
 renderAll();

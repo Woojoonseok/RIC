@@ -81,18 +81,56 @@
 
         <section id="editor" class="view editor-layout">
           <aside class="panel input-side">
-            <h2>Input Table</h2>
+            <div class="panel-head compact">
+              <h2>Input Table</h2>
+              <input id="layerSearch" type="search" placeholder="Search" />
+            </div>
             <div id="miniTable" class="mini-table"></div>
           </aside>
           <section class="canvas-wrap">
             <div class="toolbar">
-              <button id="saveProject">Save</button>
-              <button id="autoLayout">Auto Layout</button>
-              <button id="validateEditor">Validate</button>
-              <button id="exportExcelTop">Export Excel</button>
-              <button id="exportPptTop">Export PPT</button>
+              <div class="tool-group">
+                <span>Tools</span>
+                <button id="selectMode">Select</button>
+                <button id="connectMode">Connector</button>
+              </div>
+              <div class="tool-group">
+                <span>Insert</span>
+                <button id="addLayer">Layer</button>
+                <button id="addTextBox">Text Box</button>
+              </div>
+              <div class="tool-group">
+                <span>Edit</span>
+                <button id="saveProject">Save</button>
+                <button id="undoAction">Undo</button>
+                <button id="redoAction">Redo</button>
+              </div>
+              <div class="tool-group">
+                <span>View</span>
+                <button id="zoomOut">-</button>
+                <span id="zoomLabel">100%</span>
+                <button id="zoomIn">+</button>
+                <button id="fitView">Fit</button>
+                <label class="toolbar-check"><input id="snapToGrid" type="checkbox" checked /> Snap</label>
+              </div>
+              <div class="tool-group">
+                <span>Arrange</span>
+                <button id="alignHorizontal">Align H</button>
+                <button id="distributeVertical">Distribute V</button>
+                <button id="autoLayout">Auto Layout</button>
+              </div>
+              <div class="tool-group">
+                <span>Output</span>
+                <button id="validateEditor">Validate</button>
+                <button id="exportExcelTop">Excel</button>
+                <button id="exportPptTop">PPT</button>
+              </div>
             </div>
-            <svg id="treeCanvas" role="img" aria-label="Align tree canvas"></svg>
+            <div class="canvas-stage">
+              <svg id="treeCanvas" role="img" aria-label="Align tree canvas"></svg>
+              <svg id="miniMap" aria-label="Mini map"></svg>
+              <div id="modeHint">Select Mode</div>
+            </div>
           </section>
           <aside class="panel property-side">
             <h2>Property</h2>
