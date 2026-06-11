@@ -47,8 +47,10 @@ let state = {
   projects: loadProjects(),
   currentId: null,
   selectedLayerId: null,
+  selectedLayerIds: new Set(),
   selectedRelationId: null,
   selectedTextBoxId: null,
+  selectedTextBoxIds: new Set(),
   mode: "select",
   pendingConnectLayerId: null,
   connectStart: null,
@@ -61,6 +63,8 @@ let state = {
   scale: 1,
   isPanning: null,
   snapToGrid: true,
+  layersCollapsed: false,
+  propertiesCollapsed: false,
   search: "",
   undoStack: [],
   redoStack: [],
@@ -184,8 +188,11 @@ function renderProjectList() {
       open.addEventListener("click", () => {
         state.currentId = project.project_id;
         state.selectedLayerId = project.layers[0]?.layer_id || null;
+        state.selectedLayerIds = new Set(state.selectedLayerId ? [state.selectedLayerId] : []);
         state.selectedRelationId = null;
         state.pendingConnectLayerId = null;
+        state.selectedTextBoxId = null;
+        state.selectedTextBoxIds = new Set();
         state.mode = "select";
         state.undoStack = [];
         state.redoStack = [];
@@ -198,6 +205,7 @@ function renderProjectList() {
 }
 
 function renderAll() {
+  renderEditorLayout();
   renderMeta();
   renderProjectList();
   renderAlignTable();
@@ -207,6 +215,13 @@ function renderAll() {
   renderProperty();
   renderCanvas();
   renderToolbar();
+}
+
+function renderEditorLayout() {
+  const editor = document.querySelector("#editor");
+  if (!editor) return;
+  editor.classList.toggle("layers-collapsed", state.layersCollapsed);
+  editor.classList.toggle("properties-collapsed", state.propertiesCollapsed);
 }
 
 function ensureProject() {
@@ -234,8 +249,10 @@ function createProject(name) {
   state.projects.push(project);
   state.currentId = project.project_id;
   state.selectedLayerId = null;
+  state.selectedLayerIds = new Set();
   state.selectedRelationId = null;
   state.selectedTextBoxId = null;
+  state.selectedTextBoxIds = new Set();
   state.undoStack = [];
   state.redoStack = [];
   touch(project, "Project created");
@@ -281,9 +298,9 @@ function renderAlignTable() {
     },
     (rowIndex) => {
       const layer = project?.layers[rowIndex];
-      if (layer) selectLayer(layer.layer_id, true);
+      if (layer) selectLayer(layer.layer_id, true, false);
     },
-    (rowIndex) => project?.layers[rowIndex]?.layer_id === state.selectedLayerId
+    (rowIndex) => state.selectedLayerIds.has(project?.layers[rowIndex]?.layer_id)
   );
 }
 
@@ -632,10 +649,10 @@ function renderMiniTable() {
   project.layers.forEach((layer) => {
     const row = document.createElement("div");
     const searchable = `${layer.step} ${layer.layer_name} ${layer.layer_property} ${layer.align_name} ${layer.align_side}`.toLowerCase();
-    row.className = `mini-row ${layer.layer_id === state.selectedLayerId ? "active" : ""} ${query && !searchable.includes(query) ? "hidden" : ""}`;
+    row.className = `mini-row ${state.selectedLayerIds.has(layer.layer_id) ? "active" : ""} ${query && !searchable.includes(query) ? "hidden" : ""}`;
     row.innerHTML = `<strong>${escapeHtml(layer.step)} ${escapeHtml(layer.layer_name)}</strong><span>${escapeHtml(layer.align_name)} / ${escapeHtml(layer.align_side || "-")}</span>`;
     row.addEventListener("click", () => {
-      selectLayer(layer.layer_id, true);
+      selectLayer(layer.layer_id, true, false);
     });
     root.append(row);
   });
@@ -645,6 +662,7 @@ function renderProperty() {
   const project = currentProject();
   const root = document.querySelector("#propertyPanel");
   const layer = project?.layers.find((item) => item.layer_id === state.selectedLayerId);
+  const selectedLayers = project?.layers.filter((item) => state.selectedLayerIds.has(item.layer_id)) || [];
   const relation = project?.relations.find((item) => item.relation_id === state.selectedRelationId);
   const textBox = project?.textBoxes.find((item) => item.id === state.selectedTextBoxId);
   if (project && textBox) {
@@ -674,8 +692,13 @@ function renderProperty() {
       pushUndo(project);
       project.textBoxes = project.textBoxes.filter((item) => item.id !== textBox.id);
       state.selectedTextBoxId = null;
+      state.selectedTextBoxIds = new Set();
       touch(project, "Deleted text box");
       renderAll();
+    });
+    ["#textBoxText", "#textFontSize", "#textColor", "#textFill", "#textTransparent"].forEach((selector) => {
+      document.querySelector(selector).addEventListener("input", () => applyTextBoxStyleFromPanel(project, true));
+      document.querySelector(selector).addEventListener("change", () => applyTextBoxStyleFromPanel(project, true));
     });
     return;
   }
@@ -725,6 +748,18 @@ function renderProperty() {
       touch(project, "Deleted relation");
       renderAll();
     });
+    ["#relType", "#relSourcePort", "#relTargetPort"].forEach((selector) => {
+      document.querySelector(selector).addEventListener("change", () => {
+        pushUndo(project);
+        relation.relation_type = document.querySelector("#relType").value;
+        relation.source_port = document.querySelector("#relSourcePort").value;
+        relation.target_port = document.querySelector("#relTargetPort").value;
+        validateProject(project);
+        touch(project, "Updated relation format");
+        renderRelationTable();
+        renderCanvas();
+      });
+    });
     return;
   }
   if (!project || !layer) {
@@ -736,7 +771,7 @@ function renderProperty() {
   const style = project.styles[layer.layer_id];
   root.className = "property-form";
   root.innerHTML = `
-    <div class="property-section">Selected Layer</div>
+    <div class="property-section">${selectedLayers.length > 1 ? `${selectedLayers.length} Layers Selected` : "Selected Layer"}</div>
     <label>Layer<input id="propLayer" value="${escapeAttr(layer.layer_name)}"></label>
     <label>Step<input id="propStep" value="${escapeAttr(layer.step)}"></label>
     <label>Property<input id="propProperty" value="${escapeAttr(layer.layer_property)}"></label>
@@ -758,6 +793,12 @@ function renderProperty() {
       <button id="deleteLayer" class="danger">Delete</button>
     </div>
   `;
+  if (selectedLayers.length > 1) {
+    ["#propLayer", "#propStep", "#propProperty", "#propAlign", "#propSide"].forEach((selector) => {
+      const input = document.querySelector(selector);
+      input.disabled = true;
+    });
+  }
   document.querySelector("#applyProperty").addEventListener("click", () => {
     pushUndo(project);
     const previousName = layer.layer_name;
@@ -768,11 +809,7 @@ function renderProperty() {
     layer.align_side = document.querySelector("#propSide").value;
     layout.width = Math.max(70, Number(document.querySelector("#shapeWidth").value) || layout.width);
     layout.height = Math.max(36, Number(document.querySelector("#shapeHeight").value) || layout.height);
-    style.fill = document.querySelector("#shapeFill").value;
-    style.stroke = document.querySelector("#shapeStroke").value;
-    style.strokeWidth = Number(document.querySelector("#shapeStrokeWidth").value) || 1.5;
-    style.textColor = document.querySelector("#shapeTextColor").value;
-    style.fontSize = Number(document.querySelector("#shapeFontSize").value) || 13;
+    applyLayerStyleFromPanel(project);
     project.relations.forEach((relation) => {
       if (relation.parent_layer === previousName) relation.parent_layer = layer.layer_name;
       if (relation.child_layer === previousName) relation.child_layer = layer.layer_name;
@@ -783,9 +820,15 @@ function renderProperty() {
   document.querySelector("#deleteLayer").addEventListener("click", () => {
     deleteLayerWithConfirmation(layer);
   });
+  ["#shapeFill", "#shapeStroke", "#shapeStrokeWidth", "#shapeTextColor", "#shapeFontSize", "#shapeWidth", "#shapeHeight"].forEach((selector) => {
+    document.querySelector(selector).addEventListener("input", () => {
+      applyLayerStyleFromPanel(project, true);
+    });
+  });
   document.querySelectorAll(".swatch").forEach((button) => {
     button.addEventListener("click", () => {
       document.querySelector("#shapeFill").value = button.dataset.fill;
+      applyLayerStyleFromPanel(project, true);
     });
   });
 }
@@ -861,7 +904,7 @@ function renderCanvas() {
   project.layers.forEach((layer) => {
     const layout = project.layouts[layer.layer_id] || { x: 80, y: 80, width: 150, height: 64 };
     const style = project.styles[layer.layer_id] || DEFAULT_LAYER_STYLE;
-    const isActive = layer.layer_id === state.selectedLayerId;
+    const isActive = state.selectedLayerIds.has(layer.layer_id);
     const isConnectSource = state.connectStart?.layerId === layer.layer_id;
     layout.width = layout.width || 150;
     layout.height = layout.height || 64;
@@ -879,12 +922,12 @@ function renderCanvas() {
     node.addEventListener("mousedown", (event) => {
       event.stopPropagation();
       if (state.mode === "connect") {
-        selectLayer(layer.layer_id, false);
+        selectLayer(layer.layer_id, false, false);
         return;
       }
-      pushUndo(project);
-      selectLayer(layer.layer_id, false);
-      state.drag = { layerId: layer.layer_id, startX: event.clientX, startY: event.clientY, x: layout.x, y: layout.y, moved: false };
+      const additive = event.ctrlKey || event.metaKey || event.shiftKey;
+      selectLayer(layer.layer_id, false, additive);
+      if (state.selectedLayerIds.has(layer.layer_id)) startSelectionDrag(event);
     });
     viewport.append(node);
     if (layer.layer_id === state.selectedLayerId || state.mode === "connect" || state.connectStart) {
@@ -896,7 +939,7 @@ function renderCanvas() {
   });
   project.textBoxes.forEach((box) => {
     const group = createSvgElement("g");
-    const isActive = box.id === state.selectedTextBoxId;
+    const isActive = state.selectedTextBoxIds.has(box.id);
     group.setAttribute("class", `text-box ${isActive ? "active" : ""}`);
     group.setAttribute("transform", `translate(${box.x}, ${box.y})`);
     group.dataset.textBoxId = box.id;
@@ -906,9 +949,9 @@ function renderCanvas() {
     `;
     group.addEventListener("mousedown", (event) => {
       event.stopPropagation();
-      pushUndo(project);
-      selectTextBox(box.id);
-      state.drag = { textBoxId: box.id, startX: event.clientX, startY: event.clientY, x: box.x, y: box.y, moved: false };
+      const additive = event.ctrlKey || event.metaKey || event.shiftKey;
+      selectTextBox(box.id, additive);
+      if (state.selectedTextBoxIds.has(box.id)) startSelectionDrag(event);
     });
     viewport.append(group);
     if (box.id === state.selectedTextBoxId) renderTextResizeHandles(viewport, box);
@@ -1030,14 +1073,46 @@ function renderTextResizeHandles(viewport, box) {
   });
 }
 
+function startSelectionDrag(event) {
+  const project = currentProject();
+  if (!project) return;
+  const layerPositions = {};
+  state.selectedLayerIds.forEach((id) => {
+    const layout = project.layouts[id];
+    if (layout) layerPositions[id] = { x: layout.x, y: layout.y };
+  });
+  const textPositions = {};
+  state.selectedTextBoxIds.forEach((id) => {
+    const box = project.textBoxes.find((item) => item.id === id);
+    if (box) textPositions[id] = { x: box.x, y: box.y };
+  });
+  pushUndo(project);
+  state.drag = {
+    type: "selection",
+    startX: event.clientX,
+    startY: event.clientY,
+    layerPositions,
+    textPositions,
+    moved: false,
+  };
+}
+
 function createSvgElement(name) {
   return document.createElementNS("http://www.w3.org/2000/svg", name);
 }
 
-function selectLayer(layerId, center = false) {
-  state.selectedLayerId = layerId;
+function selectLayer(layerId, center = false, additive = false) {
+  if (additive) {
+    if (state.selectedLayerIds.has(layerId)) state.selectedLayerIds.delete(layerId);
+    else state.selectedLayerIds.add(layerId);
+    state.selectedLayerId = state.selectedLayerIds.has(layerId) ? layerId : [...state.selectedLayerIds][0] || null;
+  } else {
+    state.selectedLayerIds = new Set(layerId ? [layerId] : []);
+    state.selectedLayerId = layerId;
+  }
   state.selectedRelationId = null;
   state.selectedTextBoxId = null;
+  state.selectedTextBoxIds = additive ? state.selectedTextBoxIds : new Set();
   if (center) centerNode(layerId);
   renderMiniTable();
   renderRelationTable();
@@ -1049,7 +1124,9 @@ function selectLayer(layerId, center = false) {
 function selectRelation(relationId) {
   state.selectedRelationId = relationId;
   state.selectedLayerId = null;
+  state.selectedLayerIds = new Set();
   state.selectedTextBoxId = null;
+  state.selectedTextBoxIds = new Set();
   renderAlignTable();
   renderRelationTable();
   renderMiniTable();
@@ -1058,9 +1135,17 @@ function selectRelation(relationId) {
   renderToolbar();
 }
 
-function selectTextBox(textBoxId) {
-  state.selectedTextBoxId = textBoxId;
-  state.selectedLayerId = null;
+function selectTextBox(textBoxId, additive = false) {
+  if (additive) {
+    if (state.selectedTextBoxIds.has(textBoxId)) state.selectedTextBoxIds.delete(textBoxId);
+    else state.selectedTextBoxIds.add(textBoxId);
+    state.selectedTextBoxId = state.selectedTextBoxIds.has(textBoxId) ? textBoxId : [...state.selectedTextBoxIds][0] || null;
+  } else {
+    state.selectedTextBoxIds = new Set(textBoxId ? [textBoxId] : []);
+    state.selectedTextBoxId = textBoxId;
+    state.selectedLayerIds = new Set();
+    state.selectedLayerId = null;
+  }
   state.selectedRelationId = null;
   renderAlignTable();
   renderRelationTable();
@@ -1068,6 +1153,53 @@ function selectTextBox(textBoxId) {
   renderProperty();
   renderCanvas();
   renderToolbar();
+}
+
+function applyLayerStyleFromPanel(project, live = false) {
+  const targetIds = state.selectedLayerIds.size ? [...state.selectedLayerIds] : state.selectedLayerId ? [state.selectedLayerId] : [];
+  if (!targetIds.length) return;
+  if (live) pushUndo(project);
+  const width = Math.max(70, Number(document.querySelector("#shapeWidth")?.value) || 150);
+  const height = Math.max(36, Number(document.querySelector("#shapeHeight")?.value) || 64);
+  const nextStyle = {
+    fill: document.querySelector("#shapeFill")?.value || DEFAULT_LAYER_STYLE.fill,
+    stroke: document.querySelector("#shapeStroke")?.value || DEFAULT_LAYER_STYLE.stroke,
+    strokeWidth: Number(document.querySelector("#shapeStrokeWidth")?.value) || DEFAULT_LAYER_STYLE.strokeWidth,
+    textColor: document.querySelector("#shapeTextColor")?.value || DEFAULT_LAYER_STYLE.textColor,
+    fontSize: Number(document.querySelector("#shapeFontSize")?.value) || DEFAULT_LAYER_STYLE.fontSize,
+  };
+  targetIds.forEach((id) => {
+    project.styles[id] = { ...project.styles[id], ...nextStyle };
+    if (project.layouts[id]) {
+      project.layouts[id].width = width;
+      project.layouts[id].height = height;
+    }
+  });
+  if (live) {
+    project.updated_at = new Date().toISOString();
+    persist();
+    renderCanvas();
+    renderMiniTable();
+  }
+}
+
+function applyTextBoxStyleFromPanel(project, live = false) {
+  const targetIds = state.selectedTextBoxIds.size ? [...state.selectedTextBoxIds] : state.selectedTextBoxId ? [state.selectedTextBoxId] : [];
+  if (!targetIds.length) return;
+  if (live) pushUndo(project);
+  targetIds.forEach((id) => {
+    const box = project.textBoxes.find((item) => item.id === id);
+    if (!box) return;
+    box.text = document.querySelector("#textBoxText")?.value || "";
+    box.style.fontSize = Number(document.querySelector("#textFontSize")?.value) || 16;
+    box.style.textColor = document.querySelector("#textColor")?.value || DEFAULT_TEXT_STYLE.textColor;
+    box.style.fill = document.querySelector("#textTransparent")?.checked ? "transparent" : document.querySelector("#textFill")?.value || "transparent";
+  });
+  if (live) {
+    project.updated_at = new Date().toISOString();
+    persist();
+    renderCanvas();
+  }
 }
 
 function handleConnectNode(layer) {
@@ -1111,8 +1243,10 @@ function startOrFinishConnection(layer, port) {
     state.mode = "connect";
     state.connectStart = { layerId: layer.layer_id, port };
     state.selectedLayerId = layer.layer_id;
+    state.selectedLayerIds = new Set([layer.layer_id]);
     state.selectedRelationId = null;
     state.selectedTextBoxId = null;
+    state.selectedTextBoxIds = new Set();
     renderAll();
     return;
   }
@@ -1138,7 +1272,9 @@ function startOrFinishConnection(layer, port) {
   project.relations.push(draft);
   state.selectedRelationId = draft.relation_id;
   state.selectedLayerId = null;
+  state.selectedLayerIds = new Set();
   state.selectedTextBoxId = null;
+  state.selectedTextBoxIds = new Set();
   state.connectStart = null;
   state.pendingConnectLayerId = null;
   state.mode = "select";
@@ -1161,6 +1297,7 @@ function deleteLayerWithConfirmation(layer) {
   project.relations = project.relations.filter((relation) => relation.parent_layer !== layer.layer_name && relation.child_layer !== layer.layer_name);
   delete project.layouts[layer.layer_id];
   state.selectedLayerId = project.layers[0]?.layer_id || null;
+  state.selectedLayerIds = new Set(state.selectedLayerId ? [state.selectedLayerId] : []);
   state.selectedRelationId = null;
   validateProject(project);
   touch(project, `Deleted layer ${layer.layer_name}`);
@@ -1197,8 +1334,10 @@ function addLayerShape() {
   project.layouts[layer.layer_id] = { x: snap(center.x - 75), y: snap(center.y - 32), width: 150, height: 64 };
   project.styles[layer.layer_id] = { ...DEFAULT_LAYER_STYLE };
   state.selectedLayerId = layer.layer_id;
+  state.selectedLayerIds = new Set([layer.layer_id]);
   state.selectedRelationId = null;
   state.selectedTextBoxId = null;
+  state.selectedTextBoxIds = new Set();
   validateProject(project);
   touch(project, `Added layer ${name}`);
   renderAll();
@@ -1219,7 +1358,9 @@ function addTextBoxShape() {
   };
   project.textBoxes.push(box);
   state.selectedTextBoxId = box.id;
+  state.selectedTextBoxIds = new Set([box.id]);
   state.selectedLayerId = null;
+  state.selectedLayerIds = new Set();
   state.selectedRelationId = null;
   state.mode = "select";
   touch(project, "Added text box");
@@ -1306,7 +1447,7 @@ function renderMiniMap() {
     rect.setAttribute("y", pad + (layout.y - bounds.minY) * scale);
     rect.setAttribute("width", Math.max(4, layout.width * scale));
     rect.setAttribute("height", Math.max(4, layout.height * scale));
-    rect.setAttribute("class", `minimap-node ${layer.layer_id === state.selectedLayerId ? "active" : ""}`);
+    rect.setAttribute("class", `minimap-node ${state.selectedLayerIds.has(layer.layer_id) ? "active" : ""}`);
     mini.append(rect);
   });
   const canvasRect = document.querySelector("#treeCanvas").getBoundingClientRect();
@@ -1322,6 +1463,8 @@ function renderMiniMap() {
 function renderToolbar() {
   document.querySelector("#selectMode")?.classList.toggle("active", state.mode === "select");
   document.querySelector("#connectMode")?.classList.toggle("active", state.mode === "connect");
+  document.querySelector("#toggleLayers")?.classList.toggle("active", !state.layersCollapsed);
+  document.querySelector("#toggleProperties")?.classList.toggle("active", !state.propertiesCollapsed);
   const zoomLabel = document.querySelector("#zoomLabel");
   if (zoomLabel) zoomLabel.textContent = `${Math.round(state.scale * 100)}%`;
   const snapInput = document.querySelector("#snapToGrid");
@@ -1360,9 +1503,10 @@ function alignSelectedHorizontal() {
   if (!project || !state.selectedLayerId) return;
   const target = project.layouts[state.selectedLayerId];
   if (!target) return;
+  const targetIds = state.selectedLayerIds.size > 1 ? [...state.selectedLayerIds] : project.layers.map((layer) => layer.layer_id);
   pushUndo(project);
-  project.layers.forEach((layer) => {
-    if (layer.layer_id !== state.selectedLayerId && project.layouts[layer.layer_id]) project.layouts[layer.layer_id].y = target.y;
+  targetIds.forEach((id) => {
+    if (id !== state.selectedLayerId && project.layouts[id]) project.layouts[id].y = target.y;
   });
   touch(project, "Aligned nodes horizontally");
   renderAll();
@@ -1371,7 +1515,8 @@ function alignSelectedHorizontal() {
 function distributeVertical() {
   const project = currentProject();
   if (!project || project.layers.length < 3) return;
-  const ordered = project.layers
+  const sourceLayers = state.selectedLayerIds.size > 2 ? project.layers.filter((layer) => state.selectedLayerIds.has(layer.layer_id)) : project.layers;
+  const ordered = sourceLayers
     .map((layer) => ({ layer, layout: project.layouts[layer.layer_id] }))
     .filter((item) => item.layout)
     .sort((a, b) => a.layout.y - b.layout.y);
@@ -1500,8 +1645,10 @@ document.querySelector("#loadSample").addEventListener("click", () => {
   state.currentId = clone.project_id;
   normalizeProject(clone);
   state.selectedLayerId = clone.layers[0].layer_id;
+  state.selectedLayerIds = new Set([state.selectedLayerId]);
   state.selectedRelationId = null;
   state.selectedTextBoxId = null;
+  state.selectedTextBoxIds = new Set();
   state.mode = "select";
   state.pendingConnectLayerId = null;
   state.undoStack = [];
@@ -1575,6 +1722,16 @@ document.querySelector("#redoAction").addEventListener("click", redoAction);
 document.querySelector("#zoomOut").addEventListener("click", () => zoomAt(0.85));
 document.querySelector("#zoomIn").addEventListener("click", () => zoomAt(1.15));
 document.querySelector("#fitView").addEventListener("click", fitViewToGraph);
+document.querySelector("#toggleLayers").addEventListener("click", () => {
+  state.layersCollapsed = !state.layersCollapsed;
+  renderEditorLayout();
+  fitSoon();
+});
+document.querySelector("#toggleProperties").addEventListener("click", () => {
+  state.propertiesCollapsed = !state.propertiesCollapsed;
+  renderEditorLayout();
+  fitSoon();
+});
 document.querySelector("#snapToGrid").addEventListener("change", (event) => {
   state.snapToGrid = event.target.checked;
   renderToolbar();
@@ -1595,6 +1752,9 @@ document.querySelector("#exportExcelTop").addEventListener("click", exportExcel)
 document.querySelector("#exportSvg").addEventListener("click", () => exportSvg("ppt_image"));
 document.querySelector("#exportPptTop").addEventListener("click", () => exportSvg("ppt_image"));
 document.querySelector("#exportPpt").addEventListener("click", exportPptOutline);
+document.querySelector(".property-side").addEventListener("mousedown", (event) => event.stopPropagation());
+document.querySelector(".property-side").addEventListener("click", (event) => event.stopPropagation());
+document.querySelector(".property-side").addEventListener("pointerdown", (event) => event.stopPropagation());
 
 document.querySelector("#treeCanvas").addEventListener("mousedown", (event) => {
   if (
@@ -1607,8 +1767,10 @@ document.querySelector("#treeCanvas").addEventListener("mousedown", (event) => {
     return;
   }
   state.selectedLayerId = null;
+  state.selectedLayerIds = new Set();
   state.selectedRelationId = null;
   state.selectedTextBoxId = null;
+  state.selectedTextBoxIds = new Set();
   state.pendingConnectLayerId = null;
   state.connectStart = null;
   if (state.mode === "connect") {
@@ -1671,12 +1833,22 @@ window.addEventListener("mousemove", (event) => {
   }
   if (state.drag) {
     const project = currentProject();
-    const layout = state.drag.layerId
-      ? project.layouts[state.drag.layerId]
-      : project.textBoxes.find((box) => box.id === state.drag.textBoxId);
-    if (!layout) return;
-    layout.x = Math.max(20, snap(state.drag.x + (event.clientX - state.drag.startX) / state.scale));
-    layout.y = Math.max(20, snap(state.drag.y + (event.clientY - state.drag.startY) / state.scale));
+    const dx = (event.clientX - state.drag.startX) / state.scale;
+    const dy = (event.clientY - state.drag.startY) / state.scale;
+    if (state.drag.type === "selection") {
+      Object.entries(state.drag.layerPositions).forEach(([id, position]) => {
+        const layout = project.layouts[id];
+        if (!layout) return;
+        layout.x = Math.max(20, snap(position.x + dx));
+        layout.y = Math.max(20, snap(position.y + dy));
+      });
+      Object.entries(state.drag.textPositions).forEach(([id, position]) => {
+        const box = project.textBoxes.find((item) => item.id === id);
+        if (!box) return;
+        box.x = Math.max(20, snap(position.x + dx));
+        box.y = Math.max(20, snap(position.y + dy));
+      });
+    }
     state.drag.moved = true;
     renderCanvas();
   }
