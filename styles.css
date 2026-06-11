@@ -597,6 +597,14 @@ dialog menu {
   stroke-dasharray: 6 4;
 }
 
+.selection-box {
+  fill: rgba(36, 87, 214, 0.1);
+  stroke: var(--blue);
+  stroke-width: 1.5;
+  stroke-dasharray: 6 4;
+  pointer-events: none;
+}
+
 .text-box rect {
   fill: transparent;
   stroke: transparent;
