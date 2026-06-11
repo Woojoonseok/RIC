@@ -59,6 +59,7 @@ let state = {
   uploadTarget: "align",
   drag: null,
   resize: null,
+  selectionBox: null,
   pan: { x: 0, y: 0 },
   scale: 1,
   isPanning: null,
@@ -926,8 +927,10 @@ function renderCanvas() {
         return;
       }
       const additive = event.ctrlKey || event.metaKey || event.shiftKey;
-      selectLayer(layer.layer_id, false, additive);
-      if (state.selectedLayerIds.has(layer.layer_id)) startSelectionDrag(event);
+      if (additive || !state.selectedLayerIds.has(layer.layer_id)) {
+        selectLayer(layer.layer_id, false, additive);
+      }
+      if (event.altKey && state.selectedLayerIds.has(layer.layer_id)) startSelectionDrag(event);
     });
     viewport.append(node);
     if (layer.layer_id === state.selectedLayerId || state.mode === "connect" || state.connectStart) {
@@ -950,8 +953,10 @@ function renderCanvas() {
     group.addEventListener("mousedown", (event) => {
       event.stopPropagation();
       const additive = event.ctrlKey || event.metaKey || event.shiftKey;
-      selectTextBox(box.id, additive);
-      if (state.selectedTextBoxIds.has(box.id)) startSelectionDrag(event);
+      if (additive || !state.selectedTextBoxIds.has(box.id)) {
+        selectTextBox(box.id, additive);
+      }
+      if (event.altKey && state.selectedTextBoxIds.has(box.id)) startSelectionDrag(event);
     });
     viewport.append(group);
     if (box.id === state.selectedTextBoxId) renderTextResizeHandles(viewport, box);
@@ -966,6 +971,16 @@ function renderCanvas() {
       preview.setAttribute("class", "connector-preview");
       viewport.append(preview);
     }
+  }
+  if (state.selectionBox) {
+    const box = normalizeBox(state.selectionBox.start, state.selectionBox.current);
+    const rect = createSvgElement("rect");
+    rect.setAttribute("x", box.x);
+    rect.setAttribute("y", box.y);
+    rect.setAttribute("width", box.width);
+    rect.setAttribute("height", box.height);
+    rect.setAttribute("class", "selection-box");
+    viewport.append(rect);
   }
   renderMiniMap();
 }
@@ -1095,6 +1110,71 @@ function startSelectionDrag(event) {
     textPositions,
     moved: false,
   };
+}
+
+function startMarqueeSelection(event) {
+  const start = screenToWorld(event.clientX, event.clientY);
+  state.selectionBox = {
+    start,
+    current: start,
+    additive: event.ctrlKey || event.metaKey || event.shiftKey,
+    moved: false,
+  };
+}
+
+function updateMarqueeSelection(event) {
+  if (!state.selectionBox) return;
+  state.selectionBox.current = screenToWorld(event.clientX, event.clientY);
+  const dx = state.selectionBox.current.x - state.selectionBox.start.x;
+  const dy = state.selectionBox.current.y - state.selectionBox.start.y;
+  state.selectionBox.moved = Math.abs(dx) > 4 || Math.abs(dy) > 4;
+  renderCanvas();
+}
+
+function finishMarqueeSelection() {
+  const project = currentProject();
+  if (!project || !state.selectionBox) return;
+  const box = normalizeBox(state.selectionBox.start, state.selectionBox.current);
+  const selectedLayers = project.layers
+    .filter((layer) => intersects(box, project.layouts[layer.layer_id]))
+    .map((layer) => layer.layer_id);
+  const selectedTextBoxes = project.textBoxes
+    .filter((textBox) => intersects(box, textBox))
+    .map((textBox) => textBox.id);
+
+  if (state.selectionBox.additive) {
+    selectedLayers.forEach((id) => state.selectedLayerIds.add(id));
+    selectedTextBoxes.forEach((id) => state.selectedTextBoxIds.add(id));
+  } else {
+    state.selectedLayerIds = new Set(selectedLayers);
+    state.selectedTextBoxIds = new Set(selectedTextBoxes);
+  }
+  state.selectedLayerId = [...state.selectedLayerIds][0] || null;
+  state.selectedTextBoxId = state.selectedLayerId ? null : [...state.selectedTextBoxIds][0] || null;
+  state.selectedRelationId = null;
+  state.selectionBox = null;
+  renderAll();
+}
+
+function normalizeBox(a, b) {
+  const x = Math.min(a.x, b.x);
+  const y = Math.min(a.y, b.y);
+  return {
+    x,
+    y,
+    width: Math.abs(a.x - b.x),
+    height: Math.abs(a.y - b.y),
+  };
+}
+
+function intersects(box, item) {
+  if (!item) return false;
+  return (
+    item.x < box.x + box.width &&
+    item.x + item.width > box.x &&
+    item.y < box.y + box.height &&
+    item.y + item.height > box.y
+  );
 }
 
 function createSvgElement(name) {
@@ -1472,7 +1552,7 @@ function renderToolbar() {
   const hint = document.querySelector("#modeHint");
   if (hint) {
     if (state.connectStart) hint.textContent = "Connector: choose target point";
-    else hint.textContent = state.mode === "connect" ? "Connector: choose start point" : "Select Mode";
+    else hint.textContent = state.mode === "connect" ? "Connector: choose start point" : "Drag canvas to select. Alt+drag selection to move.";
   }
 }
 
@@ -1766,11 +1846,13 @@ document.querySelector("#treeCanvas").addEventListener("mousedown", (event) => {
   ) {
     return;
   }
-  state.selectedLayerId = null;
-  state.selectedLayerIds = new Set();
-  state.selectedRelationId = null;
-  state.selectedTextBoxId = null;
-  state.selectedTextBoxIds = new Set();
+  if (!(event.ctrlKey || event.metaKey || event.shiftKey)) {
+    state.selectedLayerId = null;
+    state.selectedLayerIds = new Set();
+    state.selectedRelationId = null;
+    state.selectedTextBoxId = null;
+    state.selectedTextBoxIds = new Set();
+  }
   state.pendingConnectLayerId = null;
   state.connectStart = null;
   if (state.mode === "connect") {
@@ -1778,7 +1860,7 @@ document.querySelector("#treeCanvas").addEventListener("mousedown", (event) => {
     renderAll();
     return;
   }
-  state.isPanning = { startX: event.clientX, startY: event.clientY, x: state.pan.x, y: state.pan.y };
+  startMarqueeSelection(event);
   renderProperty();
   renderCanvas();
 });
@@ -1798,6 +1880,10 @@ window.addEventListener("mousemove", (event) => {
   if (state.connectStart) {
     state.pointerWorld = screenToWorld(event.clientX, event.clientY);
     renderCanvas();
+    return;
+  }
+  if (state.selectionBox) {
+    updateMarqueeSelection(event);
     return;
   }
   if (state.isPanning) {
@@ -1855,6 +1941,9 @@ window.addEventListener("mousemove", (event) => {
 });
 
 window.addEventListener("mouseup", () => {
+  if (state.selectionBox) {
+    finishMarqueeSelection();
+  }
   if (state.isPanning) {
     state.isPanning = null;
     renderCanvas();
