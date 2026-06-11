@@ -249,13 +249,11 @@ function createProject(name) {
   };
   state.projects.push(project);
   state.currentId = project.project_id;
-  if (!(event.ctrlKey || event.metaKey || event.shiftKey)) {
-    state.selectedLayerId = null;
-    state.selectedLayerIds = new Set();
-    state.selectedRelationId = null;
-    state.selectedTextBoxId = null;
-    state.selectedTextBoxIds = new Set();
-  }
+  state.selectedLayerId = null;
+  state.selectedLayerIds = new Set();
+  state.selectedRelationId = null;
+  state.selectedTextBoxId = null;
+  state.selectedTextBoxIds = new Set();
   state.undoStack = [];
   state.redoStack = [];
   touch(project, "Project created");
@@ -1848,11 +1846,13 @@ document.querySelector("#treeCanvas").addEventListener("mousedown", (event) => {
   ) {
     return;
   }
-  state.selectedLayerId = null;
-  state.selectedLayerIds = new Set();
-  state.selectedRelationId = null;
-  state.selectedTextBoxId = null;
-  state.selectedTextBoxIds = new Set();
+  if (!(event.ctrlKey || event.metaKey || event.shiftKey)) {
+    state.selectedLayerId = null;
+    state.selectedLayerIds = new Set();
+    state.selectedRelationId = null;
+    state.selectedTextBoxId = null;
+    state.selectedTextBoxIds = new Set();
+  }
   state.pendingConnectLayerId = null;
   state.connectStart = null;
   if (state.mode === "connect") {
