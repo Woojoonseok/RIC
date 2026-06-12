@@ -108,3 +108,21 @@ export interface SelectionItem {
   kind: SelectionKind;
   id: string;
 }
+
+export interface LayoutBatchUpdate extends Partial<Layout> {
+  layer_id: string;
+}
+
+export interface StyleBatchUpdate extends Partial<ShapeStyle> {
+  layer_id: string;
+}
+
+export interface TextBoxBatchUpdate extends Partial<TextBox> {
+  id: string;
+}
+
+export interface GraphBatchUpdate {
+  layouts?: LayoutBatchUpdate[];
+  styles?: StyleBatchUpdate[];
+  text_boxes?: TextBoxBatchUpdate[];
+}

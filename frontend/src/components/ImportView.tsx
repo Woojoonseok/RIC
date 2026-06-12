@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Graph, Layer, Relation, RelationStyle, SelectionItem } from "../types";
 
 interface ParsedRow {
@@ -45,6 +45,72 @@ async function readFile(file: File, headers: string[]) {
     ? text.replace(/<tr[^>]*>/gi, "\n").replace(/<t[dh][^>]*>/gi, "\t").replace(/<[^>]+>/g, "")
     : text;
   return parseDelimited(tableText, headers);
+}
+
+function RelationStyleRow({
+  style,
+  onUpdate,
+  onDelete
+}: {
+  style: RelationStyle;
+  onUpdate: (styleId: string, payload: Partial<RelationStyle>) => void;
+  onDelete: (styleId: string) => void;
+}) {
+  const [strokeColor, setStrokeColor] = useState(style.stroke_color);
+
+  useEffect(() => {
+    setStrokeColor(style.stroke_color);
+  }, [style.stroke_color]);
+
+  const commitStrokeColor = () => {
+    if (strokeColor !== style.stroke_color) {
+      onUpdate(style.id, { stroke_color: strokeColor });
+    }
+  };
+
+  return (
+    <div className="table-row arrow-style-row">
+      <input defaultValue={style.name} onBlur={(event) => onUpdate(style.id, { name: event.target.value })} />
+      <input type="color" value={strokeColor} onChange={(event) => setStrokeColor(event.target.value)} onBlur={commitStrokeColor} />
+      <select value={style.line_pattern} onChange={(event) => onUpdate(style.id, { line_pattern: event.target.value as RelationStyle["line_pattern"] })}>
+        <option value="solid">Solid</option>
+        <option value="dashed">Dashed</option>
+        <option value="dotted">Dotted</option>
+        <option value="reference">Reference</option>
+      </select>
+      <input
+        type="number"
+        min="1"
+        max="12"
+        defaultValue={style.stroke_width}
+        onBlur={(event) => onUpdate(style.id, { stroke_width: Number(event.target.value) })}
+      />
+      <select value={style.marker_type} onChange={(event) => onUpdate(style.id, { marker_type: event.target.value as RelationStyle["marker_type"] })}>
+        <option value="arrow">Arrow</option>
+        <option value="none">None</option>
+      </select>
+      <svg viewBox="0 0 90 18" aria-label={`${style.name} preview`}>
+        <defs>
+          <marker id={`import-arrow-${style.id}`} markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+            <path d="M 1 1 L 7 4 L 1 7 z" fill={strokeColor} />
+          </marker>
+        </defs>
+        <line
+          x1="4"
+          y1="9"
+          x2="78"
+          y2="9"
+          stroke={strokeColor}
+          strokeWidth={style.stroke_width}
+          strokeDasharray={
+            style.line_pattern === "dashed" ? "8 6" : style.line_pattern === "dotted" ? "2 6" : style.line_pattern === "reference" ? "10 4 2 4" : undefined
+          }
+          markerEnd={style.marker_type === "arrow" ? `url(#import-arrow-${style.id})` : undefined}
+        />
+      </svg>
+      <button type="button" className="table-action" onClick={() => onDelete(style.id)}>Delete</button>
+    </div>
+  );
 }
 
 export default function ImportView({
@@ -183,55 +249,12 @@ export default function ImportView({
             <span>Color</span>
             <span>Line Type</span>
             <span>Width</span>
+            <span>Marker</span>
             <span>Preview</span>
             <span></span>
           </div>
           {graph?.relation_styles.map((style) => (
-            <div key={style.id} className="table-row">
-              <input defaultValue={style.name} onBlur={(event) => onUpdateRelationStyle(style.id, { name: event.target.value })} />
-              <input type="color" value={style.stroke_color} onChange={(event) => onUpdateRelationStyle(style.id, { stroke_color: event.target.value })} />
-              <select value={style.line_pattern} onChange={(event) => onUpdateRelationStyle(style.id, { line_pattern: event.target.value as RelationStyle["line_pattern"] })}>
-                <option value="solid">Solid</option>
-                <option value="dashed">Dashed</option>
-                <option value="dotted">Dotted</option>
-                <option value="reference">Reference</option>
-              </select>
-              <input
-                type="number"
-                min="1"
-                max="12"
-                value={style.stroke_width}
-                onChange={(event) => onUpdateRelationStyle(style.id, { stroke_width: Number(event.target.value) })}
-              />
-              <div className="arrow-preview">
-                <svg viewBox="0 0 120 20" aria-hidden="true">
-                  <defs>
-                    <marker id={`style-arrow-${style.id}`} markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-                      <path d="M 1 1 L 7 4 L 1 7 z" fill={style.stroke_color} />
-                    </marker>
-                  </defs>
-                  <line
-                    x1="8"
-                    y1="10"
-                    x2="104"
-                    y2="10"
-                    stroke={style.stroke_color}
-                    strokeWidth={style.stroke_width}
-                    strokeDasharray={
-                      style.line_pattern === "dashed"
-                        ? "8 6"
-                        : style.line_pattern === "dotted"
-                          ? "2 6"
-                          : style.line_pattern === "reference"
-                            ? "10 4 2 4"
-                            : undefined
-                    }
-                    markerEnd={`url(#style-arrow-${style.id})`}
-                  />
-                </svg>
-              </div>
-              <button type="button" className="table-action" onClick={() => onDeleteRelationStyle(style.id)}>Delete</button>
-            </div>
+            <RelationStyleRow key={style.id} style={style} onUpdate={onUpdateRelationStyle} onDelete={onDeleteRelationStyle} />
           ))}
         </div>
       </section>

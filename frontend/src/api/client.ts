@@ -1,5 +1,6 @@
 import type {
   Graph,
+  GraphBatchUpdate,
   Layer,
   Layout,
   Project,
@@ -45,6 +46,8 @@ export const api = {
   createProject: (payload: { name: string; description?: string | null }) =>
     request<Project>("/projects", { method: "POST", body: JSON.stringify(payload) }),
   getGraph: (projectId: string) => request<Graph>(`/projects/${projectId}/graph`),
+  batchUpdateGraph: (projectId: string, payload: GraphBatchUpdate) =>
+    request<Graph>(`/projects/${projectId}/graph/batch`, { method: "PATCH", body: JSON.stringify(payload) }),
   validate: (projectId: string) => request<ValidationReport>(`/projects/${projectId}/validate`, { method: "POST" }),
   autoLayout: (projectId: string) => request<Graph>(`/projects/${projectId}/graph/auto-layout`, { method: "POST" }),
   createLayer: (projectId: string, payload: JsonValue) =>

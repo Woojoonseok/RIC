@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import type { Graph, Layout, Relation, SelectionItem, ShapeStyle, TextBox } from "../types";
 
 interface Props {
@@ -9,6 +10,7 @@ interface Props {
   onUpdateLayout: (layerId: string, payload: Partial<Layout>) => Promise<void>;
   onUpdateRelation: (relationId: string, payload: Partial<Relation>) => Promise<void>;
   onUpdateTextBox: (textBoxId: string, payload: Partial<TextBox>) => Promise<void>;
+  onUpdateStyles: (layerIds: string[], payload: Partial<ShapeStyle>) => Promise<void>;
 }
 
 const RELATION_TYPES = ["parent_child", "reference", "optional", "blocking"];
@@ -31,6 +33,64 @@ function ColorSwatches({ onPick }: { onPick: (color: string) => void }) {
   );
 }
 
+function DraftColorInput({ value, onCommit }: { value: string; onCommit: (value: string) => void }) {
+  const [draft, setDraft] = useState(value);
+
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+
+  return (
+    <input
+      type="color"
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={() => {
+        if (draft !== value) onCommit(draft);
+      }}
+    />
+  );
+}
+
+function DraftNumberInput({
+  value,
+  min,
+  max,
+  onCommit
+}: {
+  value: number;
+  min: number;
+  max?: number;
+  onCommit: (value: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(Math.round(value)));
+
+  useEffect(() => {
+    setDraft(String(Math.round(value)));
+  }, [value]);
+
+  const commit = () => {
+    const next = Number(draft);
+    if (Number.isFinite(next) && next !== value) {
+      onCommit(next);
+    }
+  };
+
+  return (
+    <input
+      type="number"
+      min={min}
+      max={max}
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") commit();
+      }}
+    />
+  );
+}
+
 export default function PropertyPanel({
   graph,
   selection,
@@ -39,7 +99,8 @@ export default function PropertyPanel({
   onUpdateStyle,
   onUpdateLayout,
   onUpdateRelation,
-  onUpdateTextBox
+  onUpdateTextBox,
+  onUpdateStyles
 }: Props) {
   const selectedLayers = selection
     .filter((item) => item.kind === "layer")
@@ -57,7 +118,7 @@ export default function PropertyPanel({
   const singleStyle = singleLayer ? graph?.styles.find((style) => style.layer_id === singleLayer.id) : null;
 
   const updateManyStyles = (payload: Partial<ShapeStyle>) => {
-    void Promise.all(selectedLayerIds.map((layerId) => onUpdateStyle(layerId, payload)));
+    void onUpdateStyles(selectedLayerIds, payload);
   };
 
   if (!graph) {
@@ -143,46 +204,30 @@ export default function PropertyPanel({
             <h2>Shape Format</h2>
             <label>
               Fill
-              <input type="color" value={singleStyle.fill_color} onChange={(event) => void onUpdateStyle(singleLayer.id, { fill_color: event.target.value })} />
+              <DraftColorInput value={singleStyle.fill_color} onCommit={(color) => void onUpdateStyle(singleLayer.id, { fill_color: color })} />
             </label>
             <ColorSwatches onPick={(color) => void onUpdateStyle(singleLayer.id, { fill_color: color })} />
             <label>
               Line
-              <input type="color" value={singleStyle.stroke_color} onChange={(event) => void onUpdateStyle(singleLayer.id, { stroke_color: event.target.value })} />
+              <DraftColorInput value={singleStyle.stroke_color} onCommit={(color) => void onUpdateStyle(singleLayer.id, { stroke_color: color })} />
             </label>
             <ColorSwatches onPick={(color) => void onUpdateStyle(singleLayer.id, { stroke_color: color })} />
             <label>
               Text
-              <input type="color" value={singleStyle.text_color} onChange={(event) => void onUpdateStyle(singleLayer.id, { text_color: event.target.value })} />
+              <DraftColorInput value={singleStyle.text_color} onCommit={(color) => void onUpdateStyle(singleLayer.id, { text_color: color })} />
             </label>
             <ColorSwatches onPick={(color) => void onUpdateStyle(singleLayer.id, { text_color: color })} />
             <label>
               Font size
-              <input
-                type="number"
-                min="8"
-                max="72"
-                value={singleStyle.font_size}
-                onChange={(event) => void onUpdateStyle(singleLayer.id, { font_size: Number(event.target.value) })}
-              />
+              <DraftNumberInput value={singleStyle.font_size} min={8} max={72} onCommit={(value) => void onUpdateStyle(singleLayer.id, { font_size: value })} />
             </label>
             <label>
               Width
-              <input
-                type="number"
-                min="60"
-                value={Math.round(singleLayout.width)}
-                onChange={(event) => void onUpdateLayout(singleLayer.id, { width: Number(event.target.value) })}
-              />
+              <DraftNumberInput value={singleLayout.width} min={60} onCommit={(value) => void onUpdateLayout(singleLayer.id, { width: value })} />
             </label>
             <label>
               Height
-              <input
-                type="number"
-                min="36"
-                value={Math.round(singleLayout.height)}
-                onChange={(event) => void onUpdateLayout(singleLayer.id, { height: Number(event.target.value) })}
-              />
+              <DraftNumberInput value={singleLayout.height} min={36} onCommit={(value) => void onUpdateLayout(singleLayer.id, { height: value })} />
             </label>
           </section>
         </>
@@ -257,19 +302,19 @@ export default function PropertyPanel({
           </label>
           <label>
             Text color
-            <input type="color" value={selectedText.text_color} onChange={(event) => void onUpdateTextBox(selectedText.id, { text_color: event.target.value })} />
+            <DraftColorInput value={selectedText.text_color} onCommit={(color) => void onUpdateTextBox(selectedText.id, { text_color: color })} />
           </label>
           <label>
             Font size
-            <input type="number" min="8" max="96" value={selectedText.font_size} onChange={(event) => void onUpdateTextBox(selectedText.id, { font_size: Number(event.target.value) })} />
+            <DraftNumberInput value={selectedText.font_size} min={8} max={96} onCommit={(value) => void onUpdateTextBox(selectedText.id, { font_size: value })} />
           </label>
           <label>
             Fill
-            <input type="color" value={selectedText.background_color} onChange={(event) => void onUpdateTextBox(selectedText.id, { background_color: event.target.value })} />
+            <DraftColorInput value={selectedText.background_color} onCommit={(color) => void onUpdateTextBox(selectedText.id, { background_color: color })} />
           </label>
           <label>
             Border
-            <input type="color" value={selectedText.border_color} onChange={(event) => void onUpdateTextBox(selectedText.id, { border_color: event.target.value })} />
+            <DraftColorInput value={selectedText.border_color} onCommit={(color) => void onUpdateTextBox(selectedText.id, { border_color: color })} />
           </label>
         </section>
       )}

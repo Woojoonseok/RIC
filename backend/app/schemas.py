@@ -62,6 +62,10 @@ class LayoutUpdate(BaseModel):
     z_index: int | None = None
 
 
+class LayoutBatchUpdate(LayoutUpdate):
+    layer_id: uuid.UUID
+
+
 class LayoutRead(OrmModel):
     id: uuid.UUID
     project_id: uuid.UUID
@@ -79,6 +83,10 @@ class StyleUpdate(BaseModel):
     text_color: str | None = None
     font_size: int | None = Field(default=None, ge=8, le=72)
     stroke_width: int | None = Field(default=None, ge=1, le=12)
+
+
+class StyleBatchUpdate(StyleUpdate):
+    layer_id: uuid.UUID
 
 
 class StyleRead(OrmModel):
@@ -176,6 +184,10 @@ class TextBoxUpdate(BaseModel):
     locked: bool | None = None
 
 
+class TextBoxBatchUpdate(TextBoxUpdate):
+    id: uuid.UUID
+
+
 class TextBoxRead(OrmModel, TextBoxBase):
     id: uuid.UUID
     project_id: uuid.UUID
@@ -199,6 +211,12 @@ class GraphUpdate(BaseModel):
     relation_styles: list[RelationStyleRead] | None = None
     relations: list[RelationRead] | None = None
     text_boxes: list[TextBoxRead] | None = None
+
+
+class GraphBatchUpdate(BaseModel):
+    layouts: list[LayoutBatchUpdate] = Field(default_factory=list)
+    styles: list[StyleBatchUpdate] = Field(default_factory=list)
+    text_boxes: list[TextBoxBatchUpdate] = Field(default_factory=list)
 
 
 class ValidationIssue(BaseModel):

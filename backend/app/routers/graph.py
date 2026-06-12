@@ -29,6 +29,36 @@ def create_layer(project_id: uuid.UUID, payload: schemas.LayerCreate, db: Sessio
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Layer name already exists") from exc
 
 
+def upsert_layout(db: Session, project_id: uuid.UUID, layer_id: uuid.UUID, payload: schemas.LayoutUpdate) -> models.GraphLayout:
+    crud.get_layer_or_404(db, project_id, layer_id)
+    layout = (
+        db.query(models.GraphLayout)
+        .filter(models.GraphLayout.project_id == project_id, models.GraphLayout.layer_id == layer_id)
+        .one_or_none()
+    )
+    if layout is None:
+        layout = models.GraphLayout(project_id=project_id, layer_id=layer_id)
+        db.add(layout)
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(layout, field, value)
+    return layout
+
+
+def upsert_style(db: Session, project_id: uuid.UUID, layer_id: uuid.UUID, payload: schemas.StyleUpdate) -> models.ShapeStyle:
+    crud.get_layer_or_404(db, project_id, layer_id)
+    style_row = (
+        db.query(models.ShapeStyle)
+        .filter(models.ShapeStyle.project_id == project_id, models.ShapeStyle.layer_id == layer_id)
+        .one_or_none()
+    )
+    if style_row is None:
+        style_row = models.ShapeStyle(project_id=project_id, layer_id=layer_id)
+        db.add(style_row)
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(style_row, field, value)
+    return style_row
+
+
 @router.put("/layers/{layer_id}", response_model=schemas.LayerRead)
 def update_layer(
     project_id: uuid.UUID,
@@ -55,17 +85,7 @@ def update_layout(
     payload: schemas.LayoutUpdate,
     db: Session = Depends(get_db),
 ) -> models.GraphLayout:
-    crud.get_layer_or_404(db, project_id, layer_id)
-    layout = (
-        db.query(models.GraphLayout)
-        .filter(models.GraphLayout.project_id == project_id, models.GraphLayout.layer_id == layer_id)
-        .one_or_none()
-    )
-    if layout is None:
-        layout = models.GraphLayout(project_id=project_id, layer_id=layer_id)
-        db.add(layout)
-    for field, value in payload.model_dump(exclude_unset=True).items():
-        setattr(layout, field, value)
+    layout = upsert_layout(db, project_id, layer_id, payload)
     db.commit()
     db.refresh(layout)
     return layout
@@ -78,20 +98,39 @@ def update_style(
     payload: schemas.StyleUpdate,
     db: Session = Depends(get_db),
 ) -> models.ShapeStyle:
-    crud.get_layer_or_404(db, project_id, layer_id)
-    style_row = (
-        db.query(models.ShapeStyle)
-        .filter(models.ShapeStyle.project_id == project_id, models.ShapeStyle.layer_id == layer_id)
-        .one_or_none()
-    )
-    if style_row is None:
-        style_row = models.ShapeStyle(project_id=project_id, layer_id=layer_id)
-        db.add(style_row)
-    for field, value in payload.model_dump(exclude_unset=True).items():
-        setattr(style_row, field, value)
+    style_row = upsert_style(db, project_id, layer_id, payload)
     db.commit()
     db.refresh(style_row)
     return style_row
+
+
+@router.patch("/batch", response_model=schemas.GraphRead)
+def batch_update_graph(
+    project_id: uuid.UUID,
+    payload: schemas.GraphBatchUpdate,
+    db: Session = Depends(get_db),
+) -> schemas.GraphRead:
+    crud.get_project_or_404(db, project_id)
+    for layout_update in payload.layouts:
+        upsert_layout(
+            db,
+            project_id,
+            layout_update.layer_id,
+            schemas.LayoutUpdate(**layout_update.model_dump(exclude={"layer_id"}, exclude_unset=True)),
+        )
+    for style_update in payload.styles:
+        upsert_style(
+            db,
+            project_id,
+            style_update.layer_id,
+            schemas.StyleUpdate(**style_update.model_dump(exclude={"layer_id"}, exclude_unset=True)),
+        )
+    for text_box_update in payload.text_boxes:
+        text_box = crud.get_text_box_or_404(db, project_id, text_box_update.id)
+        for field, value in text_box_update.model_dump(exclude={"id"}, exclude_unset=True).items():
+            setattr(text_box, field, value)
+    db.commit()
+    return crud.read_graph(db, project_id)
 
 
 @router.get("/layers/{layer_id}/delete-preview", response_model=dict[str, list[schemas.RelationRead]])
