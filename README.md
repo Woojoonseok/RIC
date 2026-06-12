@@ -6,33 +6,33 @@ DB-centered Align Tree Editor MVP. The current app is now split into a real fron
 
 - `frontend/`: React + Vite editor UI
 - `backend/`: FastAPI API server
-- `docker-compose.yml`: local PostgreSQL database
+- `docker-compose.yml`: optional local PostgreSQL database
 - `index.html`, `styles.css`, `app.js`: legacy static prototype kept for reference
 
 ## Run
 
-Start PostgreSQL:
+Default no-Docker mode uses SQLite. Start the backend first:
 
 ```powershell
-docker compose up -d db
+cd D:\SW\RND_SW\RI
+backend\.venv\Scripts\Activate.ps1
+uvicorn app.main:app --app-dir backend --reload
 ```
 
-Start the backend:
+If the virtual environment does not exist yet:
 
 ```powershell
-cd backend
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -e .
-uvicorn app.main:app --reload
+cd D:\SW\RND_SW\RI
+python -m venv backend\.venv
+backend\.venv\Scripts\python.exe -m pip install -e backend
 ```
 
-Start the frontend:
+Start the frontend in another PowerShell window:
 
 ```powershell
-cd frontend
-npm install
-npm run dev
+cd D:\SW\RND_SW\RI\frontend
+npm.cmd install
+npm.cmd run dev
 ```
 
 Open:
@@ -41,7 +41,23 @@ Open:
 http://127.0.0.1:5173
 ```
 
+The SQLite database file is created at `D:\SW\RND_SW\RI\ric-dev.db`.
+
+Optional PostgreSQL mode:
+
+```powershell
+cd D:\SW\RND_SW\RI
+docker compose up -d db
+backend\.venv\Scripts\python.exe -m pip install -e "backend[postgres]"
+$env:DATABASE_URL = "postgresql+psycopg://ric:ric@localhost:5432/ric"
+uvicorn app.main:app --app-dir backend --reload
+```
+
 For the legacy static prototype, open `index.html` in a browser.
+
+## No-Docker Notes
+
+Docker is not required for normal development. Use SQLite unless you specifically need to test PostgreSQL behavior.
 
 ## Included
 
