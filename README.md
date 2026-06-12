@@ -1,10 +1,47 @@
 # Align Tree Editor
 
-DB-centered Align Tree Editor MVP implemented as a local static web app.
+DB-centered Align Tree Editor MVP. The current app is now split into a real frontend, backend, and database structure.
+
+## Structure
+
+- `frontend/`: React + Vite editor UI
+- `backend/`: FastAPI API server
+- `docker-compose.yml`: local PostgreSQL database
+- `index.html`, `styles.css`, `app.js`: legacy static prototype kept for reference
 
 ## Run
 
-Open `index.html` in a browser.
+Start PostgreSQL:
+
+```powershell
+docker compose up -d db
+```
+
+Start the backend:
+
+```powershell
+cd backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -e .
+uvicorn app.main:app --reload
+```
+
+Start the frontend:
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+Open:
+
+```text
+http://127.0.0.1:5173
+```
+
+For the legacy static prototype, open `index.html` in a browser.
 
 ## Included
 
@@ -27,12 +64,27 @@ Open `index.html` in a browser.
 
 ## Data Model
 
-The app keeps the requested DB-like model in browser state:
+The full-stack app stores the requested model in PostgreSQL:
 
 - Project
 - Layer
 - AlignKey fields embedded with each Layer row
 - LayerRelation
 - GraphLayout
+- ShapeStyle
+- TextBox
 
-Excel is treated as an input and output format. The browser state is the source of truth while editing.
+The backend validates self-loop relations, duplicate relations, missing Layer references, and cycles before saving relation changes.
+
+## API Shape
+
+- `GET /api/projects`
+- `POST /api/projects`
+- `GET /api/projects/{project_id}/graph`
+- `POST /api/projects/{project_id}/graph/layers`
+- `PATCH /api/projects/{project_id}/graph/layers/{layer_id}/layout`
+- `PATCH /api/projects/{project_id}/graph/layers/{layer_id}/style`
+- `POST /api/projects/{project_id}/graph/relations`
+- `PUT /api/projects/{project_id}/graph/relations/{relation_id}`
+- `POST /api/projects/{project_id}/graph/text-boxes`
+- `POST /api/projects/{project_id}/validate`
