@@ -133,6 +133,70 @@ def batch_update_graph(
     return crud.read_graph(db, project_id)
 
 
+@router.post("/box-presets", response_model=schemas.BoxPresetRead, status_code=status.HTTP_201_CREATED)
+def create_box_preset(
+    project_id: uuid.UUID,
+    payload: schemas.BoxPresetCreate,
+    db: Session = Depends(get_db),
+) -> models.BoxPreset:
+    crud.get_project_or_404(db, project_id)
+    if payload.is_default:
+        db.query(models.BoxPreset).filter(models.BoxPreset.project_id == project_id).update({"is_default": False})
+    preset = models.BoxPreset(project_id=project_id, **payload.model_dump())
+    db.add(preset)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Box preset name already exists") from exc
+    db.refresh(preset)
+    return preset
+
+
+@router.put("/box-presets/{preset_id}", response_model=schemas.BoxPresetRead)
+def update_box_preset(
+    project_id: uuid.UUID,
+    preset_id: uuid.UUID,
+    payload: schemas.BoxPresetUpdate,
+    db: Session = Depends(get_db),
+) -> models.BoxPreset:
+    preset = crud.get_box_preset_or_404(db, project_id, preset_id)
+    data = payload.model_dump(exclude_unset=True)
+    if data.get("is_default") is True:
+        db.query(models.BoxPreset).filter(
+            models.BoxPreset.project_id == project_id,
+            models.BoxPreset.id != preset_id,
+        ).update({"is_default": False})
+    for field, value in data.items():
+        setattr(preset, field, value)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Box preset name already exists") from exc
+    db.refresh(preset)
+    return preset
+
+
+@router.delete("/box-presets/{preset_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_box_preset(project_id: uuid.UUID, preset_id: uuid.UUID, db: Session = Depends(get_db)) -> Response:
+    preset = crud.get_box_preset_or_404(db, project_id, preset_id)
+    was_default = preset.is_default
+    db.delete(preset)
+    db.flush()
+    if was_default:
+        next_preset = (
+            db.query(models.BoxPreset)
+            .filter(models.BoxPreset.project_id == project_id)
+            .order_by(models.BoxPreset.sort_order, models.BoxPreset.created_at)
+            .first()
+        )
+        if next_preset is not None:
+            next_preset.is_default = True
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.get("/layers/{layer_id}/delete-preview", response_model=dict[str, list[schemas.RelationRead]])
 def preview_layer_delete(project_id: uuid.UUID, layer_id: uuid.UUID, db: Session = Depends(get_db)) -> dict[str, list[models.LayerRelation]]:
     crud.get_layer_or_404(db, project_id, layer_id)

@@ -38,6 +38,7 @@ class LayerCreate(LayerBase):
     y: float = 80
     width: float = 180
     height: float = 72
+    box_preset_id: uuid.UUID | None = None
 
 
 class LayerUpdate(BaseModel):
@@ -98,6 +99,41 @@ class StyleRead(OrmModel):
     text_color: str
     font_size: int
     stroke_width: int
+
+
+class BoxPresetBase(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    fill_color: str = "#dbeafe"
+    stroke_color: str = "#2563eb"
+    text_color: str = "#111827"
+    font_size: int = Field(default=16, ge=8, le=72)
+    width: float = Field(default=180, ge=60)
+    height: float = Field(default=72, ge=36)
+    stroke_width: int = Field(default=2, ge=1, le=12)
+    is_default: bool = False
+    sort_order: int = 0
+
+
+class BoxPresetCreate(BoxPresetBase):
+    pass
+
+
+class BoxPresetUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    fill_color: str | None = None
+    stroke_color: str | None = None
+    text_color: str | None = None
+    font_size: int | None = Field(default=None, ge=8, le=72)
+    width: float | None = Field(default=None, ge=60)
+    height: float | None = Field(default=None, ge=36)
+    stroke_width: int | None = Field(default=None, ge=1, le=12)
+    is_default: bool | None = None
+    sort_order: int | None = None
+
+
+class BoxPresetRead(OrmModel, BoxPresetBase):
+    id: uuid.UUID
+    project_id: uuid.UUID
 
 
 class RelationStyleBase(BaseModel):
@@ -198,6 +234,7 @@ class GraphRead(BaseModel):
     layers: list[LayerRead]
     layouts: list[LayoutRead]
     styles: list[StyleRead]
+    box_presets: list[BoxPresetRead]
     relation_styles: list[RelationStyleRead]
     relations: list[RelationRead]
     text_boxes: list[TextBoxRead]
@@ -208,6 +245,7 @@ class GraphUpdate(BaseModel):
     layers: list[LayerRead] | None = None
     layouts: list[LayoutRead] | None = None
     styles: list[StyleRead] | None = None
+    box_presets: list[BoxPresetRead] | None = None
     relation_styles: list[RelationStyleRead] | None = None
     relations: list[RelationRead] | None = None
     text_boxes: list[TextBoxRead] | None = None

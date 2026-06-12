@@ -7,7 +7,7 @@ import ImportView from "./components/ImportView";
 import LayerList from "./components/LayerList";
 import PropertyPanel from "./components/PropertyPanel";
 import Toolbar from "./components/Toolbar";
-import type { EditorMode, Graph, GraphBatchUpdate, Layout, Project, SelectionItem, ShapeStyle, TextBox } from "./types";
+import type { BoxPreset, EditorMode, Graph, GraphBatchUpdate, Layout, Project, SelectionItem, ShapeStyle, TextBox } from "./types";
 
 type AppView = "home" | "import" | "editor" | "export";
 
@@ -103,6 +103,7 @@ export default function App() {
   const [mode, setMode] = useState<EditorMode>("select");
   const [view, setView] = useState<AppView>("home");
   const [selectedRelationStyleId, setSelectedRelationStyleId] = useState("");
+  const [selectedBoxPresetId, setSelectedBoxPresetId] = useState("");
   const [status, setStatus] = useState("Ready");
   const [busy, setBusy] = useState(false);
 
@@ -133,6 +134,12 @@ export default function App() {
           current && nextGraph.relation_styles.some((style) => style.id === current)
             ? current
             : nextGraph.relation_styles[0]?.id ?? ""
+        );
+        const boxPresets = nextGraph.box_presets ?? [];
+        setSelectedBoxPresetId((current) =>
+          current && boxPresets.some((preset) => preset.id === current)
+            ? current
+            : boxPresets.find((preset) => preset.is_default)?.id ?? boxPresets[0]?.id ?? ""
         );
         setStatus(nextGraph.validation.ok ? "Saved" : `${nextGraph.validation.issues.length} validation issue(s)`);
       } catch (error) {
@@ -235,7 +242,8 @@ export default function App() {
         api.createLayer(projectId, {
           name: nextUniqueName(graph?.layers.map((layer) => layer.name) ?? [], "Layer"),
           x,
-          y
+          y,
+          box_preset_id: selectedBoxPresetId || graph?.box_presets?.find((preset) => preset.is_default)?.id || null
         }),
       "Layer added"
     );
@@ -385,6 +393,39 @@ export default function App() {
         }),
       "Arrow style added"
     );
+  };
+
+  const createBoxPreset = () => {
+    if (!projectId) return;
+    void mutateGraph(
+      () =>
+        api.createBoxPreset(projectId, {
+          name: nextUniqueName(graph?.box_presets?.map((preset) => preset.name) ?? [], "Box"),
+          fill_color: "#dbeafe",
+          stroke_color: "#2563eb",
+          text_color: "#111827",
+          font_size: 16,
+          width: 180,
+          height: 72,
+          stroke_width: 2,
+          is_default: !(graph?.box_presets?.length ?? 0),
+          sort_order: graph?.box_presets?.length ?? 0
+        }),
+      "Box preset added"
+    );
+  };
+
+  const updateBoxPreset = (presetId: string, payload: Partial<BoxPreset>) => {
+    if (!projectId) return;
+    void mutateGraph(() => api.updateBoxPreset(projectId, presetId, payload), "Box preset saved");
+  };
+
+  const deleteBoxPreset = (presetId: string) => {
+    if (!projectId || !graph) return;
+    const preset = graph.box_presets.find((item) => item.id === presetId);
+    if (!preset) return;
+    if (!window.confirm(`Delete box preset '${preset.name}'? Existing layers will not change.`)) return;
+    void mutateGraph(() => api.deleteBoxPreset(projectId, presetId), "Box preset deleted");
   };
 
   const deleteRelationStyle = (styleId: string) => {
@@ -547,6 +588,7 @@ export default function App() {
         <HomeView
           projects={projects}
           currentProjectId={projectId}
+          graph={graph}
           onOpenProject={(id) => {
             setProjectId(id);
             setView("editor");
@@ -554,6 +596,9 @@ export default function App() {
           onCreateProject={(name) => void createProject(name)}
           onLoadSample={() => void loadSample()}
           onDownloadTemplate={downloadTemplate}
+          onCreateBoxPreset={createBoxPreset}
+          onUpdateBoxPreset={updateBoxPreset}
+          onDeleteBoxPreset={deleteBoxPreset}
         />
       )}
       {view === "import" && (
@@ -586,7 +631,10 @@ export default function App() {
         projectId={projectId}
         relationStyles={graph?.relation_styles ?? []}
         selectedRelationStyleId={selectedRelationStyleId}
+        boxPresets={graph?.box_presets ?? []}
+        selectedBoxPresetId={selectedBoxPresetId}
         onRelationStyleChange={setSelectedRelationStyleId}
+        onBoxPresetChange={setSelectedBoxPresetId}
         onCreateRelationStyle={createRelationStyle}
         onModeChange={setMode}
         onCreateLayer={() => void createLayer()}

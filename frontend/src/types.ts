@@ -43,6 +43,21 @@ export interface ShapeStyle {
   stroke_width: number;
 }
 
+export interface BoxPreset {
+  id: string;
+  project_id: string;
+  name: string;
+  fill_color: string;
+  stroke_color: string;
+  text_color: string;
+  font_size: number;
+  width: number;
+  height: number;
+  stroke_width: number;
+  is_default: boolean;
+  sort_order: number;
+}
+
 export interface RelationStyle {
   id: string;
   project_id: string;
@@ -98,6 +113,7 @@ export interface Graph {
   layers: Layer[];
   layouts: Layout[];
   styles: ShapeStyle[];
+  box_presets: BoxPreset[];
   relation_styles: RelationStyle[];
   relations: Relation[];
   text_boxes: TextBox[];

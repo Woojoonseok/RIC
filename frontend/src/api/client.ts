@@ -1,6 +1,7 @@
 import type {
   Graph,
   GraphBatchUpdate,
+  BoxPreset,
   Layer,
   Layout,
   Project,
@@ -58,6 +59,12 @@ export const api = {
     request<Layout>(`/projects/${projectId}/graph/layers/${layerId}/layout`, { method: "PATCH", body: JSON.stringify(payload) }),
   updateStyle: (projectId: string, layerId: string, payload: JsonValue) =>
     request<ShapeStyle>(`/projects/${projectId}/graph/layers/${layerId}/style`, { method: "PATCH", body: JSON.stringify(payload) }),
+  createBoxPreset: (projectId: string, payload: JsonValue) =>
+    request<BoxPreset>(`/projects/${projectId}/graph/box-presets`, { method: "POST", body: JSON.stringify(payload) }),
+  updateBoxPreset: (projectId: string, presetId: string, payload: JsonValue) =>
+    request<BoxPreset>(`/projects/${projectId}/graph/box-presets/${presetId}`, { method: "PUT", body: JSON.stringify(payload) }),
+  deleteBoxPreset: (projectId: string, presetId: string) =>
+    request<void>(`/projects/${projectId}/graph/box-presets/${presetId}`, { method: "DELETE" }),
   previewDeleteLayer: (projectId: string, layerId: string) =>
     request<{ incoming: Relation[]; outgoing: Relation[] }>(`/projects/${projectId}/graph/layers/${layerId}/delete-preview`),
   deleteLayer: (projectId: string, layerId: string) =>

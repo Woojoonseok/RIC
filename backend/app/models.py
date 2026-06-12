@@ -31,6 +31,7 @@ class Project(Base, TimestampMixin):
     layers: Mapped[list[Layer]] = relationship(back_populates="project", cascade="all, delete-orphan")
     relations: Mapped[list[LayerRelation]] = relationship(back_populates="project", cascade="all, delete-orphan")
     relation_styles: Mapped[list[RelationStyle]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    box_presets: Mapped[list[BoxPreset]] = relationship(back_populates="project", cascade="all, delete-orphan")
     layouts: Mapped[list[GraphLayout]] = relationship(back_populates="project", cascade="all, delete-orphan")
     styles: Mapped[list[ShapeStyle]] = relationship(back_populates="project", cascade="all, delete-orphan")
     text_boxes: Mapped[list[TextBox]] = relationship(back_populates="project", cascade="all, delete-orphan")
@@ -89,6 +90,26 @@ class RelationStyle(Base, TimestampMixin):
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
 
     project: Mapped[Project] = relationship(back_populates="relation_styles")
+
+
+class BoxPreset(Base, TimestampMixin):
+    __tablename__ = "box_presets"
+    __table_args__ = (UniqueConstraint("project_id", "name", name="uq_box_presets_project_name"),)
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    fill_color: Mapped[str] = mapped_column(String(20), default="#dbeafe")
+    stroke_color: Mapped[str] = mapped_column(String(20), default="#2563eb")
+    text_color: Mapped[str] = mapped_column(String(20), default="#111827")
+    font_size: Mapped[int] = mapped_column(Integer, default=16)
+    width: Mapped[float] = mapped_column(Float, default=180)
+    height: Mapped[float] = mapped_column(Float, default=72)
+    stroke_width: Mapped[int] = mapped_column(Integer, default=2)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+    project: Mapped[Project] = relationship(back_populates="box_presets")
 
 
 class GraphLayout(Base, TimestampMixin):

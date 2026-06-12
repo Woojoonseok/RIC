@@ -1,4 +1,4 @@
-import type { EditorMode, RelationStyle } from "../types";
+import type { BoxPreset, EditorMode, RelationStyle } from "../types";
 
 interface Props {
   mode: EditorMode;
@@ -7,7 +7,10 @@ interface Props {
   projectId: string;
   relationStyles: RelationStyle[];
   selectedRelationStyleId: string;
+  boxPresets: BoxPreset[];
+  selectedBoxPresetId: string;
   onRelationStyleChange: (styleId: string) => void;
+  onBoxPresetChange: (presetId: string) => void;
   onCreateRelationStyle: () => void;
   onModeChange: (mode: EditorMode) => void;
   onCreateLayer: () => void;
@@ -24,7 +27,10 @@ export default function Toolbar({
   projectId,
   relationStyles,
   selectedRelationStyleId,
+  boxPresets,
+  selectedBoxPresetId,
   onRelationStyleChange,
+  onBoxPresetChange,
   onCreateRelationStyle,
   onModeChange,
   onCreateLayer,
@@ -44,6 +50,13 @@ export default function Toolbar({
       </select>
       <button type="button" onClick={onCreateRelationStyle} disabled={!projectId}>Add Arrow</button>
       <div className="divider" />
+      <select value={selectedBoxPresetId} onChange={(event) => onBoxPresetChange(event.target.value)} aria-label="Box preset">
+        {boxPresets.map((preset) => (
+          <option key={preset.id} value={preset.id}>
+            {preset.name}
+          </option>
+        ))}
+      </select>
       <button type="button" className={mode === "select" ? "active" : ""} onClick={() => onModeChange("select")}>
         Select
       </button>
