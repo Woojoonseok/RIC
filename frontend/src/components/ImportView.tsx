@@ -91,8 +91,8 @@ function RelationStyleRow({
       </select>
       <svg viewBox="0 0 90 18" aria-label={`${style.name} preview`}>
         <defs>
-          <marker id={`import-arrow-${style.id}`} markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-            <path d="M 1 1 L 7 4 L 1 7 z" fill={strokeColor} />
+          <marker id={`import-arrow-${style.id}`} markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="userSpaceOnUse">
+            <path d="M 0 0 L 7 3.5 L 0 7 z" fill={strokeColor} />
           </marker>
         </defs>
         <line

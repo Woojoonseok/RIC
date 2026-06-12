@@ -167,10 +167,15 @@ export default function CanvasEditor({
 
   const zoomPercent = Math.round((1600 / viewBox.width) * 100);
 
-  const toCanvasPoint = (event: React.PointerEvent<SVGElement>): Point => {
+  const toCanvasPoint = (event: React.PointerEvent<SVGElement> | React.WheelEvent<SVGSVGElement>): Point => {
     const svg = svgRef.current;
     if (!svg) {
       return { x: 0, y: 0 };
+    }
+    const transform = svg.getScreenCTM();
+    if (transform) {
+      const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(transform.inverse());
+      return { x: point.x, y: point.y };
     }
     const rect = svg.getBoundingClientRect();
     return {
@@ -335,7 +340,7 @@ export default function CanvasEditor({
   const handleWheel = (event: React.WheelEvent<SVGSVGElement>) => {
     event.preventDefault();
     const factor = event.deltaY > 0 ? 1.08 : 0.92;
-    const point = toCanvasPoint(event as unknown as React.PointerEvent<SVGElement>);
+    const point = toCanvasPoint(event);
     setViewBox((current) => {
       const width = Math.min(3600, Math.max(360, current.width * factor));
       const height = Math.min(2400, Math.max(240, current.height * factor));
@@ -449,13 +454,13 @@ export default function CanvasEditor({
             ["optional", "#0891b2"],
             ["overlay", "#f97316"]
           ].map(([id, color]) => (
-            <marker key={id} id={`arrow-${id}`} markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
-              <path d="M 1 1 L 11 6 L 1 11 z" fill={color} />
+            <marker key={id} id={`arrow-${id}`} markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill={color} />
             </marker>
           ))}
           {graph?.relation_styles.map((style) => (
-            <marker key={style.id} id={`arrow-${style.id}`} markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
-              <path d="M 1 1 L 11 6 L 1 11 z" fill={style.stroke_color} />
+            <marker key={style.id} id={`arrow-${style.id}`} markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill={style.stroke_color} />
             </marker>
           ))}
         </defs>
@@ -632,8 +637,8 @@ export default function CanvasEditor({
             <div key={style.id} className="legend-row">
               <svg viewBox="0 0 74 16" aria-hidden="true">
                 <defs>
-                  <marker id={`legend-arrow-${style.id}`} markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-                    <path d="M 1 1 L 7 4 L 1 7 z" fill={preview.stroke} />
+                  <marker id={`legend-arrow-${style.id}`} markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="userSpaceOnUse">
+                    <path d="M 0 0 L 7 3.5 L 0 7 z" fill={preview.stroke} />
                   </marker>
                 </defs>
                 <line

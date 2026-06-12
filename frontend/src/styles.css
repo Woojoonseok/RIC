@@ -229,6 +229,18 @@ button:disabled {
   grid-template-columns: 190px 90px 130px 72px 100px minmax(150px, 1fr) 82px;
 }
 
+.arrow-style-row {
+  min-height: 42px;
+  align-items: center;
+}
+
+.arrow-style-row svg {
+  width: 120px;
+  height: 24px;
+  display: block;
+  align-self: center;
+}
+
 .table-row:last-child {
   border-bottom: 0;
 }

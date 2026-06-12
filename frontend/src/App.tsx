@@ -475,13 +475,13 @@ export default function App() {
     ]
       .map(
         ([id, color]) =>
-          `<marker id="arrow-${id}" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth"><path d="M 1 1 L 11 6 L 1 11 z" fill="${color}"/></marker>`
+          `<marker id="arrow-${id}" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 z" fill="${color}"/></marker>`
       )
       .join("");
     const styleMarkers = graph.relation_styles
       .map(
         (style) =>
-          `<marker id="arrow-${style.id}" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth"><path d="M 1 1 L 11 6 L 1 11 z" fill="${escapeXml(style.stroke_color)}"/></marker>`
+          `<marker id="arrow-${style.id}" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 z" fill="${escapeXml(style.stroke_color)}"/></marker>`
       )
       .join("");
     const layers = graph.layers
