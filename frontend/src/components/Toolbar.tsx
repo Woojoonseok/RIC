@@ -9,12 +9,14 @@ interface Props {
   selectedRelationStyleId: string;
   boxPresets: BoxPreset[];
   selectedBoxPresetId: string;
+  selectedLayerCount: number;
   onRelationStyleChange: (styleId: string) => void;
   onBoxPresetChange: (presetId: string) => void;
   onCreateRelationStyle: () => void;
   onModeChange: (mode: EditorMode) => void;
   onCreateLayer: () => void;
   onCreateTextBox: () => void;
+  onMergeLayers: () => void;
   onAutoLayout: () => void;
   onDelete: () => void;
   onRefresh: () => void;
@@ -29,12 +31,14 @@ export default function Toolbar({
   selectedRelationStyleId,
   boxPresets,
   selectedBoxPresetId,
+  selectedLayerCount,
   onRelationStyleChange,
   onBoxPresetChange,
   onCreateRelationStyle,
   onModeChange,
   onCreateLayer,
   onCreateTextBox,
+  onMergeLayers,
   onAutoLayout,
   onDelete,
   onRefresh
@@ -69,6 +73,7 @@ export default function Toolbar({
       <div className="divider" />
       <button type="button" onClick={onCreateLayer}>Add Layer</button>
       <button type="button" onClick={onCreateTextBox}>Add Text</button>
+      <button type="button" onClick={onMergeLayers} disabled={selectedLayerCount < 2}>Merge Layers</button>
       <button type="button" onClick={onAutoLayout} disabled={!projectId}>Auto Layout</button>
       <button type="button" onClick={onDelete}>Delete</button>
       <button type="button" onClick={onRefresh}>Refresh</button>

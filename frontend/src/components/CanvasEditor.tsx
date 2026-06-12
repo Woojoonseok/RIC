@@ -94,6 +94,11 @@ function relationStroke(type: string, style?: RelationStyle) {
   return { strokeDasharray: undefined, stroke: "#334155", strokeWidth: 2, markerEnd: "url(#arrow-default)" };
 }
 
+function textLines(value: string) {
+  const lines = value.split(/\r?\n/);
+  return lines.length > 0 ? lines : [value];
+}
+
 export default function CanvasEditor({
   graph,
   selection,
@@ -540,6 +545,10 @@ export default function CanvasEditor({
           const style = styleByLayer.get(layer.id);
           const selected = selectedLayerIds.has(layer.id);
           const showPorts = selected || mode === "connect" || Boolean(connectStart);
+          const fontSize = style?.font_size ?? 14;
+          const lines = textLines(layer.name);
+          const lineHeight = fontSize * 1.2;
+          const firstLineY = layout.y + layout.height / 2 - ((lines.length - 1) * lineHeight) / 2 + fontSize / 3;
           return (
             <g key={layer.id} className={selected ? "layer-node selected" : "layer-node"} onPointerDown={(event) => beginMove(event, { kind: "layer", id: layer.id })}>
               <rect
@@ -557,9 +566,13 @@ export default function CanvasEditor({
                 y={layout.y + layout.height / 2 + (style?.font_size ?? 14) / 3}
                 textAnchor="middle"
                 fill={style?.text_color ?? "#111827"}
-                fontSize={style?.font_size ?? 14}
+                fontSize={fontSize}
               >
-                {layer.name}
+                {lines.map((line, index) => (
+                  <tspan key={`${line}-${index}`} x={layout.x + layout.width / 2} y={index === 0 ? firstLineY : undefined} dy={index === 0 ? undefined : lineHeight}>
+                    {line}
+                  </tspan>
+                ))}
               </text>
               {showPorts &&
                 PORTS.map((port) => {

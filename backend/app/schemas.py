@@ -50,6 +50,11 @@ class LayerUpdate(BaseModel):
     metadata_json: dict[str, Any] | None = None
 
 
+class LayerMergeRequest(BaseModel):
+    layer_ids: list[uuid.UUID] = Field(min_length=2)
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+
+
 class LayerRead(OrmModel, LayerBase):
     id: uuid.UUID
     project_id: uuid.UUID

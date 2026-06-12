@@ -1,6 +1,7 @@
 import type {
   Graph,
   GraphBatchUpdate,
+  LayerMergeRequest,
   BoxPreset,
   Layer,
   Layout,
@@ -55,6 +56,8 @@ export const api = {
     request<Layer>(`/projects/${projectId}/graph/layers`, { method: "POST", body: JSON.stringify(payload) }),
   updateLayer: (projectId: string, layerId: string, payload: JsonValue) =>
     request<Layer>(`/projects/${projectId}/graph/layers/${layerId}`, { method: "PUT", body: JSON.stringify(payload) }),
+  mergeLayers: (projectId: string, payload: LayerMergeRequest) =>
+    request<Graph>(`/projects/${projectId}/graph/layers/merge`, { method: "POST", body: JSON.stringify(payload) }),
   updateLayout: (projectId: string, layerId: string, payload: JsonValue) =>
     request<Layout>(`/projects/${projectId}/graph/layers/${layerId}/layout`, { method: "PATCH", body: JSON.stringify(payload) }),
   updateStyle: (projectId: string, layerId: string, payload: JsonValue) =>

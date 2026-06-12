@@ -78,6 +78,160 @@ def update_layer(
     return layer
 
 
+def _merge_layer_name(layers: list[models.Layer], override: str | None) -> str:
+    name = override.strip() if override else "\n".join(layer.name for layer in layers)
+    return name[:160]
+
+
+def _port_towards(source: models.GraphLayout, target: models.GraphLayout) -> str:
+    source_x = source.x + source.width / 2
+    source_y = source.y + source.height / 2
+    target_x = target.x + target.width / 2
+    target_y = target.y + target.height / 2
+    dx = target_x - source_x
+    dy = target_y - source_y
+    if abs(dx) >= abs(dy):
+        return "right" if dx >= 0 else "left"
+    return "bottom" if dy >= 0 else "top"
+
+
+def _compact_values(values: list[str | None], max_length: int = 160) -> str | None:
+    compacted = []
+    seen = set()
+    for value in values:
+        normalized = (value or "").strip()
+        if normalized and normalized.lower() not in seen:
+            compacted.append(normalized)
+            seen.add(normalized.lower())
+    return "\n".join(compacted)[:max_length] if compacted else None
+
+
+@router.post("/layers/merge", response_model=schemas.GraphRead)
+def merge_layers(
+    project_id: uuid.UUID,
+    payload: schemas.LayerMergeRequest,
+    db: Session = Depends(get_db),
+) -> schemas.GraphRead:
+    crud.get_project_or_404(db, project_id)
+    layer_ids = list(dict.fromkeys(payload.layer_ids))
+    if len(layer_ids) < 2:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Select at least two layers to merge")
+
+    layer_rows = (
+        db.query(models.Layer)
+        .filter(models.Layer.project_id == project_id, models.Layer.id.in_(layer_ids))
+        .all()
+    )
+    layer_by_id = {layer.id: layer for layer in layer_rows}
+    missing_ids = [str(layer_id) for layer_id in layer_ids if layer_id not in layer_by_id]
+    if missing_ids:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Layer not found: {', '.join(missing_ids)}")
+
+    layers = [layer_by_id[layer_id] for layer_id in layer_ids]
+    anchor = layers[0]
+    selected_ids = {layer.id for layer in layers}
+    original_layer_names = [layer.name for layer in layers]
+
+    layout_rows = (
+        db.query(models.GraphLayout)
+        .filter(models.GraphLayout.project_id == project_id, models.GraphLayout.layer_id.in_(selected_ids))
+        .all()
+    )
+    layout_by_layer = {layout.layer_id: layout for layout in layout_rows}
+    if not all(layer.id in layout_by_layer for layer in layers):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Selected layers must have layouts")
+
+    anchor_layout = layout_by_layer[anchor.id]
+    min_x = min(layout.x for layout in layout_rows) - 20
+    min_y = min(layout.y for layout in layout_rows) - 20
+    max_x = max(layout.x + layout.width for layout in layout_rows) + 20
+    max_y = max(layout.y + layout.height for layout in layout_rows) + 20
+    anchor_layout.x = min_x
+    anchor_layout.y = min_y
+    anchor_layout.width = max(180, max_x - min_x)
+    anchor_layout.height = max(72, max_y - min_y)
+
+    original_metadata = anchor.metadata_json or {}
+    anchor.name = _merge_layer_name(layers, payload.name)
+    anchor.step = _compact_values([layer.step for layer in layers], 120)
+    anchor.layer_property = _compact_values([layer.layer_property for layer in layers])
+    anchor.align = _compact_values([layer.align for layer in layers])
+    anchor.align_side = _compact_values([layer.align_side for layer in layers], 80)
+    anchor.metadata_json = {
+        **original_metadata,
+        "merged_layer_ids": [str(layer.id) for layer in layers],
+        "merged_layer_names": original_layer_names,
+    }
+
+    all_layouts = {
+        layout.layer_id: layout
+        for layout in db.query(models.GraphLayout).filter(models.GraphLayout.project_id == project_id).all()
+    }
+    all_layouts[anchor.id] = anchor_layout
+    relation_rows = db.query(models.LayerRelation).filter(models.LayerRelation.project_id == project_id).all()
+    kept_keys: set[tuple[uuid.UUID, uuid.UUID]] = set()
+    relation_specs: list[dict[str, object]] = []
+    relations_to_delete: list[models.LayerRelation] = []
+
+    for relation in relation_rows:
+        parent_selected = relation.parent_layer_id in selected_ids
+        child_selected = relation.child_layer_id in selected_ids
+        next_parent = anchor.id if parent_selected else relation.parent_layer_id
+        next_child = anchor.id if child_selected else relation.child_layer_id
+        key = (next_parent, next_child)
+
+        if next_parent == next_child:
+            relations_to_delete.append(relation)
+            continue
+
+        if parent_selected or child_selected:
+            relations_to_delete.append(relation)
+            if key in kept_keys:
+                continue
+            source_layout = all_layouts.get(next_parent)
+            target_layout = all_layouts.get(next_child)
+            relation_specs.append(
+                {
+                    "project_id": project_id,
+                    "parent_layer_id": next_parent,
+                    "child_layer_id": next_child,
+                    "relation_type": relation.relation_type,
+                    "relation_style_id": relation.relation_style_id,
+                    "source_port": _port_towards(source_layout, target_layout) if source_layout and target_layout else relation.source_port,
+                    "target_port": _port_towards(target_layout, source_layout) if source_layout and target_layout else relation.target_port,
+                }
+            )
+            kept_keys.add(key)
+            continue
+
+        if key in kept_keys:
+            relations_to_delete.append(relation)
+        else:
+            kept_keys.add(key)
+
+    for relation in relations_to_delete:
+        db.delete(relation)
+    db.flush()
+
+    for spec in relation_specs:
+        db.add(models.LayerRelation(**spec))
+
+    for layer in layers[1:]:
+        db.delete(layer)
+
+    try:
+        db.flush()
+        report = validate_project_graph(db, project_id)
+        if not report.ok:
+            db.rollback()
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=[issue.model_dump(mode="json") for issue in report.issues])
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Layer merge created duplicate data") from exc
+    return crud.read_graph(db, project_id)
+
+
 @router.patch("/layers/{layer_id}/layout", response_model=schemas.LayoutRead)
 def update_layout(
     project_id: uuid.UUID,

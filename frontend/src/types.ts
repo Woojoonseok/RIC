@@ -142,3 +142,8 @@ export interface GraphBatchUpdate {
   styles?: StyleBatchUpdate[];
   text_boxes?: TextBoxBatchUpdate[];
 }
+
+export interface LayerMergeRequest {
+  layer_ids: string[];
+  name?: string;
+}

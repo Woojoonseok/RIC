@@ -11,6 +11,7 @@ interface Props {
   onUpdateRelation: (relationId: string, payload: Partial<Relation>) => Promise<void>;
   onUpdateTextBox: (textBoxId: string, payload: Partial<TextBox>) => Promise<void>;
   onUpdateStyles: (layerIds: string[], payload: Partial<ShapeStyle>) => Promise<void>;
+  onMergeLayers: () => void;
 }
 
 const RELATION_TYPES = ["parent_child", "reference", "optional", "blocking"];
@@ -100,7 +101,8 @@ export default function PropertyPanel({
   onUpdateLayout,
   onUpdateRelation,
   onUpdateTextBox,
-  onUpdateStyles
+  onUpdateStyles,
+  onMergeLayers
 }: Props) {
   const selectedLayers = selection
     .filter((item) => item.kind === "layer")
@@ -138,6 +140,9 @@ export default function PropertyPanel({
       {selectedLayers.length > 1 && (
         <section className="property-section">
           <h2>{selectedLayers.length} Layers</h2>
+          <button type="button" className="primary-action" onClick={onMergeLayers}>
+            Merge into one Layer
+          </button>
           <label>
             Fill
             <input type="color" onChange={(event) => updateManyStyles({ fill_color: event.target.value })} />

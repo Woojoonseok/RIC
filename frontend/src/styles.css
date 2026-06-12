@@ -700,6 +700,19 @@ button:disabled {
   resize: vertical;
 }
 
+.primary-action {
+  width: 100%;
+  justify-content: center;
+  border-color: #2563eb;
+  background: #2563eb;
+  color: #ffffff;
+  margin-bottom: 10px;
+}
+
+.primary-action:hover {
+  background: #1d4ed8;
+}
+
 .color-swatches {
   display: grid;
   grid-template-columns: repeat(9, 22px);

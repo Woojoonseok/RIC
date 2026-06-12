@@ -56,6 +56,15 @@ function escapeXml(value: string) {
     .replace(/"/g, "&quot;");
 }
 
+function multilineSvgText(value: string, x: number, centerY: number, fontSize: number) {
+  const lines = value.split(/\r?\n/);
+  const lineHeight = fontSize * 1.2;
+  const firstY = centerY - ((lines.length - 1) * lineHeight) / 2 + fontSize / 3;
+  return lines
+    .map((line, index) => `<tspan x="${x}" y="${index === 0 ? firstY : firstY + index * lineHeight}">${escapeXml(line)}</tspan>`)
+    .join("");
+}
+
 function portPoint(layout: Layout, port: string) {
   if (port === "top") return { x: layout.x + layout.width / 2, y: layout.y };
   if (port === "bottom") return { x: layout.x + layout.width / 2, y: layout.y + layout.height };
@@ -110,6 +119,10 @@ export default function App() {
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === projectId) ?? null,
     [projectId, projects]
+  );
+  const selectedLayerIds = useMemo(
+    () => selection.filter((item) => item.kind === "layer").map((item) => item.id),
+    [selection]
   );
 
   const loadProjects = useCallback(async () => {
@@ -376,6 +389,35 @@ export default function App() {
     }, "Deleted");
   };
 
+  const mergeSelectedLayers = async () => {
+    if (!projectId || !graph) return;
+    if (selectedLayerIds.length < 2) {
+      setStatus("Select at least two layers to merge");
+      return;
+    }
+    const selectedLayers = selectedLayerIds
+      .map((id) => graph.layers.find((layer) => layer.id === id))
+      .filter(Boolean);
+    const label = selectedLayers.map((layer) => layer!.name).join(", ");
+    const confirmed = window.confirm(
+      `Merge ${selectedLayerIds.length} layers into one Layer box?\n\n${label}\n\nThis rewires relations and removes the merged source layers.`
+    );
+    if (!confirmed) return;
+
+    setBusy(true);
+    try {
+      const nextGraph = await api.mergeLayers(projectId, { layer_ids: selectedLayerIds });
+      setGraph(nextGraph);
+      setSelection([{ kind: "layer", id: selectedLayerIds[0] }]);
+      setStatus("Layers merged");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Layer merge failed");
+      await loadGraph(projectId);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const onSelectItem = (item: SelectionItem, additive = false) => {
     setSelection((current) => applySelection(current, item, additive));
   };
@@ -530,7 +572,9 @@ export default function App() {
         const layout = layoutById.get(layer.id);
         const style = styleById.get(layer.id);
         if (!layout) return "";
-        return `<rect x="${layout.x}" y="${layout.y}" width="${layout.width}" height="${layout.height}" rx="6" fill="${style?.fill_color ?? "#fff"}" stroke="${style?.stroke_color ?? "#2563eb"}" stroke-width="${style?.stroke_width ?? 2}"/><text x="${layout.x + layout.width / 2}" y="${layout.y + layout.height / 2 + 5}" text-anchor="middle" font-size="${style?.font_size ?? 14}" fill="${style?.text_color ?? "#111827"}">${escapeXml(layer.name)}</text>`;
+        const fontSize = style?.font_size ?? 14;
+        const text = multilineSvgText(layer.name, layout.x + layout.width / 2, layout.y + layout.height / 2, fontSize);
+        return `<rect x="${layout.x}" y="${layout.y}" width="${layout.width}" height="${layout.height}" rx="6" fill="${style?.fill_color ?? "#fff"}" stroke="${style?.stroke_color ?? "#2563eb"}" stroke-width="${style?.stroke_width ?? 2}"/><text text-anchor="middle" font-size="${fontSize}" fill="${style?.text_color ?? "#111827"}">${text}</text>`;
       })
       .join("");
     const relationLines = graph.relations
@@ -632,12 +676,14 @@ export default function App() {
         selectedRelationStyleId={selectedRelationStyleId}
         boxPresets={graph?.box_presets ?? []}
         selectedBoxPresetId={selectedBoxPresetId}
+        selectedLayerCount={selectedLayerIds.length}
         onRelationStyleChange={setSelectedRelationStyleId}
         onBoxPresetChange={setSelectedBoxPresetId}
         onCreateRelationStyle={createRelationStyle}
         onModeChange={setMode}
         onCreateLayer={() => void createLayer()}
         onCreateTextBox={() => void createTextBox()}
+        onMergeLayers={() => void mergeSelectedLayers()}
         onAutoLayout={() => mutateGraph(() => api.autoLayout(projectId), "Auto layout applied")}
         onDelete={() => void deleteSelection()}
         onRefresh={() => void loadGraph()}
@@ -685,6 +731,7 @@ export default function App() {
             saveTextBox(textBoxId, payload)
           }
           onUpdateStyles={saveStyleBatch}
+          onMergeLayers={() => void mergeSelectedLayers()}
         />
       </section>
         </section>
