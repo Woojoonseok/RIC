@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import type React from "react";
-import type { EditorMode, Graph, Layout, PortName, RelationStyle, SelectionItem, TextBox } from "../types";
+import type { EditorMode, Graph, GraphBatchUpdate, Layout, PortName, RelationStyle, SelectionItem, TextBox } from "../types";
 
 interface Props {
   graph: Graph | null;
@@ -14,6 +14,7 @@ interface Props {
   onCreateTextBox: (x: number, y: number) => void;
   onUpdateLayout: (layerId: string, payload: Partial<Layout>) => Promise<void>;
   onUpdateTextBox: (textBoxId: string, payload: Partial<TextBox>) => Promise<void>;
+  onUpdateBatch: (payload: GraphBatchUpdate) => Promise<void>;
   onCreateRelation: (payload: Record<string, unknown>) => Promise<void>;
 }
 
@@ -83,14 +84,14 @@ function relationStroke(type: string, style?: RelationStyle) {
       strokeDasharray: dash,
       stroke: style.stroke_color,
       strokeWidth: style.stroke_width,
-      markerEnd: style.marker_type === "arrow" ? "url(#arrow)" : undefined
+      markerEnd: style.marker_type === "arrow" ? `url(#arrow-${style.id})` : undefined
     };
   }
   const normalized = type.toLowerCase();
-  if (normalized === "reference") return { strokeDasharray: "10 4 2 4", stroke: "#7c3aed", strokeWidth: 2, markerEnd: "url(#arrow)" };
-  if (normalized === "optional" || normalized === "warning") return { strokeDasharray: "2 5", stroke: "#0891b2", strokeWidth: 2, markerEnd: "url(#arrow)" };
-  if (normalized === "overlay") return { strokeDasharray: undefined, stroke: "#f97316", strokeWidth: 2, markerEnd: "url(#arrow)" };
-  return { strokeDasharray: undefined, stroke: "#334155", strokeWidth: 2, markerEnd: "url(#arrow)" };
+  if (normalized === "reference") return { strokeDasharray: "10 4 2 4", stroke: "#7c3aed", strokeWidth: 2, markerEnd: "url(#arrow-reference)" };
+  if (normalized === "optional" || normalized === "warning") return { strokeDasharray: "2 5", stroke: "#0891b2", strokeWidth: 2, markerEnd: "url(#arrow-optional)" };
+  if (normalized === "overlay") return { strokeDasharray: undefined, stroke: "#f97316", strokeWidth: 2, markerEnd: "url(#arrow-overlay)" };
+  return { strokeDasharray: undefined, stroke: "#334155", strokeWidth: 2, markerEnd: "url(#arrow-default)" };
 }
 
 export default function CanvasEditor({
@@ -105,6 +106,7 @@ export default function CanvasEditor({
   onCreateTextBox,
   onUpdateLayout,
   onUpdateTextBox,
+  onUpdateBatch,
   onCreateRelation
 }: Props) {
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -301,14 +303,18 @@ export default function CanvasEditor({
     if (drag.type === "move") {
       const dx = drag.current.x - drag.start.x;
       const dy = drag.current.y - drag.start.y;
-      void Promise.all([
-        ...Object.values(drag.layerOrigins).map((layout) =>
-          onUpdateLayout(layout.layer_id, { x: Math.round(snap(layout.x + dx, snapToGrid)), y: Math.round(snap(layout.y + dy, snapToGrid)) })
-        ),
-        ...Object.values(drag.textOrigins).map((textBox) =>
-          onUpdateTextBox(textBox.id, { x: Math.round(snap(textBox.x + dx, snapToGrid)), y: Math.round(snap(textBox.y + dy, snapToGrid)) })
-        )
-      ]);
+      void onUpdateBatch({
+        layouts: Object.values(drag.layerOrigins).map((layout) => ({
+          layer_id: layout.layer_id,
+          x: Math.round(snap(layout.x + dx, snapToGrid)),
+          y: Math.round(snap(layout.y + dy, snapToGrid))
+        })),
+        text_boxes: Object.values(drag.textOrigins).map((textBox) => ({
+          id: textBox.id,
+          x: Math.round(snap(textBox.x + dx, snapToGrid)),
+          y: Math.round(snap(textBox.y + dy, snapToGrid))
+        }))
+      });
     }
 
     if (drag.type === "resize-layer") {
@@ -437,9 +443,21 @@ export default function CanvasEditor({
           <pattern id="grid" width={GRID_SIZE} height={GRID_SIZE} patternUnits="userSpaceOnUse">
             <path d={`M ${GRID_SIZE} 0 L 0 0 0 ${GRID_SIZE}`} fill="none" stroke="#e5e7eb" strokeWidth="1" />
           </pattern>
-          <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
-            <path d="M 1 1 L 11 6 L 1 11 z" fill="#334155" />
-          </marker>
+          {[
+            ["default", "#334155"],
+            ["reference", "#7c3aed"],
+            ["optional", "#0891b2"],
+            ["overlay", "#f97316"]
+          ].map(([id, color]) => (
+            <marker key={id} id={`arrow-${id}`} markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+              <path d="M 1 1 L 11 6 L 1 11 z" fill={color} />
+            </marker>
+          ))}
+          {graph?.relation_styles.map((style) => (
+            <marker key={style.id} id={`arrow-${style.id}`} markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+              <path d="M 1 1 L 11 6 L 1 11 z" fill={style.stroke_color} />
+            </marker>
+          ))}
         </defs>
         <rect className="canvas-bg" x={viewBox.x - 2000} y={viewBox.y - 2000} width={viewBox.width + 4000} height={viewBox.height + 4000} fill="url(#grid)" />
         {graph?.relations.map((relation) => {

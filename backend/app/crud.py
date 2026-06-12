@@ -77,8 +77,6 @@ def get_text_box_or_404(db: Session, project_id: uuid.UUID, text_box_id: uuid.UU
 
 def read_graph(db: Session, project_id: uuid.UUID) -> schemas.GraphRead:
     project = get_project_or_404(db, project_id)
-    ensure_default_relation_styles(db, project_id)
-    db.commit()
     relation_styles = (
         db.query(models.RelationStyle)
         .filter(models.RelationStyle.project_id == project_id)

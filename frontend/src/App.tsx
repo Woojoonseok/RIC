@@ -7,7 +7,7 @@ import ImportView from "./components/ImportView";
 import LayerList from "./components/LayerList";
 import PropertyPanel from "./components/PropertyPanel";
 import Toolbar from "./components/Toolbar";
-import type { EditorMode, Graph, Project, SelectionItem } from "./types";
+import type { EditorMode, Graph, GraphBatchUpdate, Layout, Project, SelectionItem, ShapeStyle, TextBox } from "./types";
 
 type AppView = "home" | "import" | "editor" | "export";
 
@@ -46,6 +46,53 @@ function applySelection(selection: SelectionItem[], item: SelectionItem, additiv
   return selection.some((selected) => sameSelection(selected, item))
     ? selection.filter((selected) => !sameSelection(selected, item))
     : [...selection, item];
+}
+
+function escapeXml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function portPoint(layout: Layout, port: string) {
+  if (port === "top") return { x: layout.x + layout.width / 2, y: layout.y };
+  if (port === "bottom") return { x: layout.x + layout.width / 2, y: layout.y + layout.height };
+  if (port === "left") return { x: layout.x, y: layout.y + layout.height / 2 };
+  return { x: layout.x + layout.width, y: layout.y + layout.height / 2 };
+}
+
+function relationStroke(style?: Graph["relation_styles"][number], fallbackType = "") {
+  if (style) {
+    const dash =
+      style.line_pattern === "dashed"
+        ? "8 6"
+        : style.line_pattern === "dotted"
+          ? "2 6"
+          : style.line_pattern === "reference"
+            ? "10 4 2 4"
+            : undefined;
+    return {
+      stroke: style.stroke_color,
+      strokeWidth: style.stroke_width,
+      strokeDasharray: dash,
+      marker: style.marker_type === "arrow"
+    };
+  }
+  const normalized = fallbackType.toLowerCase();
+  if (normalized === "reference") return { stroke: "#7c3aed", strokeWidth: 2, strokeDasharray: "10 4 2 4", marker: true };
+  if (normalized === "optional" || normalized === "warning") return { stroke: "#0891b2", strokeWidth: 2, strokeDasharray: "2 5", marker: true };
+  if (normalized === "overlay") return { stroke: "#f97316", strokeWidth: 2, strokeDasharray: undefined, marker: true };
+  return { stroke: "#334155", strokeWidth: 2, strokeDasharray: undefined, marker: true };
+}
+
+function fallbackArrowId(type: string) {
+  const normalized = type.toLowerCase();
+  if (normalized === "reference") return "reference";
+  if (normalized === "optional" || normalized === "warning") return "optional";
+  if (normalized === "overlay") return "overlay";
+  return "default";
 }
 
 export default function App() {
@@ -137,6 +184,50 @@ export default function App() {
       setBusy(false);
     }
   };
+
+  const mergeBatchIntoGraph = (current: Graph, payload: GraphBatchUpdate): Graph => ({
+    ...current,
+    layouts: current.layouts.map((layout) => {
+      const update = payload.layouts?.find((item) => item.layer_id === layout.layer_id);
+      return update ? { ...layout, ...update } : layout;
+    }),
+    styles: current.styles.map((style) => {
+      const update = payload.styles?.find((item) => item.layer_id === style.layer_id);
+      return update ? { ...style, ...update } : style;
+    }),
+    text_boxes: current.text_boxes.map((textBox) => {
+      const update = payload.text_boxes?.find((item) => item.id === textBox.id);
+      return update ? { ...textBox, ...update } : textBox;
+    })
+  });
+
+  const saveGraphBatch = async (payload: GraphBatchUpdate, message: string) => {
+    if (!projectId) return;
+    setGraph((current) => (current ? mergeBatchIntoGraph(current, payload) : current));
+    setStatus("Saving...");
+    try {
+      const nextGraph = await api.batchUpdateGraph(projectId, payload);
+      setGraph(nextGraph);
+      setStatus(message);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Operation failed");
+      await loadGraph(projectId);
+    }
+  };
+
+  const saveLayout = (layerId: string, payload: Partial<Layout>) =>
+    saveGraphBatch({ layouts: [{ layer_id: layerId, ...payload }] }, "Layout saved");
+
+  const saveStyle = (layerId: string, payload: Partial<ShapeStyle>) =>
+    saveGraphBatch({ styles: [{ layer_id: layerId, ...payload }] }, "Style saved");
+
+  const saveTextBox = (textBoxId: string, payload: Partial<TextBox>) =>
+    saveGraphBatch({ text_boxes: [{ id: textBoxId, ...payload }] }, "Text box saved");
+
+  const saveStyleBatch = (layerIds: string[], payload: Partial<ShapeStyle>) =>
+    saveGraphBatch({ styles: layerIds.map((layerId) => ({ layer_id: layerId, ...payload })) }, "Styles saved");
+
+  const saveCanvasMove = (payload: GraphBatchUpdate) => saveGraphBatch(payload, "Layout saved");
 
   const createLayer = (x = 120, y = 120) =>
     mutateGraph(
@@ -342,6 +433,7 @@ export default function App() {
   const exportExcel = () => {
     if (!graph) return;
     const layerName = new Map(graph.layers.map((layer) => [layer.id, layer.name]));
+    const relationStyleById = new Map(graph.relation_styles.map((style) => [style.id, style]));
     downloadBlob(
       `${graph.project.name}_align_tree.xls`,
       workbookHtml({
@@ -354,7 +446,7 @@ export default function App() {
           ...graph.relations.map((relation) => [
             layerName.get(relation.parent_layer_id) ?? "",
             layerName.get(relation.child_layer_id) ?? "",
-            relation.relation_type
+            (relation.relation_style_id ? relationStyleById.get(relation.relation_style_id)?.name : null) ?? relation.relation_type
           ])
         ],
         Validation_Result: [["Level", "Message"], ...graph.validation.issues.map((issue) => [issue.severity, issue.message])]
@@ -367,12 +459,37 @@ export default function App() {
     if (!graph) return;
     const layoutById = new Map(graph.layouts.map((layout) => [layout.layer_id, layout]));
     const styleById = new Map(graph.styles.map((style) => [style.layer_id, style]));
+    const relationStyleById = new Map(graph.relation_styles.map((style) => [style.id, style]));
+    const visibleLayouts = graph.layers
+      .map((layer) => layoutById.get(layer.id))
+      .filter((layout): layout is Layout => Boolean(layout));
+    const minX = Math.min(0, ...visibleLayouts.map((layout) => layout.x)) - 80;
+    const minY = Math.min(0, ...visibleLayouts.map((layout) => layout.y)) - 80;
+    const maxX = Math.max(1600, ...visibleLayouts.map((layout) => layout.x + layout.width)) + 80;
+    const maxY = Math.max(1000, ...visibleLayouts.map((layout) => layout.y + layout.height)) + 80;
+    const markers = [
+      ["default", "#334155"],
+      ["reference", "#7c3aed"],
+      ["optional", "#0891b2"],
+      ["overlay", "#f97316"]
+    ]
+      .map(
+        ([id, color]) =>
+          `<marker id="arrow-${id}" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth"><path d="M 1 1 L 11 6 L 1 11 z" fill="${color}"/></marker>`
+      )
+      .join("");
+    const styleMarkers = graph.relation_styles
+      .map(
+        (style) =>
+          `<marker id="arrow-${style.id}" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth"><path d="M 1 1 L 11 6 L 1 11 z" fill="${escapeXml(style.stroke_color)}"/></marker>`
+      )
+      .join("");
     const layers = graph.layers
       .map((layer) => {
         const layout = layoutById.get(layer.id);
         const style = styleById.get(layer.id);
         if (!layout) return "";
-        return `<rect x="${layout.x}" y="${layout.y}" width="${layout.width}" height="${layout.height}" rx="6" fill="${style?.fill_color ?? "#fff"}" stroke="${style?.stroke_color ?? "#2563eb"}"/><text x="${layout.x + layout.width / 2}" y="${layout.y + layout.height / 2 + 5}" text-anchor="middle" font-size="${style?.font_size ?? 14}" fill="${style?.text_color ?? "#111827"}">${layer.name}</text>`;
+        return `<rect x="${layout.x}" y="${layout.y}" width="${layout.width}" height="${layout.height}" rx="6" fill="${style?.fill_color ?? "#fff"}" stroke="${style?.stroke_color ?? "#2563eb"}" stroke-width="${style?.stroke_width ?? 2}"/><text x="${layout.x + layout.width / 2}" y="${layout.y + layout.height / 2 + 5}" text-anchor="middle" font-size="${style?.font_size ?? 14}" fill="${style?.text_color ?? "#111827"}">${escapeXml(layer.name)}</text>`;
       })
       .join("");
     const relationLines = graph.relations
@@ -380,12 +497,20 @@ export default function App() {
         const a = layoutById.get(relation.parent_layer_id);
         const b = layoutById.get(relation.child_layer_id);
         if (!a || !b) return "";
-        return `<line x1="${a.x + a.width}" y1="${a.y + a.height / 2}" x2="${b.x}" y2="${b.y + b.height / 2}" stroke="#334155" stroke-width="2" marker-end="url(#arrow)"/>`;
+        const start = portPoint(a, relation.source_port);
+        const end = portPoint(b, relation.target_port);
+        const relationStyle = relation.relation_style_id ? relationStyleById.get(relation.relation_style_id) : undefined;
+        const stroke = relationStroke(relationStyle, relation.relation_type);
+        const dash = stroke.strokeDasharray ? ` stroke-dasharray="${stroke.strokeDasharray}"` : "";
+        const marker = stroke.marker
+          ? ` marker-end="url(#arrow-${relationStyle?.id ?? fallbackArrowId(relation.relation_type)})"`
+          : "";
+        return `<line x1="${start.x}" y1="${start.y}" x2="${end.x}" y2="${end.y}" stroke="${stroke.stroke}" stroke-width="${stroke.strokeWidth}"${dash}${marker}/>`;
       })
       .join("");
     downloadBlob(
       `${graph.project.name}_ppt_image.svg`,
-      `<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000"><defs><marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M 1 1 L 11 6 L 1 11 z" fill="#334155"/></marker></defs>${relationLines}${layers}</svg>`,
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${maxX - minX}" height="${maxY - minY}" viewBox="${minX} ${minY} ${maxX - minX} ${maxY - minY}"><defs>${markers}${styleMarkers}</defs>${relationLines}${layers}</svg>`,
       "image/svg+xml"
     );
   };
@@ -486,12 +611,9 @@ export default function App() {
           onSelectItem={onSelectItem}
           onCreateLayer={(x, y) => void createLayer(x, y)}
           onCreateTextBox={(x, y) => void createTextBox(x, y)}
-          onUpdateLayout={(layerId, payload) =>
-            mutateGraph(() => api.updateLayout(projectId, layerId, payload), "Layout saved")
-          }
-          onUpdateTextBox={(textBoxId, payload) =>
-            mutateGraph(() => api.updateTextBox(projectId, textBoxId, payload), "Text box saved")
-          }
+          onUpdateLayout={saveLayout}
+          onUpdateTextBox={saveTextBox}
+          onUpdateBatch={saveCanvasMove}
           onCreateRelation={(payload) =>
             mutateGraph(() => api.createRelation(projectId, payload), "Relation added")
           }
@@ -504,17 +626,18 @@ export default function App() {
             mutateGraph(() => api.updateLayer(projectId, layerId, payload), "Layer saved")
           }
           onUpdateStyle={(layerId, payload) =>
-            mutateGraph(() => api.updateStyle(projectId, layerId, payload), "Style saved")
+            saveStyle(layerId, payload)
           }
           onUpdateLayout={(layerId, payload) =>
-            mutateGraph(() => api.updateLayout(projectId, layerId, payload), "Layout saved")
+            saveLayout(layerId, payload)
           }
           onUpdateRelation={(relationId, payload) =>
             mutateGraph(() => api.updateRelation(projectId, relationId, payload), "Relation saved")
           }
           onUpdateTextBox={(textBoxId, payload) =>
-            mutateGraph(() => api.updateTextBox(projectId, textBoxId, payload), "Text box saved")
+            saveTextBox(textBoxId, payload)
           }
+          onUpdateStyles={saveStyleBatch}
         />
       </section>
         </section>

@@ -226,7 +226,7 @@ button:disabled {
 }
 
 .arrow-style-table .table-row {
-  grid-template-columns: 190px 90px 140px 80px minmax(160px, 1fr) 82px;
+  grid-template-columns: 190px 90px 130px 72px 100px minmax(150px, 1fr) 82px;
 }
 
 .table-row:last-child {
