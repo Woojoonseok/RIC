@@ -4,6 +4,7 @@ import type { Graph, Layout, Relation, SelectionItem, ShapeStyle, TextBox } from
 interface Props {
   graph: Graph | null;
   selection: SelectionItem[];
+  canSplitLayer: boolean;
   onSelectionChange: (selection: SelectionItem[]) => void;
   onUpdateLayer: (layerId: string, payload: Record<string, unknown>) => Promise<void>;
   onUpdateStyle: (layerId: string, payload: Partial<ShapeStyle>) => Promise<void>;
@@ -12,6 +13,7 @@ interface Props {
   onUpdateTextBox: (textBoxId: string, payload: Partial<TextBox>) => Promise<void>;
   onUpdateStyles: (layerIds: string[], payload: Partial<ShapeStyle>) => Promise<void>;
   onMergeLayers: () => void;
+  onSplitLayer: () => void;
 }
 
 const RELATION_TYPES = ["parent_child", "reference", "optional", "blocking"];
@@ -95,6 +97,7 @@ function DraftNumberInput({
 export default function PropertyPanel({
   graph,
   selection,
+  canSplitLayer,
   onSelectionChange,
   onUpdateLayer,
   onUpdateStyle,
@@ -102,7 +105,8 @@ export default function PropertyPanel({
   onUpdateRelation,
   onUpdateTextBox,
   onUpdateStyles,
-  onMergeLayers
+  onMergeLayers,
+  onSplitLayer
 }: Props) {
   const selectedLayers = selection
     .filter((item) => item.kind === "layer")
@@ -169,6 +173,11 @@ export default function PropertyPanel({
         <>
           <section className="property-section">
             <h2>Layer</h2>
+            {canSplitLayer && (
+              <button type="button" className="primary-action" onClick={onSplitLayer}>
+                Split merged Layer
+              </button>
+            )}
             <label>
               Name
               <input

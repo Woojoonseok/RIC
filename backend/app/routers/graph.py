@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.exc import IntegrityError
@@ -17,6 +18,209 @@ router = APIRouter(prefix="/api/projects/{project_id}/graph", tags=["graph"])
 
 @router.get("", response_model=schemas.GraphRead)
 def read_graph(project_id: uuid.UUID, db: Session = Depends(get_db)) -> schemas.GraphRead:
+    return crud.read_graph(db, project_id)
+
+
+def _uuid_or_none(value: Any) -> uuid.UUID | None:
+    if value is None:
+        return None
+    if isinstance(value, uuid.UUID):
+        return value
+    try:
+        return uuid.UUID(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _unique_layer_name(db: Session, project_id: uuid.UUID, base_name: str, ignore_id: uuid.UUID | None = None) -> str:
+    base = (base_name or "Layer").strip()[:150] or "Layer"
+    names = {
+        layer.name.strip().lower()
+        for layer in db.query(models.Layer).filter(models.Layer.project_id == project_id).all()
+        if ignore_id is None or layer.id != ignore_id
+    }
+    if base.lower() not in names:
+        return base
+    index = 2
+    while True:
+        candidate = f"{base} {index}"[:160]
+        if candidate.lower() not in names:
+            return candidate
+        index += 1
+
+
+def _drop_merge_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
+    next_metadata = dict(metadata or {})
+    for key in ("merged_layer_ids", "merged_layer_names", "merged_layers", "merged_relations"):
+        next_metadata.pop(key, None)
+    return next_metadata
+
+
+def _dump_layer(layer: models.Layer, layout: models.GraphLayout | None, style: models.ShapeStyle | None) -> dict[str, Any]:
+    return {
+        "id": str(layer.id),
+        "name": layer.name,
+        "step": layer.step,
+        "layer_property": layer.layer_property,
+        "align": layer.align,
+        "align_side": layer.align_side,
+        "metadata_json": layer.metadata_json or {},
+        "layout": {
+            "x": layout.x,
+            "y": layout.y,
+            "width": layout.width,
+            "height": layout.height,
+            "z_index": layout.z_index,
+        } if layout else None,
+        "style": {
+            "fill_color": style.fill_color,
+            "stroke_color": style.stroke_color,
+            "text_color": style.text_color,
+            "font_size": style.font_size,
+            "stroke_width": style.stroke_width,
+        } if style else None,
+    }
+
+
+def _dump_relation(relation: models.LayerRelation) -> dict[str, Any]:
+    return {
+        "id": str(relation.id),
+        "parent_layer_id": str(relation.parent_layer_id),
+        "child_layer_id": str(relation.child_layer_id),
+        "relation_type": relation.relation_type,
+        "relation_style_id": str(relation.relation_style_id) if relation.relation_style_id else None,
+        "source_port": relation.source_port,
+        "target_port": relation.target_port,
+    }
+
+
+@router.patch("/restore", response_model=schemas.GraphRead)
+def restore_graph(
+    project_id: uuid.UUID,
+    payload: schemas.GraphRestore,
+    db: Session = Depends(get_db),
+) -> schemas.GraphRead:
+    crud.get_project_or_404(db, project_id)
+
+    db.query(models.LayerRelation).filter(models.LayerRelation.project_id == project_id).delete(synchronize_session=False)
+    db.query(models.GraphLayout).filter(models.GraphLayout.project_id == project_id).delete(synchronize_session=False)
+    db.query(models.ShapeStyle).filter(models.ShapeStyle.project_id == project_id).delete(synchronize_session=False)
+    db.query(models.TextBox).filter(models.TextBox.project_id == project_id).delete(synchronize_session=False)
+    db.query(models.RelationStyle).filter(models.RelationStyle.project_id == project_id).delete(synchronize_session=False)
+    db.query(models.BoxPreset).filter(models.BoxPreset.project_id == project_id).delete(synchronize_session=False)
+    db.query(models.Layer).filter(models.Layer.project_id == project_id).delete(synchronize_session=False)
+    db.flush()
+    db.expunge_all()
+
+    for layer in payload.layers:
+        db.add(models.Layer(
+            id=layer.id,
+            project_id=project_id,
+            name=layer.name,
+            step=layer.step,
+            layer_property=layer.layer_property,
+            align=layer.align,
+            align_side=layer.align_side,
+            metadata_json=layer.metadata_json,
+        ))
+    for style in payload.relation_styles:
+        db.add(models.RelationStyle(
+            id=style.id,
+            project_id=project_id,
+            name=style.name,
+            stroke_color=style.stroke_color,
+            stroke_width=style.stroke_width,
+            line_pattern=style.line_pattern,
+            marker_type=style.marker_type,
+            sort_order=style.sort_order,
+        ))
+    for preset in payload.box_presets:
+        db.add(models.BoxPreset(
+            id=preset.id,
+            project_id=project_id,
+            name=preset.name,
+            fill_color=preset.fill_color,
+            stroke_color=preset.stroke_color,
+            text_color=preset.text_color,
+            font_size=preset.font_size,
+            width=preset.width,
+            height=preset.height,
+            stroke_width=preset.stroke_width,
+            is_default=preset.is_default,
+            sort_order=preset.sort_order,
+        ))
+    db.flush()
+
+    layer_ids = {layer.id for layer in payload.layers}
+    relation_style_ids = {style.id for style in payload.relation_styles}
+    for layout in payload.layouts:
+        if layout.layer_id in layer_ids:
+            db.add(models.GraphLayout(
+                id=layout.id,
+                project_id=project_id,
+                layer_id=layout.layer_id,
+                x=layout.x,
+                y=layout.y,
+                width=layout.width,
+                height=layout.height,
+                z_index=layout.z_index,
+            ))
+    for style in payload.styles:
+        if style.layer_id in layer_ids:
+            db.add(models.ShapeStyle(
+                id=style.id,
+                project_id=project_id,
+                layer_id=style.layer_id,
+                fill_color=style.fill_color,
+                stroke_color=style.stroke_color,
+                text_color=style.text_color,
+                font_size=style.font_size,
+                stroke_width=style.stroke_width,
+            ))
+    for text_box in payload.text_boxes:
+        db.add(models.TextBox(
+            id=text_box.id,
+            project_id=project_id,
+            text=text_box.text,
+            x=text_box.x,
+            y=text_box.y,
+            width=text_box.width,
+            height=text_box.height,
+            text_color=text_box.text_color,
+            font_size=text_box.font_size,
+            background_color=text_box.background_color,
+            border_color=text_box.border_color,
+            locked=text_box.locked,
+        ))
+    db.flush()
+
+    relation_keys: set[tuple[uuid.UUID, uuid.UUID]] = set()
+    for relation in payload.relations:
+        if relation.parent_layer_id not in layer_ids or relation.child_layer_id not in layer_ids:
+            continue
+        if relation.parent_layer_id == relation.child_layer_id:
+            continue
+        key = (relation.parent_layer_id, relation.child_layer_id)
+        if key in relation_keys:
+            continue
+        relation_keys.add(key)
+        db.add(models.LayerRelation(
+            id=relation.id,
+            project_id=project_id,
+            parent_layer_id=relation.parent_layer_id,
+            child_layer_id=relation.child_layer_id,
+            relation_type=relation.relation_type,
+            relation_style_id=relation.relation_style_id if relation.relation_style_id in relation_style_ids else None,
+            source_port=relation.source_port,
+            target_port=relation.target_port,
+        ))
+
+    db.flush()
+    report = validate_project_graph(db, project_id)
+    if not report.ok:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=[issue.model_dump(mode="json") for issue in report.issues])
+    db.commit()
     return crud.read_graph(db, project_id)
 
 
@@ -141,6 +345,20 @@ def merge_layers(
     if not all(layer.id in layout_by_layer for layer in layers):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Selected layers must have layouts")
 
+    style_rows = (
+        db.query(models.ShapeStyle)
+        .filter(models.ShapeStyle.project_id == project_id, models.ShapeStyle.layer_id.in_(selected_ids))
+        .all()
+    )
+    style_by_layer = {style.layer_id: style for style in style_rows}
+    relation_rows = db.query(models.LayerRelation).filter(models.LayerRelation.project_id == project_id).all()
+    merged_layers = [_dump_layer(layer, layout_by_layer.get(layer.id), style_by_layer.get(layer.id)) for layer in layers]
+    merged_relations = [
+        _dump_relation(relation)
+        for relation in relation_rows
+        if relation.parent_layer_id in selected_ids or relation.child_layer_id in selected_ids
+    ]
+
     anchor_layout = layout_by_layer[anchor.id]
     min_x = min(layout.x for layout in layout_rows) - 20
     min_y = min(layout.y for layout in layout_rows) - 20
@@ -161,6 +379,8 @@ def merge_layers(
         **original_metadata,
         "merged_layer_ids": [str(layer.id) for layer in layers],
         "merged_layer_names": original_layer_names,
+        "merged_layers": merged_layers,
+        "merged_relations": merged_relations,
     }
 
     all_layouts = {
@@ -168,7 +388,6 @@ def merge_layers(
         for layout in db.query(models.GraphLayout).filter(models.GraphLayout.project_id == project_id).all()
     }
     all_layouts[anchor.id] = anchor_layout
-    relation_rows = db.query(models.LayerRelation).filter(models.LayerRelation.project_id == project_id).all()
     kept_keys: set[tuple[uuid.UUID, uuid.UUID]] = set()
     relation_specs: list[dict[str, object]] = []
     relations_to_delete: list[models.LayerRelation] = []
@@ -229,6 +448,210 @@ def merge_layers(
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Layer merge created duplicate data") from exc
+    return crud.read_graph(db, project_id)
+
+
+@router.post("/layers/{layer_id}/split", response_model=schemas.GraphRead)
+def split_layer(
+    project_id: uuid.UUID,
+    layer_id: uuid.UUID,
+    payload: schemas.LayerSplitRequest,
+    db: Session = Depends(get_db),
+) -> schemas.GraphRead:
+    layer = crud.get_layer_or_404(db, project_id, layer_id)
+    metadata = dict(layer.metadata_json or {})
+    stored_layers = metadata.get("merged_layers")
+    stored_relations = metadata.get("merged_relations")
+    stored_names = metadata.get("merged_layer_names")
+    if not isinstance(stored_layers, list):
+        names = stored_names if isinstance(stored_names, list) else layer.name.splitlines()
+        stored_layers = [{"id": str(uuid.uuid4()), "name": name} for name in names if str(name).strip()]
+    if len(stored_layers) < 2:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Selected layer is not a merged layer")
+
+    anchor_layout = (
+        db.query(models.GraphLayout)
+        .filter(models.GraphLayout.project_id == project_id, models.GraphLayout.layer_id == layer_id)
+        .one_or_none()
+    )
+    if anchor_layout is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Merged layer must have a layout")
+    anchor_style = (
+        db.query(models.ShapeStyle)
+        .filter(models.ShapeStyle.project_id == project_id, models.ShapeStyle.layer_id == layer_id)
+        .one_or_none()
+    )
+
+    stored_layouts = [item.get("layout") for item in stored_layers if isinstance(item, dict) and isinstance(item.get("layout"), dict)]
+    original_min_x = min((layout["x"] for layout in stored_layouts if "x" in layout), default=anchor_layout.x)
+    original_min_y = min((layout["y"] for layout in stored_layouts if "y" in layout), default=anchor_layout.y)
+    original_to_new: dict[uuid.UUID, uuid.UUID] = {}
+    new_layer_ids: list[uuid.UUID] = []
+
+    def split_position(item: dict[str, Any], index: int) -> dict[str, float | int]:
+        source_layout = item.get("layout") if isinstance(item.get("layout"), dict) else {}
+        if source_layout:
+            return {
+                "x": anchor_layout.x + 20 + float(source_layout.get("x", original_min_x)) - float(original_min_x),
+                "y": anchor_layout.y + 20 + float(source_layout.get("y", original_min_y)) - float(original_min_y),
+                "width": max(60, float(source_layout.get("width", 180))),
+                "height": max(36, float(source_layout.get("height", 72))),
+                "z_index": int(source_layout.get("z_index", index)),
+            }
+        gap = 36
+        if payload.orientation == "horizontal":
+            width = max(120, (anchor_layout.width - gap * (len(stored_layers) - 1)) / len(stored_layers))
+            return {"x": anchor_layout.x + index * (width + gap), "y": anchor_layout.y, "width": width, "height": max(72, anchor_layout.height), "z_index": index}
+        height = max(60, (anchor_layout.height - gap * (len(stored_layers) - 1)) / len(stored_layers))
+        return {"x": anchor_layout.x, "y": anchor_layout.y + index * (height + gap), "width": max(180, anchor_layout.width), "height": height, "z_index": index}
+
+    for index, raw_item in enumerate(stored_layers):
+        item = raw_item if isinstance(raw_item, dict) else {"id": str(uuid.uuid4()), "name": str(raw_item)}
+        original_id = _uuid_or_none(item.get("id")) or uuid.uuid4()
+        next_id = layer_id if index == 0 else original_id
+        if index > 0 and db.get(models.Layer, next_id) is not None:
+            next_id = uuid.uuid4()
+        original_to_new[original_id] = next_id
+        new_layer_ids.append(next_id)
+
+        item_metadata = _drop_merge_metadata(item.get("metadata_json") if isinstance(item.get("metadata_json"), dict) else {})
+        layout_payload = split_position(item, index)
+        style_payload = item.get("style") if isinstance(item.get("style"), dict) else {}
+
+        if index == 0:
+            layer.name = _unique_layer_name(db, project_id, str(item.get("name") or "Layer"), ignore_id=layer_id)
+            layer.step = item.get("step")
+            layer.layer_property = item.get("layer_property")
+            layer.align = item.get("align")
+            layer.align_side = item.get("align_side")
+            layer.metadata_json = item_metadata
+            anchor_layout.x = float(layout_payload["x"])
+            anchor_layout.y = float(layout_payload["y"])
+            anchor_layout.width = float(layout_payload["width"])
+            anchor_layout.height = float(layout_payload["height"])
+            anchor_layout.z_index = int(layout_payload["z_index"])
+            if anchor_style is None:
+                anchor_style = models.ShapeStyle(project_id=project_id, layer_id=layer_id)
+                db.add(anchor_style)
+            anchor_style.fill_color = str(style_payload.get("fill_color", anchor_style.fill_color))
+            anchor_style.stroke_color = str(style_payload.get("stroke_color", anchor_style.stroke_color))
+            anchor_style.text_color = str(style_payload.get("text_color", anchor_style.text_color))
+            anchor_style.font_size = int(style_payload.get("font_size", anchor_style.font_size))
+            anchor_style.stroke_width = int(style_payload.get("stroke_width", anchor_style.stroke_width))
+            continue
+
+        new_layer = models.Layer(
+            id=next_id,
+            project_id=project_id,
+            name=_unique_layer_name(db, project_id, str(item.get("name") or "Layer")),
+            step=item.get("step"),
+            layer_property=item.get("layer_property"),
+            align=item.get("align"),
+            align_side=item.get("align_side"),
+            metadata_json=item_metadata,
+        )
+        db.add(new_layer)
+        db.flush()
+        db.add(models.GraphLayout(
+            project_id=project_id,
+            layer_id=next_id,
+            x=float(layout_payload["x"]),
+            y=float(layout_payload["y"]),
+            width=float(layout_payload["width"]),
+            height=float(layout_payload["height"]),
+            z_index=int(layout_payload["z_index"]),
+        ))
+        db.add(models.ShapeStyle(
+            project_id=project_id,
+            layer_id=next_id,
+            fill_color=str(style_payload.get("fill_color", anchor_style.fill_color if anchor_style else "#ffffff")),
+            stroke_color=str(style_payload.get("stroke_color", anchor_style.stroke_color if anchor_style else "#2563eb")),
+            text_color=str(style_payload.get("text_color", anchor_style.text_color if anchor_style else "#111827")),
+            font_size=int(style_payload.get("font_size", anchor_style.font_size if anchor_style else 14)),
+            stroke_width=int(style_payload.get("stroke_width", anchor_style.stroke_width if anchor_style else 2)),
+        ))
+
+    current_touching = (
+        db.query(models.LayerRelation)
+        .filter(
+            models.LayerRelation.project_id == project_id,
+            (models.LayerRelation.parent_layer_id == layer_id) | (models.LayerRelation.child_layer_id == layer_id),
+        )
+        .all()
+    )
+    fallback_relations = [_dump_relation(relation) for relation in current_touching]
+    for relation in current_touching:
+        db.delete(relation)
+    db.flush()
+
+    existing_layer_ids = {row.id for row in db.query(models.Layer).filter(models.Layer.project_id == project_id).all()}
+    relation_style_ids = {row.id for row in db.query(models.RelationStyle).filter(models.RelationStyle.project_id == project_id).all()}
+    existing_keys = {
+        (relation.parent_layer_id, relation.child_layer_id)
+        for relation in db.query(models.LayerRelation).filter(models.LayerRelation.project_id == project_id).all()
+    }
+
+    relation_specs = stored_relations if isinstance(stored_relations, list) and stored_relations else []
+    if not relation_specs:
+        relation_specs = []
+        for index in range(len(new_layer_ids) - 1):
+            relation_specs.append({
+                "parent_layer_id": str(new_layer_ids[index]),
+                "child_layer_id": str(new_layer_ids[index + 1]),
+                "relation_type": "parent_child",
+                "relation_style_id": default_relation_style_id(db, project_id),
+                "source_port": "bottom" if payload.orientation == "vertical" else "right",
+                "target_port": "top" if payload.orientation == "vertical" else "left",
+            })
+        for relation in fallback_relations:
+            parent_id = _uuid_or_none(relation.get("parent_layer_id"))
+            child_id = _uuid_or_none(relation.get("child_layer_id"))
+            relation_specs.append({
+                **relation,
+                "parent_layer_id": str(new_layer_ids[-1] if parent_id == layer_id else parent_id),
+                "child_layer_id": str(new_layer_ids[0] if child_id == layer_id else child_id),
+            })
+
+    for raw_relation in relation_specs:
+        if not isinstance(raw_relation, dict):
+            continue
+        original_parent = _uuid_or_none(raw_relation.get("parent_layer_id"))
+        original_child = _uuid_or_none(raw_relation.get("child_layer_id"))
+        parent_id = original_to_new.get(original_parent, original_parent)
+        child_id = original_to_new.get(original_child, original_child)
+        if not parent_id or not child_id or parent_id == child_id:
+            continue
+        if parent_id not in existing_layer_ids or child_id not in existing_layer_ids:
+            continue
+        key = (parent_id, child_id)
+        if key in existing_keys:
+            continue
+        relation_id = _uuid_or_none(raw_relation.get("id")) or uuid.uuid4()
+        if db.get(models.LayerRelation, relation_id) is not None:
+            relation_id = uuid.uuid4()
+        relation_style_id = _uuid_or_none(raw_relation.get("relation_style_id"))
+        db.add(models.LayerRelation(
+            id=relation_id,
+            project_id=project_id,
+            parent_layer_id=parent_id,
+            child_layer_id=child_id,
+            relation_type=str(raw_relation.get("relation_type") or "parent_child"),
+            relation_style_id=relation_style_id if relation_style_id in relation_style_ids else None,
+            source_port=str(raw_relation.get("source_port") or "right"),
+            target_port=str(raw_relation.get("target_port") or "left"),
+        ))
+        existing_keys.add(key)
+
+    try:
+        db.flush()
+        report = validate_project_graph(db, project_id)
+        if not report.ok:
+            db.rollback()
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=[issue.model_dump(mode="json") for issue in report.issues])
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Layer split created duplicate data") from exc
     return crud.read_graph(db, project_id)
 
 

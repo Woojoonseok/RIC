@@ -147,3 +147,7 @@ export interface LayerMergeRequest {
   layer_ids: string[];
   name?: string;
 }
+
+export interface LayerSplitRequest {
+  orientation?: "vertical" | "horizontal";
+}

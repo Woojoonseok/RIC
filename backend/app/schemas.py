@@ -55,6 +55,10 @@ class LayerMergeRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=160)
 
 
+class LayerSplitRequest(BaseModel):
+    orientation: Literal["vertical", "horizontal"] = "vertical"
+
+
 class LayerRead(OrmModel, LayerBase):
     id: uuid.UUID
     project_id: uuid.UUID
@@ -260,6 +264,16 @@ class GraphBatchUpdate(BaseModel):
     layouts: list[LayoutBatchUpdate] = Field(default_factory=list)
     styles: list[StyleBatchUpdate] = Field(default_factory=list)
     text_boxes: list[TextBoxBatchUpdate] = Field(default_factory=list)
+
+
+class GraphRestore(BaseModel):
+    layers: list[LayerRead] = Field(default_factory=list)
+    layouts: list[LayoutRead] = Field(default_factory=list)
+    styles: list[StyleRead] = Field(default_factory=list)
+    box_presets: list[BoxPresetRead] = Field(default_factory=list)
+    relation_styles: list[RelationStyleRead] = Field(default_factory=list)
+    relations: list[RelationRead] = Field(default_factory=list)
+    text_boxes: list[TextBoxRead] = Field(default_factory=list)
 
 
 class ValidationIssue(BaseModel):

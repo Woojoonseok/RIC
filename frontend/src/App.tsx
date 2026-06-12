@@ -10,6 +10,7 @@ import Toolbar from "./components/Toolbar";
 import type { BoxPreset, EditorMode, Graph, GraphBatchUpdate, Layout, Project, SelectionItem, ShapeStyle, TextBox } from "./types";
 
 type AppView = "home" | "import" | "editor" | "export";
+const HISTORY_LIMIT = 40;
 
 const SAMPLE_LAYERS = [
   { step: "S01", name: "WL", layer_property: "Main", align: "AA01", align_side: "LEFT" },
@@ -46,6 +47,16 @@ function applySelection(selection: SelectionItem[], item: SelectionItem, additiv
   return selection.some((selected) => sameSelection(selected, item))
     ? selection.filter((selected) => !sameSelection(selected, item))
     : [...selection, item];
+}
+
+function cloneGraph(graph: Graph): Graph {
+  return JSON.parse(JSON.stringify(graph)) as Graph;
+}
+
+function isMergedLayer(layer: Graph["layers"][number] | null | undefined) {
+  if (!layer) return false;
+  const metadata = layer.metadata_json ?? {};
+  return Array.isArray(metadata.merged_layers) || Array.isArray(metadata.merged_layer_names) || layer.name.includes("\n");
 }
 
 function escapeXml(value: string) {
@@ -113,6 +124,8 @@ export default function App() {
   const [view, setView] = useState<AppView>("home");
   const [selectedRelationStyleId, setSelectedRelationStyleId] = useState("");
   const [selectedBoxPresetId, setSelectedBoxPresetId] = useState("");
+  const [undoStack, setUndoStack] = useState<Graph[]>([]);
+  const [redoStack, setRedoStack] = useState<Graph[]>([]);
   const [status, setStatus] = useState("Ready");
   const [busy, setBusy] = useState(false);
 
@@ -124,6 +137,17 @@ export default function App() {
     () => selection.filter((item) => item.kind === "layer").map((item) => item.id),
     [selection]
   );
+  const selectedSplitLayerId = useMemo(() => {
+    if (!graph || selectedLayerIds.length !== 1) return "";
+    const layer = graph.layers.find((item) => item.id === selectedLayerIds[0]);
+    return layer && isMergedLayer(layer) ? layer.id : "";
+  }, [graph, selectedLayerIds]);
+
+  const rememberUndo = (snapshot: Graph | null) => {
+    if (!snapshot) return;
+    setUndoStack((current) => [...current, cloneGraph(snapshot)].slice(-HISTORY_LIMIT));
+    setRedoStack([]);
+  };
 
   const loadProjects = useCallback(async () => {
     const list = await api.listProjects();
@@ -172,6 +196,11 @@ export default function App() {
     void loadGraph(projectId);
   }, [loadGraph, projectId]);
 
+  useEffect(() => {
+    setUndoStack([]);
+    setRedoStack([]);
+  }, [projectId]);
+
   const createProject = async (name?: string) => {
     setBusy(true);
     try {
@@ -189,14 +218,16 @@ export default function App() {
     }
   };
 
-  const mutateGraph = async (operation: () => Promise<unknown>, message: string) => {
+  const mutateGraph = async (operation: () => Promise<unknown>, message: string, trackHistory = true) => {
     if (!projectId) {
       return;
     }
+    const snapshot = graph ? cloneGraph(graph) : null;
     setBusy(true);
     try {
       await operation();
       await loadGraph(projectId);
+      if (trackHistory) rememberUndo(snapshot);
       setStatus(message);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Operation failed");
@@ -223,11 +254,13 @@ export default function App() {
 
   const saveGraphBatch = async (payload: GraphBatchUpdate, message: string) => {
     if (!projectId) return;
+    const snapshot = graph ? cloneGraph(graph) : null;
     setGraph((current) => (current ? mergeBatchIntoGraph(current, payload) : current));
     setStatus("Saving...");
     try {
       const nextGraph = await api.batchUpdateGraph(projectId, payload);
       setGraph(nextGraph);
+      rememberUndo(snapshot);
       setStatus(message);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Operation failed");
@@ -404,11 +437,13 @@ export default function App() {
     );
     if (!confirmed) return;
 
+    const snapshot = cloneGraph(graph);
     setBusy(true);
     try {
       const nextGraph = await api.mergeLayers(projectId, { layer_ids: selectedLayerIds });
       setGraph(nextGraph);
       setSelection([{ kind: "layer", id: selectedLayerIds[0] }]);
+      rememberUndo(snapshot);
       setStatus("Layers merged");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Layer merge failed");
@@ -418,9 +453,107 @@ export default function App() {
     }
   };
 
+  const splitSelectedLayer = async () => {
+    if (!projectId || !graph || !selectedSplitLayerId) {
+      setStatus("Select one merged layer to split");
+      return;
+    }
+    const selectedLayer = graph.layers.find((layer) => layer.id === selectedSplitLayerId);
+    const confirmed = window.confirm(`Split '${selectedLayer?.name ?? "Layer"}' back into separate Layer boxes?`);
+    if (!confirmed) return;
+
+    const snapshot = cloneGraph(graph);
+    setBusy(true);
+    try {
+      const nextGraph = await api.splitLayer(projectId, selectedSplitLayerId, { orientation: "vertical" });
+      setGraph(nextGraph);
+      setSelection([{ kind: "layer", id: selectedSplitLayerId }]);
+      rememberUndo(snapshot);
+      setStatus("Layer split");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Layer split failed");
+      await loadGraph(projectId);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const applyRestoredGraph = (nextGraph: Graph) => {
+    setGraph(nextGraph);
+    setSelection([]);
+    setSelectedRelationStyleId((current) =>
+      current && nextGraph.relation_styles.some((style) => style.id === current)
+        ? current
+        : nextGraph.relation_styles[0]?.id ?? ""
+    );
+    const boxPresets = nextGraph.box_presets ?? [];
+    setSelectedBoxPresetId((current) =>
+      current && boxPresets.some((preset) => preset.id === current)
+        ? current
+        : boxPresets.find((preset) => preset.is_default)?.id ?? boxPresets[0]?.id ?? ""
+    );
+  };
+
+  const undoGraph = async () => {
+    if (!projectId || !graph || undoStack.length === 0) return;
+    const target = undoStack[undoStack.length - 1];
+    const current = cloneGraph(graph);
+    setBusy(true);
+    try {
+      const restored = await api.restoreGraph(projectId, target);
+      setUndoStack((stack) => stack.slice(0, -1));
+      setRedoStack((stack) => [...stack, current].slice(-HISTORY_LIMIT));
+      applyRestoredGraph(restored);
+      setStatus("Undo");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Undo failed");
+      await loadGraph(projectId);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const redoGraph = async () => {
+    if (!projectId || !graph || redoStack.length === 0) return;
+    const target = redoStack[redoStack.length - 1];
+    const current = cloneGraph(graph);
+    setBusy(true);
+    try {
+      const restored = await api.restoreGraph(projectId, target);
+      setRedoStack((stack) => stack.slice(0, -1));
+      setUndoStack((stack) => [...stack, current].slice(-HISTORY_LIMIT));
+      applyRestoredGraph(restored);
+      setStatus("Redo");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Redo failed");
+      await loadGraph(projectId);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const onSelectItem = (item: SelectionItem, additive = false) => {
     setSelection((current) => applySelection(current, item, additive));
   };
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
+      const key = event.key.toLowerCase();
+      if ((event.ctrlKey || event.metaKey) && key === "z") {
+        event.preventDefault();
+        if (event.shiftKey) void redoGraph();
+        else void undoGraph();
+      }
+      if ((event.ctrlKey || event.metaKey) && key === "y") {
+        event.preventDefault();
+        void redoGraph();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  });
 
   const createRelationStyle = () => {
     void mutateGraph(
@@ -661,7 +794,7 @@ export default function App() {
           onDeleteBoxPreset={deleteBoxPreset}
           onImportLayers={(rows) => void importLayers(rows)}
           onImportRelations={(rows) => void importRelations(rows)}
-          onValidate={() => void mutateGraph(() => api.validate(projectId), "Validation executed")}
+          onValidate={() => void mutateGraph(() => api.validate(projectId), "Validation executed", false)}
           onBuildTree={() => void mutateGraph(() => api.autoLayout(projectId), "Align tree built")}
         />
       )}
@@ -677,6 +810,9 @@ export default function App() {
         boxPresets={graph?.box_presets ?? []}
         selectedBoxPresetId={selectedBoxPresetId}
         selectedLayerCount={selectedLayerIds.length}
+        canUndo={undoStack.length > 0}
+        canRedo={redoStack.length > 0}
+        canSplitLayer={Boolean(selectedSplitLayerId)}
         onRelationStyleChange={setSelectedRelationStyleId}
         onBoxPresetChange={setSelectedBoxPresetId}
         onCreateRelationStyle={createRelationStyle}
@@ -684,6 +820,9 @@ export default function App() {
         onCreateLayer={() => void createLayer()}
         onCreateTextBox={() => void createTextBox()}
         onMergeLayers={() => void mergeSelectedLayers()}
+        onSplitLayer={() => void splitSelectedLayer()}
+        onUndo={() => void undoGraph()}
+        onRedo={() => void redoGraph()}
         onAutoLayout={() => mutateGraph(() => api.autoLayout(projectId), "Auto layout applied")}
         onDelete={() => void deleteSelection()}
         onRefresh={() => void loadGraph()}
@@ -714,6 +853,7 @@ export default function App() {
         <PropertyPanel
           graph={graph}
           selection={selection}
+          canSplitLayer={Boolean(selectedSplitLayerId)}
           onSelectionChange={setSelection}
           onUpdateLayer={(layerId, payload) =>
             mutateGraph(() => api.updateLayer(projectId, layerId, payload), "Layer saved")
@@ -732,6 +872,7 @@ export default function App() {
           }
           onUpdateStyles={saveStyleBatch}
           onMergeLayers={() => void mergeSelectedLayers()}
+          onSplitLayer={() => void splitSelectedLayer()}
         />
       </section>
         </section>

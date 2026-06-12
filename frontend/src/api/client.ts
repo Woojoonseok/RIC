@@ -2,6 +2,7 @@ import type {
   Graph,
   GraphBatchUpdate,
   LayerMergeRequest,
+  LayerSplitRequest,
   BoxPreset,
   Layer,
   Layout,
@@ -50,6 +51,8 @@ export const api = {
   getGraph: (projectId: string) => request<Graph>(`/projects/${projectId}/graph`),
   batchUpdateGraph: (projectId: string, payload: GraphBatchUpdate) =>
     request<Graph>(`/projects/${projectId}/graph/batch`, { method: "PATCH", body: JSON.stringify(payload) }),
+  restoreGraph: (projectId: string, payload: Graph) =>
+    request<Graph>(`/projects/${projectId}/graph/restore`, { method: "PATCH", body: JSON.stringify(payload) }),
   validate: (projectId: string) => request<ValidationReport>(`/projects/${projectId}/validate`, { method: "POST" }),
   autoLayout: (projectId: string) => request<Graph>(`/projects/${projectId}/graph/auto-layout`, { method: "POST" }),
   createLayer: (projectId: string, payload: JsonValue) =>
@@ -58,6 +61,8 @@ export const api = {
     request<Layer>(`/projects/${projectId}/graph/layers/${layerId}`, { method: "PUT", body: JSON.stringify(payload) }),
   mergeLayers: (projectId: string, payload: LayerMergeRequest) =>
     request<Graph>(`/projects/${projectId}/graph/layers/merge`, { method: "POST", body: JSON.stringify(payload) }),
+  splitLayer: (projectId: string, layerId: string, payload: LayerSplitRequest = {}) =>
+    request<Graph>(`/projects/${projectId}/graph/layers/${layerId}/split`, { method: "POST", body: JSON.stringify(payload) }),
   updateLayout: (projectId: string, layerId: string, payload: JsonValue) =>
     request<Layout>(`/projects/${projectId}/graph/layers/${layerId}/layout`, { method: "PATCH", body: JSON.stringify(payload) }),
   updateStyle: (projectId: string, layerId: string, payload: JsonValue) =>
