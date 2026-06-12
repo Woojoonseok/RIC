@@ -24,6 +24,17 @@ const SAMPLE_RELATIONS = [
   ["CONTACT", "METAL", "Align"]
 ];
 
+function nextUniqueName(existingNames: string[], prefix: string) {
+  const used = new Set(existingNames.map((name) => name.trim().toLowerCase()));
+  let index = existingNames.length + 1;
+  let candidate = `${prefix} ${index.toString().padStart(2, "0")}`;
+  while (used.has(candidate.toLowerCase())) {
+    index += 1;
+    candidate = `${prefix} ${index.toString().padStart(2, "0")}`;
+  }
+  return candidate;
+}
+
 function sameSelection(a: SelectionItem, b: SelectionItem) {
   return a.kind === b.kind && a.id === b.id;
 }
@@ -131,7 +142,7 @@ export default function App() {
     mutateGraph(
       () =>
         api.createLayer(projectId, {
-          name: `Layer ${((graph?.layers.length ?? 0) + 1).toString().padStart(2, "0")}`,
+          name: nextUniqueName(graph?.layers.map((layer) => layer.name) ?? [], "Layer"),
           x,
           y
         }),
@@ -274,7 +285,7 @@ export default function App() {
     void mutateGraph(
       () =>
         api.createRelationStyle(projectId, {
-          name: `Arrow ${((graph?.relation_styles.length ?? 0) + 1).toString().padStart(2, "0")}`,
+          name: nextUniqueName(graph?.relation_styles.map((style) => style.name) ?? [], "Arrow"),
           stroke_color: "#111827",
           stroke_width: 2,
           line_pattern: "solid",
@@ -283,6 +294,18 @@ export default function App() {
         }),
       "Arrow style added"
     );
+  };
+
+  const deleteRelationStyle = (styleId: string) => {
+    if (!graph) return;
+    const style = graph.relation_styles.find((item) => item.id === styleId);
+    if (!style) return;
+    const usedCount = graph.relations.filter((relation) => relation.relation_style_id === styleId).length;
+    const confirmed = usedCount
+      ? window.confirm(`Delete arrow style '${style.name}'? ${usedCount} relation(s) using it will fall back to default styling.`)
+      : window.confirm(`Delete arrow style '${style.name}'?`);
+    if (!confirmed) return;
+    void mutateGraph(() => api.deleteRelationStyle(projectId, styleId), "Arrow style deleted");
   };
 
   const downloadBlob = (filename: string, body: string, type: string) => {
@@ -422,6 +445,7 @@ export default function App() {
           onUpdateRelationStyle={(styleId, payload) =>
             void mutateGraph(() => api.updateRelationStyle(projectId, styleId, payload), "Arrow style saved")
           }
+          onDeleteRelationStyle={deleteRelationStyle}
           onImportLayers={(rows) => void importLayers(rows)}
           onImportRelations={(rows) => void importRelations(rows)}
           onValidate={() => void mutateGraph(() => api.validate(projectId), "Validation executed")}
@@ -435,12 +459,8 @@ export default function App() {
         busy={busy}
         status={status}
         projectId={projectId}
-        projects={projects}
         relationStyles={graph?.relation_styles ?? []}
         selectedRelationStyleId={selectedRelationStyleId}
-        selectedProject={selectedProject}
-        onProjectChange={setProjectId}
-        onCreateProject={() => void createProject()}
         onRelationStyleChange={setSelectedRelationStyleId}
         onCreateRelationStyle={createRelationStyle}
         onModeChange={setMode}

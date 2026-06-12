@@ -60,11 +60,11 @@ def ensure_default_relation_styles(db: Session, project_id: uuid.UUID) -> list[m
         .order_by(models.RelationStyle.sort_order, models.RelationStyle.created_at)
         .all()
     )
-    existing_names = {style.name for style in existing}
+    if existing:
+        return existing
+
     created = []
     for index, style_data in enumerate(DEFAULT_RELATION_STYLES):
-        if style_data["name"] in existing_names:
-            continue
         style = models.RelationStyle(project_id=project_id, sort_order=index, **style_data)
         db.add(style)
         created.append(style)

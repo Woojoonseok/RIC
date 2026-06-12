@@ -226,7 +226,7 @@ button:disabled {
 }
 
 .arrow-style-table .table-row {
-  grid-template-columns: 190px 90px 140px 80px minmax(160px, 1fr);
+  grid-template-columns: 190px 90px 140px 80px minmax(160px, 1fr) 82px;
 }
 
 .table-row:last-child {
@@ -294,6 +294,11 @@ button:disabled {
 .arrow-preview svg {
   width: 120px;
   height: 22px;
+}
+
+.table-action {
+  margin: 4px;
+  padding: 5px 8px;
 }
 
 .export-view {

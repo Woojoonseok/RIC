@@ -16,6 +16,7 @@ interface Props {
   onUpdateRelation: (relationId: string, payload: Partial<Relation>) => void;
   onCreateRelationStyle: () => void;
   onUpdateRelationStyle: (styleId: string, payload: Partial<RelationStyle>) => void;
+  onDeleteRelationStyle: (styleId: string) => void;
   onImportLayers: (rows: ParsedRow[]) => void;
   onImportRelations: (rows: ParsedRow[]) => void;
   onValidate: () => void;
@@ -57,12 +58,13 @@ export default function ImportView({
   onUpdateRelation,
   onCreateRelationStyle,
   onUpdateRelationStyle,
+  onDeleteRelationStyle,
   onImportLayers,
   onImportRelations,
   onValidate,
   onBuildTree
 }: Props) {
-  const [pasteTarget, setPasteTarget] = useState<"align" | "relation">("align");
+  const [pasteTarget, setPasteTarget] = useState<"align" | "relation" | null>(null);
   const [pasteText, setPasteText] = useState("");
   const alignUploadRef = useRef<HTMLInputElement | null>(null);
   const relationUploadRef = useRef<HTMLInputElement | null>(null);
@@ -182,6 +184,7 @@ export default function ImportView({
             <span>Line Type</span>
             <span>Width</span>
             <span>Preview</span>
+            <span></span>
           </div>
           {graph?.relation_styles.map((style) => (
             <div key={style.id} className="table-row">
@@ -227,15 +230,18 @@ export default function ImportView({
                   />
                 </svg>
               </div>
+              <button type="button" className="table-action" onClick={() => onDeleteRelationStyle(style.id)}>Delete</button>
             </div>
           ))}
         </div>
       </section>
 
+      {pasteTarget && (
       <section className="panel-block paste-panel">
         <div className="panel-head">
           <div className="panel-title">{pasteTarget === "align" ? "Align Input" : "Layer Relation"} Paste</div>
           <div className="button-strip">
+            <button type="button" onClick={() => setPasteTarget(null)}>Close</button>
             <button
               type="button"
               onClick={() => {
@@ -244,6 +250,7 @@ export default function ImportView({
                 if (pasteTarget === "align") onImportLayers(rows);
                 else onImportRelations(rows);
                 setPasteText("");
+                setPasteTarget(null);
               }}
             >
               Apply
@@ -256,6 +263,7 @@ export default function ImportView({
           placeholder={pasteTarget === "align" ? ALIGN_HEADERS.join("\t") : RELATION_HEADERS.join("\t")}
         />
       </section>
+      )}
 
       <section className="panel-block validation-panel">
         <div className="panel-head">
