@@ -588,7 +588,6 @@ export default function App() {
         <HomeView
           projects={projects}
           currentProjectId={projectId}
-          graph={graph}
           onOpenProject={(id) => {
             setProjectId(id);
             setView("editor");
@@ -596,9 +595,6 @@ export default function App() {
           onCreateProject={(name) => void createProject(name)}
           onLoadSample={() => void loadSample()}
           onDownloadTemplate={downloadTemplate}
-          onCreateBoxPreset={createBoxPreset}
-          onUpdateBoxPreset={updateBoxPreset}
-          onDeleteBoxPreset={deleteBoxPreset}
         />
       )}
       {view === "import" && (
@@ -616,6 +612,9 @@ export default function App() {
             void mutateGraph(() => api.updateRelationStyle(projectId, styleId, payload), "Arrow style saved")
           }
           onDeleteRelationStyle={deleteRelationStyle}
+          onCreateBoxPreset={createBoxPreset}
+          onUpdateBoxPreset={updateBoxPreset}
+          onDeleteBoxPreset={deleteBoxPreset}
           onImportLayers={(rows) => void importLayers(rows)}
           onImportRelations={(rows) => void importRelations(rows)}
           onValidate={() => void mutateGraph(() => api.validate(projectId), "Validation executed")}
