@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import type { EditorMode, Graph, Layout, PortName, SelectionItem, TextBox } from "../types";
 
@@ -42,6 +42,7 @@ interface ConnectStart {
 }
 
 const PORTS: PortName[] = ["top", "right", "bottom", "left"];
+const GRID_SIZE = 20;
 
 function portPoint(layout: Layout, port: PortName): Point {
   if (port === "top") return { x: layout.x + layout.width / 2, y: layout.y };
@@ -50,13 +51,28 @@ function portPoint(layout: Layout, port: PortName): Point {
   return { x: layout.x, y: layout.y + layout.height / 2 };
 }
 
+function portHandlePoint(layout: Layout, port: PortName): Point {
+  const point = portPoint(layout, port);
+  const offset = 18;
+  if (port === "top") return { x: point.x, y: point.y - offset };
+  if (port === "right") return { x: point.x + offset, y: point.y };
+  if (port === "bottom") return { x: point.x, y: point.y + offset };
+  return { x: point.x - offset, y: point.y };
+}
+
+function snap(value: number, enabled: boolean) {
+  return enabled ? Math.round(value / GRID_SIZE) * GRID_SIZE : value;
+}
+
 function intersects(a: { x: number; y: number; width: number; height: number }, b: { x: number; y: number; width: number; height: number }) {
   return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
 }
 
 function relationStroke(type: string) {
-  if (type === "reference") return { strokeDasharray: "6 6", stroke: "#7c3aed" };
-  if (type === "optional") return { strokeDasharray: "2 5", stroke: "#0891b2" };
+  const normalized = type.toLowerCase();
+  if (normalized === "reference") return { strokeDasharray: "6 6", stroke: "#7c3aed" };
+  if (normalized === "optional" || normalized === "warning") return { strokeDasharray: "2 5", stroke: "#0891b2" };
+  if (normalized === "overlay") return { strokeDasharray: undefined, stroke: "#f97316" };
   return { strokeDasharray: undefined, stroke: "#334155" };
 }
 
@@ -77,6 +93,9 @@ export default function CanvasEditor({
   const [viewBox, setViewBox] = useState({ x: 0, y: 0, width: 1600, height: 1000 });
   const [drag, setDrag] = useState<DragState | null>(null);
   const [connectStart, setConnectStart] = useState<ConnectStart | null>(null);
+  const [pointerCanvas, setPointerCanvas] = useState<Point | null>(null);
+  const [snapToGrid, setSnapToGrid] = useState(true);
+  const [search, setSearch] = useState("");
 
   const selectedLayerIds = useMemo(
     () => new Set(selection.filter((item) => item.kind === "layer").map((item) => item.id)),
@@ -97,11 +116,43 @@ export default function CanvasEditor({
     return map;
   }, [graph]);
 
+  const graphBounds = useMemo(() => {
+    const boxes = [...(graph?.layouts ?? []), ...(graph?.text_boxes ?? [])];
+    if (!boxes.length) {
+      return { x: 0, y: 0, width: 1600, height: 1000 };
+    }
+    const minX = Math.min(...boxes.map((box) => box.x));
+    const minY = Math.min(...boxes.map((box) => box.y));
+    const maxX = Math.max(...boxes.map((box) => box.x + box.width));
+    const maxY = Math.max(...boxes.map((box) => box.y + box.height));
+    return {
+      x: minX - 120,
+      y: minY - 120,
+      width: Math.max(500, maxX - minX + 240),
+      height: Math.max(320, maxY - minY + 240)
+    };
+  }, [graph]);
+
   const styleByLayer = useMemo(() => {
     const map = new Map();
     graph?.styles.forEach((style) => map.set(style.layer_id, style));
     return map;
   }, [graph]);
+
+  const zoomPercent = Math.round((1600 / viewBox.width) * 100);
+
+  useEffect(() => {
+    if (!graph) return;
+    const selectedLayer = selection.length === 1 && selection[0].kind === "layer" ? selection[0].id : null;
+    if (!selectedLayer || drag) return;
+    const layout = layoutByLayer.get(selectedLayer);
+    if (!layout) return;
+    setViewBox((current) => ({
+      ...current,
+      x: layout.x + layout.width / 2 - current.width / 2,
+      y: layout.y + layout.height / 2 - current.height / 2
+    }));
+  }, [selection, graph, layoutByLayer, drag]);
 
   const toCanvasPoint = (event: React.PointerEvent<SVGElement>): Point => {
     const svg = svgRef.current;
@@ -147,6 +198,11 @@ export default function CanvasEditor({
 
   const beginMove = (event: React.PointerEvent<SVGElement>, item: SelectionItem) => {
     if (!graph) return;
+    if (event.altKey) {
+      event.stopPropagation();
+      setDrag({ type: "pan", clientStart: { x: event.clientX, y: event.clientY }, viewStart: { x: viewBox.x, y: viewBox.y } });
+      return;
+    }
     const additive = event.ctrlKey || event.metaKey || event.shiftKey;
     const isAlreadySelected = selection.some((selected) => selected.kind === item.kind && selected.id === item.id);
     if (!isAlreadySelected || additive) {
@@ -172,7 +228,7 @@ export default function CanvasEditor({
   };
 
   const handleBackgroundPointerDown = (event: React.PointerEvent<SVGSVGElement>) => {
-    if (event.target !== event.currentTarget) return;
+    if (event.target !== event.currentTarget && !(event.target instanceof SVGRectElement && event.target.classList.contains("canvas-bg"))) return;
     const point = toCanvasPoint(event);
     if (event.altKey) {
       setDrag({ type: "pan", clientStart: { x: event.clientX, y: event.clientY }, viewStart: { x: viewBox.x, y: viewBox.y } });
@@ -189,6 +245,7 @@ export default function CanvasEditor({
   };
 
   const handlePointerMove = (event: React.PointerEvent<SVGSVGElement>) => {
+    setPointerCanvas(toCanvasPoint(event));
     if (!drag) return;
     if (drag.type === "pan") {
       const svg = svgRef.current;
@@ -235,23 +292,23 @@ export default function CanvasEditor({
       const dy = drag.current.y - drag.start.y;
       void Promise.all([
         ...Object.values(drag.layerOrigins).map((layout) =>
-          onUpdateLayout(layout.layer_id, { x: Math.round(layout.x + dx), y: Math.round(layout.y + dy) })
+          onUpdateLayout(layout.layer_id, { x: Math.round(snap(layout.x + dx, snapToGrid)), y: Math.round(snap(layout.y + dy, snapToGrid)) })
         ),
         ...Object.values(drag.textOrigins).map((textBox) =>
-          onUpdateTextBox(textBox.id, { x: Math.round(textBox.x + dx), y: Math.round(textBox.y + dy) })
+          onUpdateTextBox(textBox.id, { x: Math.round(snap(textBox.x + dx, snapToGrid)), y: Math.round(snap(textBox.y + dy, snapToGrid)) })
         )
       ]);
     }
 
     if (drag.type === "resize-layer") {
-      const width = Math.round(Math.max(60, drag.origin.width + drag.current.x - drag.start.x));
-      const height = Math.round(Math.max(36, drag.origin.height + drag.current.y - drag.start.y));
+      const width = Math.round(snap(Math.max(60, drag.origin.width + drag.current.x - drag.start.x), snapToGrid));
+      const height = Math.round(snap(Math.max(36, drag.origin.height + drag.current.y - drag.start.y), snapToGrid));
       void onUpdateLayout(drag.layerId, { width, height });
     }
 
     if (drag.type === "resize-text") {
-      const width = Math.round(Math.max(40, drag.origin.width + drag.current.x - drag.start.x));
-      const height = Math.round(Math.max(24, drag.origin.height + drag.current.y - drag.start.y));
+      const width = Math.round(snap(Math.max(40, drag.origin.width + drag.current.x - drag.start.x), snapToGrid));
+      const height = Math.round(snap(Math.max(24, drag.origin.height + drag.current.y - drag.start.y), snapToGrid));
       void onUpdateTextBox(drag.textBoxId, { width, height });
     }
 
@@ -288,7 +345,7 @@ export default function CanvasEditor({
         child_layer_id: layerId,
         source_port: connectStart.port,
         target_port: port,
-        relation_type: "parent_child"
+        relation_type: "Align"
       });
     }
     setConnectStart(null);
@@ -297,12 +354,25 @@ export default function CanvasEditor({
 
   const fitView = () => {
     if (!graph || graph.layouts.length === 0) return;
-    const boxes = [...graph.layouts, ...graph.text_boxes];
-    const minX = Math.min(...boxes.map((box) => box.x));
-    const minY = Math.min(...boxes.map((box) => box.y));
-    const maxX = Math.max(...boxes.map((box) => box.x + box.width));
-    const maxY = Math.max(...boxes.map((box) => box.y + box.height));
-    setViewBox({ x: minX - 160, y: minY - 120, width: Math.max(800, maxX - minX + 320), height: Math.max(520, maxY - minY + 240) });
+    setViewBox({ ...graphBounds });
+  };
+
+  const focusLayer = (layerId: string) => {
+    const layout = layoutByLayer.get(layerId);
+    if (!layout) return;
+    onSelectionChange([{ kind: "layer", id: layerId }]);
+    setViewBox((current) => ({
+      ...current,
+      x: layout.x + layout.width / 2 - current.width / 2,
+      y: layout.y + layout.height / 2 - current.height / 2
+    }));
+  };
+
+  const searchLayer = () => {
+    const normalized = search.trim().toLowerCase();
+    if (!normalized || !graph) return;
+    const layer = graph.layers.find((item) => item.name.toLowerCase().includes(normalized));
+    if (layer) focusLayer(layer.id);
   };
 
   const marquee =
@@ -325,6 +395,21 @@ export default function CanvasEditor({
         <button type="button" onClick={() => setViewBox((current) => ({ ...current, width: current.width * 1.1, height: current.height * 1.1 }))}>
           Zoom Out
         </button>
+        <span className="zoom-label">{zoomPercent}%</span>
+        <label className="snap-toggle"><input type="checkbox" checked={snapToGrid} onChange={(event) => setSnapToGrid(event.target.checked)} /> Snap</label>
+        <input
+          className="canvas-search"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") searchLayer();
+          }}
+          placeholder="Search layer"
+        />
+        <button type="button" onClick={searchLayer}>Find</button>
+      </div>
+      <div className="mode-hint">
+        {connectStart ? "Connector: choose target point" : mode === "connect" ? "Connector Mode" : "Select Mode"}
       </div>
       <svg
         ref={svgRef}
@@ -337,14 +422,14 @@ export default function CanvasEditor({
         onWheel={handleWheel}
       >
         <defs>
-          <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse">
-            <path d="M 24 0 L 0 0 0 24" fill="none" stroke="#e5e7eb" strokeWidth="1" />
+          <pattern id="grid" width={GRID_SIZE} height={GRID_SIZE} patternUnits="userSpaceOnUse">
+            <path d={`M ${GRID_SIZE} 0 L 0 0 0 ${GRID_SIZE}`} fill="none" stroke="#e5e7eb" strokeWidth="1" />
           </pattern>
           <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
             <path d="M 1 1 L 11 6 L 1 11 z" fill="#334155" />
           </marker>
         </defs>
-        <rect x={viewBox.x - 2000} y={viewBox.y - 2000} width={viewBox.width + 4000} height={viewBox.height + 4000} fill="url(#grid)" />
+        <rect className="canvas-bg" x={viewBox.x - 2000} y={viewBox.y - 2000} width={viewBox.width + 4000} height={viewBox.height + 4000} fill="url(#grid)" />
         {graph?.relations.map((relation) => {
           const source = layoutByLayer.get(relation.parent_layer_id);
           const target = layoutByLayer.get(relation.child_layer_id);
@@ -355,23 +440,37 @@ export default function CanvasEditor({
           const b = portPoint(targetLayout, relation.target_port);
           const style = relationStroke(relation.relation_type);
           return (
-            <line
-              key={relation.id}
-              className={selectedRelationIds.has(relation.id) ? "relation selected" : "relation"}
-              x1={a.x}
-              y1={a.y}
-              x2={b.x}
-              y2={b.y}
-              stroke={style.stroke}
-              strokeDasharray={style.strokeDasharray}
-              markerEnd="url(#arrow)"
-              onPointerDown={(event) => {
-                event.stopPropagation();
-                onSelectItem({ kind: "relation", id: relation.id }, event.ctrlKey || event.metaKey || event.shiftKey);
-              }}
-            />
+            <g key={relation.id}>
+              <line
+                className={selectedRelationIds.has(relation.id) ? "relation selected" : "relation"}
+                x1={a.x}
+                y1={a.y}
+                x2={b.x}
+                y2={b.y}
+                stroke={style.stroke}
+                strokeDasharray={style.strokeDasharray}
+                markerEnd="url(#arrow)"
+              />
+              <line
+                className="relation-hit"
+                x1={a.x}
+                y1={a.y}
+                x2={b.x}
+                y2={b.y}
+                onPointerDown={(event) => {
+                  event.stopPropagation();
+                  onSelectItem({ kind: "relation", id: relation.id }, event.ctrlKey || event.metaKey || event.shiftKey);
+                }}
+              />
+            </g>
           );
         })}
+        {connectStart && pointerCanvas && (() => {
+          const source = layoutByLayer.get(connectStart.layerId);
+          if (!source) return null;
+          const start = portHandlePoint(displayLayout(source), connectStart.port);
+          return <line className="connector-preview" x1={start.x} y1={start.y} x2={pointerCanvas.x} y2={pointerCanvas.y} />;
+        })()}
         {graph?.text_boxes.map((textBox) => {
           const box = displayTextBox(textBox);
           const selected = selectedTextIds.has(textBox.id);
@@ -428,16 +527,19 @@ export default function CanvasEditor({
               </text>
               {showPorts &&
                 PORTS.map((port) => {
-                  const point = portPoint(layout, port);
+                  const anchor = portPoint(layout, port);
+                  const point = portHandlePoint(layout, port);
                   return (
-                    <circle
-                      key={port}
-                      className={connectStart ? "port connectable" : "port"}
-                      cx={point.x}
-                      cy={point.y}
-                      r="7"
-                      onPointerDown={(event) => handlePortClick(event, layer.id, port)}
-                    />
+                    <g key={port}>
+                      <line className="port-stem" x1={anchor.x} y1={anchor.y} x2={point.x} y2={point.y} />
+                      <circle
+                        className={connectStart ? "port connectable" : "port"}
+                        cx={point.x}
+                        cy={point.y}
+                        r="7"
+                        onPointerDown={(event) => handlePortClick(event, layer.id, port)}
+                      />
+                    </g>
                   );
                 })}
               {selected && (
@@ -458,6 +560,38 @@ export default function CanvasEditor({
           );
         })}
         {marquee && <rect className="marquee" x={marquee.x} y={marquee.y} width={marquee.width} height={marquee.height} />}
+      </svg>
+      <svg className="mini-map" viewBox={`${graphBounds.x} ${graphBounds.y} ${graphBounds.width} ${graphBounds.height}`} aria-label="Mini map">
+        <rect x={graphBounds.x} y={graphBounds.y} width={graphBounds.width} height={graphBounds.height} fill="#f8fafc" />
+        {graph?.relations.map((relation) => {
+          const source = layoutByLayer.get(relation.parent_layer_id);
+          const target = layoutByLayer.get(relation.child_layer_id);
+          if (!source || !target) return null;
+          return (
+            <line
+              key={relation.id}
+              x1={source.x + source.width / 2}
+              y1={source.y + source.height / 2}
+              x2={target.x + target.width / 2}
+              y2={target.y + target.height / 2}
+              stroke="#94a3b8"
+              strokeWidth="6"
+            />
+          );
+        })}
+        {graph?.layouts.map((layout) => (
+          <rect
+            key={layout.layer_id}
+            x={layout.x}
+            y={layout.y}
+            width={layout.width}
+            height={layout.height}
+            fill={selectedLayerIds.has(layout.layer_id) ? "#38bdf8" : "#cbd5e1"}
+            stroke="#64748b"
+            strokeWidth="4"
+          />
+        ))}
+        <rect className="mini-viewport" x={viewBox.x} y={viewBox.y} width={viewBox.width} height={viewBox.height} />
       </svg>
     </section>
   );

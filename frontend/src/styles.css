@@ -365,7 +365,42 @@ button:disabled {
   top: 12px;
   left: 12px;
   display: flex;
+  align-items: center;
   gap: 6px;
+}
+
+.canvas-actions input,
+.canvas-actions label,
+.zoom-label {
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #334155;
+  font-size: 13px;
+  padding: 7px 9px;
+}
+
+.canvas-search {
+  width: 160px;
+}
+
+.snap-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mode-hint {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  z-index: 2;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #334155;
+  font-size: 13px;
+  padding: 8px 10px;
 }
 
 .canvas {
@@ -398,11 +433,31 @@ button:disabled {
 .relation {
   cursor: pointer;
   stroke-width: 2.2;
+  pointer-events: none;
 }
 
 .relation.selected {
   stroke: #f97316;
   stroke-width: 4;
+}
+
+.relation-hit {
+  cursor: pointer;
+  stroke: transparent;
+  stroke-width: 18;
+}
+
+.connector-preview {
+  stroke: #0284c7;
+  stroke-width: 2.4;
+  stroke-dasharray: 8 6;
+  pointer-events: none;
+}
+
+.port-stem {
+  stroke: #0284c7;
+  stroke-width: 1.5;
+  pointer-events: none;
 }
 
 .port {
@@ -427,6 +482,25 @@ button:disabled {
   fill: rgba(14, 165, 233, 0.12);
   stroke: #0284c7;
   stroke-dasharray: 6 4;
+}
+
+.mini-map {
+  position: absolute;
+  right: 14px;
+  top: 14px;
+  z-index: 2;
+  width: 190px;
+  height: 130px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #ffffff;
+  box-shadow: 0 10px 20px rgba(15, 23, 42, 0.12);
+}
+
+.mini-viewport {
+  fill: rgba(14, 165, 233, 0.12);
+  stroke: #0284c7;
+  stroke-width: 8;
 }
 
 .property-section {
