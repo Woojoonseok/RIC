@@ -1,0 +1,12 @@
+.env
+*.pyc
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+ric-dev.db
+ric-dev.db-*
+
+backend/.venv/
+backend/*.egg-info/
+frontend/node_modules/
+frontend/dist/

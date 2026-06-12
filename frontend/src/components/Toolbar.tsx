@@ -1,0 +1,67 @@
+import type { EditorMode, RelationStyle } from "../types";
+
+interface Props {
+  mode: EditorMode;
+  busy: boolean;
+  status: string;
+  projectId: string;
+  relationStyles: RelationStyle[];
+  selectedRelationStyleId: string;
+  onRelationStyleChange: (styleId: string) => void;
+  onCreateRelationStyle: () => void;
+  onModeChange: (mode: EditorMode) => void;
+  onCreateLayer: () => void;
+  onCreateTextBox: () => void;
+  onAutoLayout: () => void;
+  onDelete: () => void;
+  onRefresh: () => void;
+}
+
+export default function Toolbar({
+  mode,
+  busy,
+  status,
+  projectId,
+  relationStyles,
+  selectedRelationStyleId,
+  onRelationStyleChange,
+  onCreateRelationStyle,
+  onModeChange,
+  onCreateLayer,
+  onCreateTextBox,
+  onAutoLayout,
+  onDelete,
+  onRefresh
+}: Props) {
+  return (
+    <header className="toolbar">
+      <select value={selectedRelationStyleId} onChange={(event) => onRelationStyleChange(event.target.value)} aria-label="Arrow style">
+        {relationStyles.map((style) => (
+          <option key={style.id} value={style.id}>
+            {style.name}
+          </option>
+        ))}
+      </select>
+      <button type="button" onClick={onCreateRelationStyle} disabled={!projectId}>Add Arrow</button>
+      <div className="divider" />
+      <button type="button" className={mode === "select" ? "active" : ""} onClick={() => onModeChange("select")}>
+        Select
+      </button>
+      <button type="button" className={mode === "connect" ? "active" : ""} onClick={() => onModeChange("connect")}>
+        Connect
+      </button>
+      <button type="button" className={mode === "text" ? "active" : ""} onClick={() => onModeChange("text")}>
+        Text
+      </button>
+      <div className="divider" />
+      <button type="button" onClick={onCreateLayer}>Add Layer</button>
+      <button type="button" onClick={onCreateTextBox}>Add Text</button>
+      <button type="button" onClick={onAutoLayout} disabled={!projectId}>Auto Layout</button>
+      <button type="button" onClick={onDelete}>Delete</button>
+      <button type="button" onClick={onRefresh}>Refresh</button>
+      <div className="toolbar-status" data-busy={busy}>
+        {busy ? "Saving..." : status}
+      </div>
+    </header>
+  );
+}
