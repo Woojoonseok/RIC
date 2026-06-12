@@ -12,6 +12,24 @@ interface Props {
 }
 
 const RELATION_TYPES = ["parent_child", "reference", "optional", "blocking"];
+const COLOR_SWATCHES = ["#ffffff", "#fef3c7", "#dbeafe", "#dcfce7", "#ffe4e6", "#e5e7eb", "#111827", "#2563eb", "#dc2626"];
+
+function ColorSwatches({ onPick }: { onPick: (color: string) => void }) {
+  return (
+    <div className="color-swatches">
+      {COLOR_SWATCHES.map((color) => (
+        <button
+          key={color}
+          type="button"
+          className="color-swatch"
+          style={{ backgroundColor: color }}
+          title={color}
+          onClick={() => onPick(color)}
+        />
+      ))}
+    </div>
+  );
+}
 
 export default function PropertyPanel({
   graph,
@@ -63,14 +81,17 @@ export default function PropertyPanel({
             Fill
             <input type="color" onChange={(event) => updateManyStyles({ fill_color: event.target.value })} />
           </label>
+          <ColorSwatches onPick={(color) => updateManyStyles({ fill_color: color })} />
           <label>
             Line
             <input type="color" onChange={(event) => updateManyStyles({ stroke_color: event.target.value })} />
           </label>
+          <ColorSwatches onPick={(color) => updateManyStyles({ stroke_color: color })} />
           <label>
             Text
             <input type="color" onChange={(event) => updateManyStyles({ text_color: event.target.value })} />
           </label>
+          <ColorSwatches onPick={(color) => updateManyStyles({ text_color: color })} />
           <label>
             Font size
             <input type="number" min="8" max="72" onBlur={(event) => updateManyStyles({ font_size: Number(event.target.value) })} />
@@ -124,14 +145,17 @@ export default function PropertyPanel({
               Fill
               <input type="color" value={singleStyle.fill_color} onChange={(event) => void onUpdateStyle(singleLayer.id, { fill_color: event.target.value })} />
             </label>
+            <ColorSwatches onPick={(color) => void onUpdateStyle(singleLayer.id, { fill_color: color })} />
             <label>
               Line
               <input type="color" value={singleStyle.stroke_color} onChange={(event) => void onUpdateStyle(singleLayer.id, { stroke_color: event.target.value })} />
             </label>
+            <ColorSwatches onPick={(color) => void onUpdateStyle(singleLayer.id, { stroke_color: color })} />
             <label>
               Text
               <input type="color" value={singleStyle.text_color} onChange={(event) => void onUpdateStyle(singleLayer.id, { text_color: event.target.value })} />
             </label>
+            <ColorSwatches onPick={(color) => void onUpdateStyle(singleLayer.id, { text_color: color })} />
             <label>
               Font size
               <input
@@ -167,6 +191,23 @@ export default function PropertyPanel({
       {selectedRelation && (
         <section className="property-section">
           <h2>Relation</h2>
+          <label>
+            Arrow style
+            <select
+              value={selectedRelation.relation_style_id ?? graph.relation_styles[0]?.id ?? ""}
+              onChange={(event) => {
+                const nextStyle = graph.relation_styles.find((style) => style.id === event.target.value);
+                void onUpdateRelation(selectedRelation.id, {
+                  relation_style_id: event.target.value,
+                  relation_type: nextStyle?.name ?? selectedRelation.relation_type
+                });
+              }}
+            >
+              {graph.relation_styles.map((style) => (
+                <option key={style.id} value={style.id}>{style.name}</option>
+              ))}
+            </select>
+          </label>
           <label>
             Type
             <select

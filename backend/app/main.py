@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import models
 from .database import Base, engine, settings
 from .routers import graph, projects, validation
+from .services.dev_migrations import run_local_dev_migrations
 
 app = FastAPI(title="RIC Align Tree Editor API", version="0.1.0")
 
@@ -20,6 +21,7 @@ app.add_middleware(
 @app.on_event("startup")
 def create_tables_for_local_dev() -> None:
     Base.metadata.create_all(bind=engine)
+    run_local_dev_migrations()
 
 
 @app.get("/api/health")

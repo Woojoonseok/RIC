@@ -1,4 +1,4 @@
-import type { EditorMode, Project } from "../types";
+import type { EditorMode, Project, RelationStyle } from "../types";
 
 interface Props {
   mode: EditorMode;
@@ -6,9 +6,13 @@ interface Props {
   status: string;
   projectId: string;
   projects: Project[];
+  relationStyles: RelationStyle[];
+  selectedRelationStyleId: string;
   selectedProject: Project | null;
   onProjectChange: (projectId: string) => void;
   onCreateProject: () => void;
+  onRelationStyleChange: (styleId: string) => void;
+  onCreateRelationStyle: () => void;
   onModeChange: (mode: EditorMode) => void;
   onCreateLayer: () => void;
   onCreateTextBox: () => void;
@@ -23,9 +27,13 @@ export default function Toolbar({
   status,
   projectId,
   projects,
+  relationStyles,
+  selectedRelationStyleId,
   selectedProject,
   onProjectChange,
   onCreateProject,
+  onRelationStyleChange,
+  onCreateRelationStyle,
   onModeChange,
   onCreateLayer,
   onCreateTextBox,
@@ -48,6 +56,15 @@ export default function Toolbar({
         ))}
       </select>
       <button type="button" onClick={onCreateProject}>New Project</button>
+      <div className="divider" />
+      <select value={selectedRelationStyleId} onChange={(event) => onRelationStyleChange(event.target.value)} aria-label="Arrow style">
+        {relationStyles.map((style) => (
+          <option key={style.id} value={style.id}>
+            {style.name}
+          </option>
+        ))}
+      </select>
+      <button type="button" onClick={onCreateRelationStyle} disabled={!projectId}>Add Arrow</button>
       <div className="divider" />
       <button type="button" className={mode === "select" ? "active" : ""} onClick={() => onModeChange("select")}>
         Select

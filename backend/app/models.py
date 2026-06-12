@@ -30,6 +30,7 @@ class Project(Base, TimestampMixin):
 
     layers: Mapped[list[Layer]] = relationship(back_populates="project", cascade="all, delete-orphan")
     relations: Mapped[list[LayerRelation]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    relation_styles: Mapped[list[RelationStyle]] = relationship(back_populates="project", cascade="all, delete-orphan")
     layouts: Mapped[list[GraphLayout]] = relationship(back_populates="project", cascade="all, delete-orphan")
     styles: Mapped[list[ShapeStyle]] = relationship(back_populates="project", cascade="all, delete-orphan")
     text_boxes: Mapped[list[TextBox]] = relationship(back_populates="project", cascade="all, delete-orphan")
@@ -64,12 +65,30 @@ class LayerRelation(Base, TimestampMixin):
     parent_layer_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("layers.id", ondelete="CASCADE"), index=True)
     child_layer_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("layers.id", ondelete="CASCADE"), index=True)
     relation_type: Mapped[str] = mapped_column(String(80), default="parent_child")
+    relation_style_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("relation_styles.id", ondelete="SET NULL"), index=True)
     source_port: Mapped[str] = mapped_column(String(20), default="right")
     target_port: Mapped[str] = mapped_column(String(20), default="left")
 
     project: Mapped[Project] = relationship(back_populates="relations")
     parent_layer: Mapped[Layer] = relationship(foreign_keys=[parent_layer_id])
     child_layer: Mapped[Layer] = relationship(foreign_keys=[child_layer_id])
+    relation_style: Mapped[RelationStyle | None] = relationship(foreign_keys=[relation_style_id])
+
+
+class RelationStyle(Base, TimestampMixin):
+    __tablename__ = "relation_styles"
+    __table_args__ = (UniqueConstraint("project_id", "name", name="uq_relation_styles_project_name"),)
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    stroke_color: Mapped[str] = mapped_column(String(20), default="#111827")
+    stroke_width: Mapped[int] = mapped_column(Integer, default=2)
+    line_pattern: Mapped[str] = mapped_column(String(40), default="solid")
+    marker_type: Mapped[str] = mapped_column(String(40), default="arrow")
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+    project: Mapped[Project] = relationship(back_populates="relation_styles")
 
 
 class GraphLayout(Base, TimestampMixin):

@@ -4,6 +4,7 @@ import type {
   Layout,
   Project,
   Relation,
+  RelationStyle,
   ShapeStyle,
   TextBox,
   ValidationReport
@@ -64,6 +65,12 @@ export const api = {
     request<Relation>(`/projects/${projectId}/graph/relations/${relationId}`, { method: "PUT", body: JSON.stringify(payload) }),
   deleteRelation: (projectId: string, relationId: string) =>
     request<void>(`/projects/${projectId}/graph/relations/${relationId}`, { method: "DELETE" }),
+  createRelationStyle: (projectId: string, payload: JsonValue) =>
+    request<RelationStyle>(`/projects/${projectId}/graph/relation-styles`, { method: "POST", body: JSON.stringify(payload) }),
+  updateRelationStyle: (projectId: string, styleId: string, payload: JsonValue) =>
+    request<RelationStyle>(`/projects/${projectId}/graph/relation-styles/${styleId}`, { method: "PUT", body: JSON.stringify(payload) }),
+  deleteRelationStyle: (projectId: string, styleId: string) =>
+    request<void>(`/projects/${projectId}/graph/relation-styles/${styleId}`, { method: "DELETE" }),
   createTextBox: (projectId: string, payload: JsonValue) =>
     request<TextBox>(`/projects/${projectId}/graph/text-boxes`, { method: "POST", body: JSON.stringify(payload) }),
   updateTextBox: (projectId: string, textBoxId: string, payload: JsonValue) =>

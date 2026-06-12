@@ -43,12 +43,24 @@ export interface ShapeStyle {
   stroke_width: number;
 }
 
+export interface RelationStyle {
+  id: string;
+  project_id: string;
+  name: string;
+  stroke_color: string;
+  stroke_width: number;
+  line_pattern: "solid" | "dashed" | "dotted" | "reference";
+  marker_type: "arrow" | "none";
+  sort_order: number;
+}
+
 export interface Relation {
   id: string;
   project_id: string;
   parent_layer_id: string;
   child_layer_id: string;
   relation_type: string;
+  relation_style_id: string | null;
   source_port: PortName;
   target_port: PortName;
 }
@@ -86,6 +98,7 @@ export interface Graph {
   layers: Layer[];
   layouts: Layout[];
   styles: ShapeStyle[];
+  relation_styles: RelationStyle[];
   relations: Relation[];
   text_boxes: TextBox[];
   validation: ValidationReport;

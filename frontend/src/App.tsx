@@ -44,6 +44,7 @@ export default function App() {
   const [selection, setSelection] = useState<SelectionItem[]>([]);
   const [mode, setMode] = useState<EditorMode>("select");
   const [view, setView] = useState<AppView>("home");
+  const [selectedRelationStyleId, setSelectedRelationStyleId] = useState("");
   const [status, setStatus] = useState("Ready");
   const [busy, setBusy] = useState(false);
 
@@ -70,6 +71,11 @@ export default function App() {
       try {
         const nextGraph = await api.getGraph(id);
         setGraph(nextGraph);
+        setSelectedRelationStyleId((current) =>
+          current && nextGraph.relation_styles.some((style) => style.id === current)
+            ? current
+            : nextGraph.relation_styles[0]?.id ?? ""
+        );
         setStatus(nextGraph.validation.ok ? "Saved" : `${nextGraph.validation.issues.length} validation issue(s)`);
       } catch (error) {
         setStatus(error instanceof Error ? error.message : "Failed to load graph");
@@ -146,6 +152,7 @@ export default function App() {
           parent_layer_id: graph.layers[0].id,
           child_layer_id: graph.layers[1].id,
           relation_type: "Align",
+          relation_style_id: selectedRelationStyleId || graph.relation_styles[0]?.id || null,
           source_port: "right",
           target_port: "left"
         }),
@@ -171,6 +178,7 @@ export default function App() {
             parent_layer_id: parentId,
             child_layer_id: childId,
             relation_type: type,
+            relation_style_id: null,
             source_port: "right",
             target_port: "left"
           });
@@ -207,6 +215,7 @@ export default function App() {
     mutateGraph(async () => {
       const currentGraph = await api.getGraph(projectId);
       const byName = new Map(currentGraph.layers.map((layer) => [layer.name.trim().toLowerCase(), layer.id]));
+      const styleByName = new Map(currentGraph.relation_styles.map((style) => [style.name.trim().toLowerCase(), style.id]));
       for (const row of rows) {
         const parentId = byName.get((row.Parent_Layer || "").trim().toLowerCase());
         const childId = byName.get((row.Child_Layer || "").trim().toLowerCase());
@@ -217,6 +226,7 @@ export default function App() {
           parent_layer_id: parentId,
           child_layer_id: childId,
           relation_type: row.Relation_Type || "Align",
+          relation_style_id: styleByName.get((row.Relation_Type || "").trim().toLowerCase()) ?? currentGraph.relation_styles[0]?.id ?? null,
           source_port: "right",
           target_port: "left"
         });
@@ -258,6 +268,21 @@ export default function App() {
 
   const onSelectItem = (item: SelectionItem, additive = false) => {
     setSelection((current) => applySelection(current, item, additive));
+  };
+
+  const createRelationStyle = () => {
+    void mutateGraph(
+      () =>
+        api.createRelationStyle(projectId, {
+          name: `Arrow ${((graph?.relation_styles.length ?? 0) + 1).toString().padStart(2, "0")}`,
+          stroke_color: "#111827",
+          stroke_width: 2,
+          line_pattern: "solid",
+          marker_type: "arrow",
+          sort_order: graph?.relation_styles.length ?? 0
+        }),
+      "Arrow style added"
+    );
   };
 
   const downloadBlob = (filename: string, body: string, type: string) => {
@@ -393,6 +418,10 @@ export default function App() {
           onAddRelation={addRelationRow}
           onUpdateLayer={(layerId, payload) => void mutateGraph(() => api.updateLayer(projectId, layerId, payload), "Layer saved")}
           onUpdateRelation={(relationId, payload) => void mutateGraph(() => api.updateRelation(projectId, relationId, payload), "Relation saved")}
+          onCreateRelationStyle={createRelationStyle}
+          onUpdateRelationStyle={(styleId, payload) =>
+            void mutateGraph(() => api.updateRelationStyle(projectId, styleId, payload), "Arrow style saved")
+          }
           onImportLayers={(rows) => void importLayers(rows)}
           onImportRelations={(rows) => void importRelations(rows)}
           onValidate={() => void mutateGraph(() => api.validate(projectId), "Validation executed")}
@@ -407,9 +436,13 @@ export default function App() {
         status={status}
         projectId={projectId}
         projects={projects}
+        relationStyles={graph?.relation_styles ?? []}
+        selectedRelationStyleId={selectedRelationStyleId}
         selectedProject={selectedProject}
         onProjectChange={setProjectId}
         onCreateProject={() => void createProject()}
+        onRelationStyleChange={setSelectedRelationStyleId}
+        onCreateRelationStyle={createRelationStyle}
         onModeChange={setMode}
         onCreateLayer={() => void createLayer()}
         onCreateTextBox={() => void createTextBox()}
@@ -427,6 +460,7 @@ export default function App() {
           graph={graph}
           selection={selection}
           mode={mode}
+          selectedRelationStyleId={selectedRelationStyleId}
           onModeChange={setMode}
           onSelectionChange={setSelection}
           onSelectItem={onSelectItem}

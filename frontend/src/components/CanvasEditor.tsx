@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type React from "react";
-import type { EditorMode, Graph, Layout, PortName, SelectionItem, TextBox } from "../types";
+import type { EditorMode, Graph, Layout, PortName, RelationStyle, SelectionItem, TextBox } from "../types";
 
 interface Props {
   graph: Graph | null;
   selection: SelectionItem[];
   mode: EditorMode;
+  selectedRelationStyleId: string;
   onModeChange: (mode: EditorMode) => void;
   onSelectionChange: (selection: SelectionItem[]) => void;
   onSelectItem: (item: SelectionItem, additive?: boolean) => void;
@@ -68,18 +69,35 @@ function intersects(a: { x: number; y: number; width: number; height: number }, 
   return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
 }
 
-function relationStroke(type: string) {
+function relationStroke(type: string, style?: RelationStyle) {
+  if (style) {
+    const dash =
+      style.line_pattern === "dashed"
+        ? "8 6"
+        : style.line_pattern === "dotted"
+          ? "2 6"
+          : style.line_pattern === "reference"
+            ? "10 4 2 4"
+            : undefined;
+    return {
+      strokeDasharray: dash,
+      stroke: style.stroke_color,
+      strokeWidth: style.stroke_width,
+      markerEnd: style.marker_type === "arrow" ? "url(#arrow)" : undefined
+    };
+  }
   const normalized = type.toLowerCase();
-  if (normalized === "reference") return { strokeDasharray: "6 6", stroke: "#7c3aed" };
-  if (normalized === "optional" || normalized === "warning") return { strokeDasharray: "2 5", stroke: "#0891b2" };
-  if (normalized === "overlay") return { strokeDasharray: undefined, stroke: "#f97316" };
-  return { strokeDasharray: undefined, stroke: "#334155" };
+  if (normalized === "reference") return { strokeDasharray: "10 4 2 4", stroke: "#7c3aed", strokeWidth: 2, markerEnd: "url(#arrow)" };
+  if (normalized === "optional" || normalized === "warning") return { strokeDasharray: "2 5", stroke: "#0891b2", strokeWidth: 2, markerEnd: "url(#arrow)" };
+  if (normalized === "overlay") return { strokeDasharray: undefined, stroke: "#f97316", strokeWidth: 2, markerEnd: "url(#arrow)" };
+  return { strokeDasharray: undefined, stroke: "#334155", strokeWidth: 2, markerEnd: "url(#arrow)" };
 }
 
 export default function CanvasEditor({
   graph,
   selection,
   mode,
+  selectedRelationStyleId,
   onModeChange,
   onSelectionChange,
   onSelectItem,
@@ -139,20 +157,13 @@ export default function CanvasEditor({
     return map;
   }, [graph]);
 
-  const zoomPercent = Math.round((1600 / viewBox.width) * 100);
+  const relationStyleById = useMemo(() => {
+    const map = new Map<string, RelationStyle>();
+    graph?.relation_styles.forEach((style) => map.set(style.id, style));
+    return map;
+  }, [graph]);
 
-  useEffect(() => {
-    if (!graph) return;
-    const selectedLayer = selection.length === 1 && selection[0].kind === "layer" ? selection[0].id : null;
-    if (!selectedLayer || drag) return;
-    const layout = layoutByLayer.get(selectedLayer);
-    if (!layout) return;
-    setViewBox((current) => ({
-      ...current,
-      x: layout.x + layout.width / 2 - current.width / 2,
-      y: layout.y + layout.height / 2 - current.height / 2
-    }));
-  }, [selection, graph, layoutByLayer, drag]);
+  const zoomPercent = Math.round((1600 / viewBox.width) * 100);
 
   const toCanvasPoint = (event: React.PointerEvent<SVGElement>): Point => {
     const svg = svgRef.current;
@@ -345,7 +356,8 @@ export default function CanvasEditor({
         child_layer_id: layerId,
         source_port: connectStart.port,
         target_port: port,
-        relation_type: "Align"
+        relation_type: relationStyleById.get(selectedRelationStyleId)?.name ?? "Align",
+        relation_style_id: selectedRelationStyleId || null
       });
     }
     setConnectStart(null);
@@ -438,7 +450,7 @@ export default function CanvasEditor({
           const targetLayout = displayLayout(target);
           const a = portPoint(sourceLayout, relation.source_port);
           const b = portPoint(targetLayout, relation.target_port);
-          const style = relationStroke(relation.relation_type);
+          const style = relationStroke(relation.relation_type, relation.relation_style_id ? relationStyleById.get(relation.relation_style_id) : undefined);
           return (
             <g key={relation.id}>
               <line
@@ -448,8 +460,9 @@ export default function CanvasEditor({
                 x2={b.x}
                 y2={b.y}
                 stroke={style.stroke}
+                strokeWidth={style.strokeWidth}
                 strokeDasharray={style.strokeDasharray}
-                markerEnd="url(#arrow)"
+                markerEnd={style.markerEnd}
               />
               <line
                 className="relation-hit"
@@ -593,6 +606,34 @@ export default function CanvasEditor({
         ))}
         <rect className="mini-viewport" x={viewBox.x} y={viewBox.y} width={viewBox.width} height={viewBox.height} />
       </svg>
+      <div className="relation-legend">
+        <div className="panel-title">Legend</div>
+        {(graph?.relation_styles ?? []).map((style) => {
+          const preview = relationStroke(style.name, style);
+          return (
+            <div key={style.id} className="legend-row">
+              <svg viewBox="0 0 74 16" aria-hidden="true">
+                <defs>
+                  <marker id={`legend-arrow-${style.id}`} markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+                    <path d="M 1 1 L 7 4 L 1 7 z" fill={preview.stroke} />
+                  </marker>
+                </defs>
+                <line
+                  x1="4"
+                  y1="8"
+                  x2="66"
+                  y2="8"
+                  stroke={preview.stroke}
+                  strokeWidth={Math.max(2, Math.min(4, preview.strokeWidth))}
+                  strokeDasharray={preview.strokeDasharray}
+                  markerEnd={style.marker_type === "arrow" ? `url(#legend-arrow-${style.id})` : undefined}
+                />
+              </svg>
+              <span>{style.name}</span>
+            </div>
+          );
+        })}
+      </div>
     </section>
   );
 }

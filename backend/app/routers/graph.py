@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from .. import crud, models, schemas
 from ..database import get_db
 from ..services.layout import apply_auto_layout
+from ..services.relation_styles import default_relation_style_id, ensure_default_relation_styles
 from ..services.validation import validate_project_graph
 
 router = APIRouter(prefix="/api/projects/{project_id}/graph", tags=["graph"])
@@ -115,6 +116,55 @@ def delete_layer(project_id: uuid.UUID, layer_id: uuid.UUID, db: Session = Depen
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.post("/relation-styles", response_model=schemas.RelationStyleRead, status_code=status.HTTP_201_CREATED)
+def create_relation_style(
+    project_id: uuid.UUID,
+    payload: schemas.RelationStyleCreate,
+    db: Session = Depends(get_db),
+) -> models.RelationStyle:
+    crud.get_project_or_404(db, project_id)
+    relation_style = models.RelationStyle(project_id=project_id, **payload.model_dump())
+    db.add(relation_style)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Relation style name already exists") from exc
+    db.refresh(relation_style)
+    return relation_style
+
+
+@router.put("/relation-styles/{style_id}", response_model=schemas.RelationStyleRead)
+def update_relation_style(
+    project_id: uuid.UUID,
+    style_id: uuid.UUID,
+    payload: schemas.RelationStyleUpdate,
+    db: Session = Depends(get_db),
+) -> models.RelationStyle:
+    relation_style = crud.get_relation_style_or_404(db, project_id, style_id)
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(relation_style, field, value)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Relation style name already exists") from exc
+    db.refresh(relation_style)
+    return relation_style
+
+
+@router.delete("/relation-styles/{style_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_relation_style(project_id: uuid.UUID, style_id: uuid.UUID, db: Session = Depends(get_db)) -> Response:
+    relation_style = crud.get_relation_style_or_404(db, project_id, style_id)
+    db.query(models.LayerRelation).filter(
+        models.LayerRelation.project_id == project_id,
+        models.LayerRelation.relation_style_id == style_id,
+    ).update({"relation_style_id": None})
+    db.delete(relation_style)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.post("/relations", response_model=schemas.RelationRead, status_code=status.HTTP_201_CREATED)
 def create_relation(
     project_id: uuid.UUID,
@@ -124,7 +174,12 @@ def create_relation(
     crud.get_project_or_404(db, project_id)
     crud.get_layer_or_404(db, project_id, payload.parent_layer_id)
     crud.get_layer_or_404(db, project_id, payload.child_layer_id)
-    relation = models.LayerRelation(project_id=project_id, **payload.model_dump())
+    data = payload.model_dump()
+    if data.get("relation_style_id") is None:
+        data["relation_style_id"] = default_relation_style_id(db, project_id)
+    else:
+        crud.get_relation_style_or_404(db, project_id, data["relation_style_id"])
+    relation = models.LayerRelation(project_id=project_id, **data)
     db.add(relation)
     try:
         db.flush()
@@ -151,6 +206,8 @@ def update_relation(
     for layer_id in (payload.parent_layer_id, payload.child_layer_id):
         if layer_id is not None:
             crud.get_layer_or_404(db, project_id, layer_id)
+    if payload.relation_style_id is not None:
+        crud.get_relation_style_or_404(db, project_id, payload.relation_style_id)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(relation, field, value)
     try:
@@ -211,6 +268,7 @@ def delete_text_box(project_id: uuid.UUID, text_box_id: uuid.UUID, db: Session =
 @router.post("/auto-layout", response_model=schemas.GraphRead)
 def auto_layout(project_id: uuid.UUID, db: Session = Depends(get_db)) -> schemas.GraphRead:
     crud.get_project_or_404(db, project_id)
+    ensure_default_relation_styles(db, project_id)
     apply_auto_layout(db, project_id)
     db.commit()
     return crud.read_graph(db, project_id)

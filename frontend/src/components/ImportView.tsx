@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from "react";
-import type { Graph, Layer, Relation, SelectionItem } from "../types";
+import type { Graph, Layer, Relation, RelationStyle, SelectionItem } from "../types";
 
 interface ParsedRow {
   [key: string]: string;
@@ -14,6 +14,8 @@ interface Props {
   onAddRelation: () => void;
   onUpdateLayer: (layerId: string, payload: Partial<Layer>) => void;
   onUpdateRelation: (relationId: string, payload: Partial<Relation>) => void;
+  onCreateRelationStyle: () => void;
+  onUpdateRelationStyle: (styleId: string, payload: Partial<RelationStyle>) => void;
   onImportLayers: (rows: ParsedRow[]) => void;
   onImportRelations: (rows: ParsedRow[]) => void;
   onValidate: () => void;
@@ -53,6 +55,8 @@ export default function ImportView({
   onAddRelation,
   onUpdateLayer,
   onUpdateRelation,
+  onCreateRelationStyle,
+  onUpdateRelationStyle,
   onImportLayers,
   onImportRelations,
   onValidate,
@@ -64,6 +68,10 @@ export default function ImportView({
   const relationUploadRef = useRef<HTMLInputElement | null>(null);
   const selectedLayerIds = new Set(selection.filter((item) => item.kind === "layer").map((item) => item.id));
   const layerById = useMemo(() => new Map(graph?.layers.map((layer) => [layer.id, layer]) ?? []), [graph]);
+  const relationStyleById = useMemo(
+    () => new Map(graph?.relation_styles.map((style) => [style.id, style]) ?? []),
+    [graph]
+  );
 
   return (
     <section className="import-view">
@@ -140,10 +148,87 @@ export default function ImportView({
               <select value={relation.child_layer_id} onChange={(event) => onUpdateRelation(relation.id, { child_layer_id: event.target.value })}>
                 {graph.layers.map((layer) => <option key={layer.id} value={layer.id}>{layer.name}</option>)}
               </select>
-              <input defaultValue={relation.relation_type} onBlur={(event) => onUpdateRelation(relation.id, { relation_type: event.target.value || "Align" })} />
+              <select
+                value={relation.relation_style_id ?? graph.relation_styles[0]?.id ?? ""}
+                onChange={(event) => {
+                  const style = relationStyleById.get(event.target.value);
+                  onUpdateRelation(relation.id, {
+                    relation_style_id: event.target.value,
+                    relation_type: style?.name ?? relation.relation_type
+                  });
+                }}
+              >
+                {graph.relation_styles.map((style) => (
+                  <option key={style.id} value={style.id}>{style.name}</option>
+                ))}
+              </select>
             </div>
           ))}
           {graph && graph.relations.length === 0 && <div className="empty-state">Add or paste relation rows.</div>}
+        </div>
+      </section>
+
+      <section className="panel-block table-panel arrow-style-panel">
+        <div className="panel-head">
+          <div className="panel-title">Arrow Style</div>
+          <div className="button-strip">
+            <button type="button" onClick={onCreateRelationStyle}>Add Arrow</button>
+          </div>
+        </div>
+        <div className="data-table arrow-style-table">
+          <div className="table-row header">
+            <span>Name</span>
+            <span>Color</span>
+            <span>Line Type</span>
+            <span>Width</span>
+            <span>Preview</span>
+          </div>
+          {graph?.relation_styles.map((style) => (
+            <div key={style.id} className="table-row">
+              <input defaultValue={style.name} onBlur={(event) => onUpdateRelationStyle(style.id, { name: event.target.value })} />
+              <input type="color" value={style.stroke_color} onChange={(event) => onUpdateRelationStyle(style.id, { stroke_color: event.target.value })} />
+              <select value={style.line_pattern} onChange={(event) => onUpdateRelationStyle(style.id, { line_pattern: event.target.value as RelationStyle["line_pattern"] })}>
+                <option value="solid">Solid</option>
+                <option value="dashed">Dashed</option>
+                <option value="dotted">Dotted</option>
+                <option value="reference">Reference</option>
+              </select>
+              <input
+                type="number"
+                min="1"
+                max="12"
+                value={style.stroke_width}
+                onChange={(event) => onUpdateRelationStyle(style.id, { stroke_width: Number(event.target.value) })}
+              />
+              <div className="arrow-preview">
+                <svg viewBox="0 0 120 20" aria-hidden="true">
+                  <defs>
+                    <marker id={`style-arrow-${style.id}`} markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+                      <path d="M 1 1 L 7 4 L 1 7 z" fill={style.stroke_color} />
+                    </marker>
+                  </defs>
+                  <line
+                    x1="8"
+                    y1="10"
+                    x2="104"
+                    y2="10"
+                    stroke={style.stroke_color}
+                    strokeWidth={style.stroke_width}
+                    strokeDasharray={
+                      style.line_pattern === "dashed"
+                        ? "8 6"
+                        : style.line_pattern === "dotted"
+                          ? "2 6"
+                          : style.line_pattern === "reference"
+                            ? "10 4 2 4"
+                            : undefined
+                    }
+                    markerEnd={`url(#style-arrow-${style.id})`}
+                  />
+                </svg>
+              </div>
+            </div>
+          ))}
         </div>
       </section>
 

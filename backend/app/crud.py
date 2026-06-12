@@ -6,6 +6,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from . import models, schemas
+from .services.relation_styles import ensure_default_relation_styles
 from .services.validation import validate_project_graph
 
 
@@ -19,6 +20,8 @@ def get_project_or_404(db: Session, project_id: uuid.UUID) -> models.Project:
 def create_project(db: Session, payload: schemas.ProjectCreate) -> models.Project:
     project = models.Project(name=payload.name, description=payload.description)
     db.add(project)
+    db.flush()
+    ensure_default_relation_styles(db, project.id)
     db.commit()
     db.refresh(project)
     return project
@@ -58,6 +61,13 @@ def get_relation_or_404(db: Session, project_id: uuid.UUID, relation_id: uuid.UU
     return relation
 
 
+def get_relation_style_or_404(db: Session, project_id: uuid.UUID, style_id: uuid.UUID) -> models.RelationStyle:
+    relation_style = db.get(models.RelationStyle, style_id)
+    if relation_style is None or relation_style.project_id != project_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Relation style not found")
+    return relation_style
+
+
 def get_text_box_or_404(db: Session, project_id: uuid.UUID, text_box_id: uuid.UUID) -> models.TextBox:
     text_box = db.get(models.TextBox, text_box_id)
     if text_box is None or text_box.project_id != project_id:
@@ -67,6 +77,14 @@ def get_text_box_or_404(db: Session, project_id: uuid.UUID, text_box_id: uuid.UU
 
 def read_graph(db: Session, project_id: uuid.UUID) -> schemas.GraphRead:
     project = get_project_or_404(db, project_id)
+    ensure_default_relation_styles(db, project_id)
+    db.commit()
+    relation_styles = (
+        db.query(models.RelationStyle)
+        .filter(models.RelationStyle.project_id == project_id)
+        .order_by(models.RelationStyle.sort_order, models.RelationStyle.created_at)
+        .all()
+    )
     layers = db.query(models.Layer).filter(models.Layer.project_id == project_id).order_by(models.Layer.created_at).all()
     layouts = db.query(models.GraphLayout).filter(models.GraphLayout.project_id == project_id).all()
     styles = db.query(models.ShapeStyle).filter(models.ShapeStyle.project_id == project_id).all()
@@ -77,6 +95,7 @@ def read_graph(db: Session, project_id: uuid.UUID) -> schemas.GraphRead:
         layers=layers,
         layouts=layouts,
         styles=styles,
+        relation_styles=relation_styles,
         relations=relations,
         text_boxes=text_boxes,
         validation=validate_project_graph(db, project_id),

@@ -92,10 +92,38 @@ class StyleRead(OrmModel):
     stroke_width: int
 
 
+class RelationStyleBase(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    stroke_color: str = "#111827"
+    stroke_width: int = Field(default=2, ge=1, le=12)
+    line_pattern: Literal["solid", "dashed", "dotted", "reference"] = "solid"
+    marker_type: Literal["arrow", "none"] = "arrow"
+    sort_order: int = 0
+
+
+class RelationStyleCreate(RelationStyleBase):
+    pass
+
+
+class RelationStyleUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    stroke_color: str | None = None
+    stroke_width: int | None = Field(default=None, ge=1, le=12)
+    line_pattern: Literal["solid", "dashed", "dotted", "reference"] | None = None
+    marker_type: Literal["arrow", "none"] | None = None
+    sort_order: int | None = None
+
+
+class RelationStyleRead(OrmModel, RelationStyleBase):
+    id: uuid.UUID
+    project_id: uuid.UUID
+
+
 class RelationBase(BaseModel):
     parent_layer_id: uuid.UUID
     child_layer_id: uuid.UUID
     relation_type: str = "parent_child"
+    relation_style_id: uuid.UUID | None = None
     source_port: Literal["top", "right", "bottom", "left"] = "right"
     target_port: Literal["top", "right", "bottom", "left"] = "left"
 
@@ -108,6 +136,7 @@ class RelationUpdate(BaseModel):
     parent_layer_id: uuid.UUID | None = None
     child_layer_id: uuid.UUID | None = None
     relation_type: str | None = None
+    relation_style_id: uuid.UUID | None = None
     source_port: Literal["top", "right", "bottom", "left"] | None = None
     target_port: Literal["top", "right", "bottom", "left"] | None = None
 
@@ -157,6 +186,7 @@ class GraphRead(BaseModel):
     layers: list[LayerRead]
     layouts: list[LayoutRead]
     styles: list[StyleRead]
+    relation_styles: list[RelationStyleRead]
     relations: list[RelationRead]
     text_boxes: list[TextBoxRead]
     validation: "ValidationReport"
@@ -166,6 +196,7 @@ class GraphUpdate(BaseModel):
     layers: list[LayerRead] | None = None
     layouts: list[LayoutRead] | None = None
     styles: list[StyleRead] | None = None
+    relation_styles: list[RelationStyleRead] | None = None
     relations: list[RelationRead] | None = None
     text_boxes: list[TextBoxRead] | None = None
 
