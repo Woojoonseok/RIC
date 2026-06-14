@@ -7,9 +7,10 @@ import ImportView from "./components/ImportView";
 import LayerList from "./components/LayerList";
 import PropertyPanel from "./components/PropertyPanel";
 import Toolbar from "./components/Toolbar";
-import type { EditorMode, Graph, GraphBatchUpdate, Layout, Project, SelectionItem, ShapeStyle, TextBox } from "./types";
+import type { BoxPreset, EditorMode, Graph, GraphBatchUpdate, Layout, Project, SelectionItem, ShapeStyle, TextBox } from "./types";
 
 type AppView = "home" | "import" | "editor" | "export";
+const HISTORY_LIMIT = 40;
 
 const SAMPLE_LAYERS = [
   { step: "S01", name: "WL", layer_property: "Main", align: "AA01", align_side: "LEFT" },
@@ -48,12 +49,170 @@ function applySelection(selection: SelectionItem[], item: SelectionItem, additiv
     : [...selection, item];
 }
 
+function cloneGraph(graph: Graph): Graph {
+  return JSON.parse(JSON.stringify(graph)) as Graph;
+}
+
+function isMergedLayer(layer: Graph["layers"][number] | null | undefined) {
+  if (!layer) return false;
+  const metadata = layer.metadata_json ?? {};
+  return Array.isArray(metadata.merged_layers) || Array.isArray(metadata.merged_layer_names) || layer.name.includes("\n");
+}
+
+function computeDisplayGraph(rawGraph: Graph): Graph {
+  const sameGroupRelations = rawGraph.relations.filter((r) => r.same_group !== null && r.same_group !== "");
+  if (sameGroupRelations.length === 0) {
+    return rawGraph;
+  }
+
+  // 1. Group layer IDs by same_group value
+  const groupMap = new Map<string, string[]>();
+  sameGroupRelations.forEach((rel) => {
+    const groupVal = rel.same_group!.trim();
+    if (!groupMap.has(groupVal)) {
+      groupMap.set(groupVal, []);
+    }
+    groupMap.get(groupVal)!.push(rel.parent_layer_id, rel.child_layer_id);
+  });
+
+  const groups: string[][] = [];
+  groupMap.forEach((layerIds) => {
+    groups.push(Array.from(new Set(layerIds)));
+  });
+
+  const getGroupOfLayer = (layerId: string): string[] | undefined => {
+    return groups.find((g) => g.includes(layerId));
+  };
+
+  const mergedLayerIds = new Set<string>();
+  const anchorByLayerId = new Map<string, string>();
+
+  groups.forEach((group) => {
+    const anchorId = group[0];
+    group.forEach((id) => {
+      anchorByLayerId.set(id, anchorId);
+      if (id !== anchorId) {
+        mergedLayerIds.add(id);
+      }
+    });
+  });
+
+  // 2. Build merged layers
+  const layers: Graph["layers"] = [];
+  const layerById = new Map(rawGraph.layers.map((l) => [l.id, l]));
+
+  rawGraph.layers.forEach((layer) => {
+    if (mergedLayerIds.has(layer.id)) return;
+
+    const group = getGroupOfLayer(layer.id);
+    if (group) {
+      const groupLayers = group.map((id) => layerById.get(id)).filter(Boolean) as Graph["layers"];
+      const combinedName = groupLayers.map((l) => l.name).join("\n");
+      
+      layers.push({
+        ...layer,
+        name: combinedName,
+        step: groupLayers.map((l) => l.step).filter(Boolean).join("\n") || null,
+        layer_property: groupLayers.map((l) => l.layer_property).filter(Boolean).join("\n") || null,
+        metadata_json: {
+          ...layer.metadata_json,
+          merged_layer_ids: group,
+          merged_layer_names: groupLayers.map((l) => l.name),
+        }
+      });
+    } else {
+      layers.push(layer);
+    }
+  });
+
+  // 3. Build merged layouts
+  const layouts: Graph["layouts"] = [];
+  const layoutByLayer = new Map(rawGraph.layouts.map((l) => [l.layer_id, l]));
+
+  rawGraph.layouts.forEach((layout) => {
+    if (mergedLayerIds.has(layout.layer_id)) return;
+
+    const group = getGroupOfLayer(layout.layer_id);
+    if (group) {
+      const groupLayouts = group.map((id) => layoutByLayer.get(id)).filter(Boolean) as Graph["layouts"];
+      const minX = Math.min(...groupLayouts.map((l) => l.x));
+      const minY = Math.min(...groupLayouts.map((l) => l.y));
+      const maxX = Math.max(...groupLayouts.map((l) => l.x + l.width));
+      const maxY = Math.max(...groupLayouts.map((l) => l.y + l.height));
+
+      layouts.push({
+        ...layout,
+        x: minX,
+        y: minY,
+        width: Math.max(180, maxX - minX),
+        height: Math.max(72, maxY - minY),
+      });
+    } else {
+      layouts.push(layout);
+    }
+  });
+
+  // 4. Styles
+  const styles: Graph["styles"] = [];
+  rawGraph.styles.forEach((style) => {
+    if (!mergedLayerIds.has(style.layer_id)) {
+      styles.push(style);
+    }
+  });
+
+  // 5. Relations
+  const relations: Graph["relations"] = [];
+  const keptKeys = new Set<string>();
+
+  rawGraph.relations.forEach((rel) => {
+    if (rel.same_group !== null && rel.same_group !== "") {
+      return;
+    }
+
+    const parentAnchorId = anchorByLayerId.get(rel.parent_layer_id) || rel.parent_layer_id;
+    const childAnchorId = anchorByLayerId.get(rel.child_layer_id) || rel.child_layer_id;
+
+    if (parentAnchorId === childAnchorId) {
+      return;
+    }
+
+    const key = `${parentAnchorId}->${childAnchorId}`;
+    if (keptKeys.has(key)) {
+      return;
+    }
+    keptKeys.add(key);
+
+    relations.push({
+      ...rel,
+      parent_layer_id: parentAnchorId,
+      child_layer_id: childAnchorId,
+    });
+  });
+
+  return {
+    ...rawGraph,
+    layers,
+    layouts,
+    styles,
+    relations,
+  };
+}
+
 function escapeXml(value: string) {
   return value
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function multilineSvgText(value: string, x: number, centerY: number, fontSize: number) {
+  const lines = value.split(/\r?\n/);
+  const lineHeight = fontSize * 1.2;
+  const firstY = centerY - ((lines.length - 1) * lineHeight) / 2 + fontSize / 3;
+  return lines
+    .map((line, index) => `<tspan x="${x}" y="${index === 0 ? firstY : firstY + index * lineHeight}">${escapeXml(line)}</tspan>`)
+    .join("");
 }
 
 function portPoint(layout: Layout, port: string) {
@@ -103,6 +262,9 @@ export default function App() {
   const [mode, setMode] = useState<EditorMode>("select");
   const [view, setView] = useState<AppView>("home");
   const [selectedRelationStyleId, setSelectedRelationStyleId] = useState("");
+  const [selectedBoxPresetId, setSelectedBoxPresetId] = useState("");
+  const [undoStack, setUndoStack] = useState<Graph[]>([]);
+  const [redoStack, setRedoStack] = useState<Graph[]>([]);
   const [status, setStatus] = useState("Ready");
   const [busy, setBusy] = useState(false);
 
@@ -110,6 +272,61 @@ export default function App() {
     () => projects.find((project) => project.id === projectId) ?? null,
     [projectId, projects]
   );
+  const selectedLayerIds = useMemo(
+    () => selection.filter((item) => item.kind === "layer").map((item) => item.id),
+    [selection]
+  );
+  const selectedSplitLayerId = useMemo(() => {
+    if (!graph || selectedLayerIds.length !== 1) return "";
+    const layerId = selectedLayerIds[0];
+    const layer = graph.layers.find((item) => item.id === layerId);
+    if (!layer) return "";
+    const isLegacy = isMergedLayer(layer);
+    const hasGroup = graph.relations.some(
+      (rel) => rel.same_group && (rel.parent_layer_id === layerId || rel.child_layer_id === layerId)
+    );
+    return isLegacy || hasGroup ? layerId : "";
+  }, [graph, selectedLayerIds]);
+
+  const { anchorByLayerId, groupToLayerIds } = useMemo(() => {
+    if (!graph) return { anchorByLayerId: new Map<string, string>(), groupToLayerIds: new Map<string, string[]>() };
+    const sameGroupRelations = graph.relations.filter((r) => r.same_group !== null && r.same_group !== "");
+    
+    const groupMap = new Map<string, string[]>();
+    sameGroupRelations.forEach((rel) => {
+      const groupVal = rel.same_group!.trim();
+      if (!groupMap.has(groupVal)) {
+        groupMap.set(groupVal, []);
+      }
+      groupMap.get(groupVal)!.push(rel.parent_layer_id, rel.child_layer_id);
+    });
+
+    const groups: string[][] = [];
+    groupMap.forEach((layerIds) => {
+      groups.push(Array.from(new Set(layerIds)));
+    });
+
+    const anchorByLayerId = new Map<string, string>();
+    const groupToLayerIds = new Map<string, string[]>();
+
+    groups.forEach((group) => {
+      const anchorId = group[0];
+      groupToLayerIds.set(anchorId, group);
+      group.forEach((id) => {
+        anchorByLayerId.set(id, anchorId);
+      });
+    });
+
+    return { anchorByLayerId, groupToLayerIds };
+  }, [graph]);
+
+  const displayGraph = useMemo(() => (graph ? computeDisplayGraph(graph) : null), [graph]);
+
+  const rememberUndo = (snapshot: Graph | null) => {
+    if (!snapshot) return;
+    setUndoStack((current) => [...current, cloneGraph(snapshot)].slice(-HISTORY_LIMIT));
+    setRedoStack([]);
+  };
 
   const loadProjects = useCallback(async () => {
     const list = await api.listProjects();
@@ -134,6 +351,12 @@ export default function App() {
             ? current
             : nextGraph.relation_styles[0]?.id ?? ""
         );
+        const boxPresets = nextGraph.box_presets ?? [];
+        setSelectedBoxPresetId((current) =>
+          current && boxPresets.some((preset) => preset.id === current)
+            ? current
+            : boxPresets.find((preset) => preset.is_default)?.id ?? boxPresets[0]?.id ?? ""
+        );
         setStatus(nextGraph.validation.ok ? "Saved" : `${nextGraph.validation.issues.length} validation issue(s)`);
       } catch (error) {
         setStatus(error instanceof Error ? error.message : "Failed to load graph");
@@ -152,6 +375,11 @@ export default function App() {
     void loadGraph(projectId);
   }, [loadGraph, projectId]);
 
+  useEffect(() => {
+    setUndoStack([]);
+    setRedoStack([]);
+  }, [projectId]);
+
   const createProject = async (name?: string) => {
     setBusy(true);
     try {
@@ -169,14 +397,44 @@ export default function App() {
     }
   };
 
-  const mutateGraph = async (operation: () => Promise<unknown>, message: string) => {
-    if (!projectId) {
+  const deleteProject = async (targetId: string) => {
+    const project = projects.find((p) => p.id === targetId);
+    if (!project) return;
+    if (
+      !window.confirm(
+        `정말로 프로젝트 '${project.name}'을(를) 삭제하시겠습니까?\n이 프로젝트에 포함된 모든 레이어와 관계가 영구적으로 삭제됩니다.`
+      )
+    ) {
       return;
     }
     setBusy(true);
     try {
+      await api.deleteProject(targetId);
+      const list = await api.listProjects();
+      setProjects(list);
+      if (targetId === projectId) {
+        setProjectId(list[0]?.id ?? "");
+        setGraph(null);
+      }
+      setStatus("Project deleted");
+    } catch (error) {
+      console.error(error);
+      alert(error instanceof Error ? error.message : "Failed to delete project");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const mutateGraph = async (operation: () => Promise<unknown>, message: string, trackHistory = true) => {
+    if (!projectId) {
+      return;
+    }
+    const snapshot = graph ? cloneGraph(graph) : null;
+    setBusy(true);
+    try {
       await operation();
       await loadGraph(projectId);
+      if (trackHistory) rememberUndo(snapshot);
       setStatus(message);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Operation failed");
@@ -202,12 +460,51 @@ export default function App() {
   });
 
   const saveGraphBatch = async (payload: GraphBatchUpdate, message: string) => {
-    if (!projectId) return;
+    if (!projectId || !graph) return;
+    const snapshot = cloneGraph(graph);
+
+    if (payload.layouts) {
+      const expandedLayouts: typeof payload.layouts = [];
+      payload.layouts.forEach((layoutUpdate) => {
+        const groupLayerIds = groupToLayerIds.get(layoutUpdate.layer_id);
+        if (groupLayerIds) {
+          groupLayerIds.forEach((id) => {
+            expandedLayouts.push({
+              ...layoutUpdate,
+              layer_id: id
+            });
+          });
+        } else {
+          expandedLayouts.push(layoutUpdate);
+        }
+      });
+      payload = { ...payload, layouts: expandedLayouts };
+    }
+
+    if (payload.styles) {
+      const expandedStyles: typeof payload.styles = [];
+      payload.styles.forEach((styleUpdate) => {
+        const groupLayerIds = groupToLayerIds.get(styleUpdate.layer_id);
+        if (groupLayerIds) {
+          groupLayerIds.forEach((id) => {
+            expandedStyles.push({
+              ...styleUpdate,
+              layer_id: id
+            });
+          });
+        } else {
+          expandedStyles.push(styleUpdate);
+        }
+      });
+      payload = { ...payload, styles: expandedStyles };
+    }
+
     setGraph((current) => (current ? mergeBatchIntoGraph(current, payload) : current));
     setStatus("Saving...");
     try {
       const nextGraph = await api.batchUpdateGraph(projectId, payload);
       setGraph(nextGraph);
+      rememberUndo(snapshot);
       setStatus(message);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Operation failed");
@@ -235,7 +532,8 @@ export default function App() {
         api.createLayer(projectId, {
           name: nextUniqueName(graph?.layers.map((layer) => layer.name) ?? [], "Layer"),
           x,
-          y
+          y,
+          box_preset_id: selectedBoxPresetId || graph?.box_presets?.find((preset) => preset.is_default)?.id || null
         }),
       "Layer added"
     );
@@ -330,7 +628,8 @@ export default function App() {
           relation_type: row.Relation_Type || "Align",
           relation_style_id: styleByName.get((row.Relation_Type || "").trim().toLowerCase()) ?? currentGraph.relation_styles[0]?.id ?? null,
           source_port: "right",
-          target_port: "left"
+          target_port: "left",
+          same_group: (row["Same Group"] || "").trim() || null
         });
       }
     }, "Relation rows imported");
@@ -368,9 +667,138 @@ export default function App() {
     }, "Deleted");
   };
 
+  const mergeSelectedLayers = async () => {
+    if (!projectId || !graph) return;
+    if (selectedLayerIds.length < 2) {
+      setStatus("Select at least two layers to merge");
+      return;
+    }
+    const selectedLayers = selectedLayerIds
+      .map((id) => graph.layers.find((layer) => layer.id === id))
+      .filter(Boolean);
+    const label = selectedLayers.map((layer) => layer!.name).join(", ");
+    const confirmed = window.confirm(
+      `Merge ${selectedLayerIds.length} layers into one Layer box?\n\n${label}\n\nThis rewires relations and removes the merged source layers.`
+    );
+    if (!confirmed) return;
+
+    const snapshot = cloneGraph(graph);
+    setBusy(true);
+    try {
+      const nextGraph = await api.mergeLayers(projectId, { layer_ids: selectedLayerIds });
+      setGraph(nextGraph);
+      setSelection([{ kind: "layer", id: selectedLayerIds[0] }]);
+      rememberUndo(snapshot);
+      setStatus("Layers merged");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Layer merge failed");
+      await loadGraph(projectId);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const splitSelectedLayer = async () => {
+    if (!projectId || !graph || !selectedSplitLayerId) {
+      setStatus("Select one merged layer to split");
+      return;
+    }
+    const selectedLayer = graph.layers.find((layer) => layer.id === selectedSplitLayerId);
+    const confirmed = window.confirm(`Split '${selectedLayer?.name ?? "Layer"}' back into separate Layer boxes?`);
+    if (!confirmed) return;
+
+    const snapshot = cloneGraph(graph);
+    setBusy(true);
+    try {
+      const nextGraph = await api.splitLayer(projectId, selectedSplitLayerId, { orientation: "vertical" });
+      setGraph(nextGraph);
+      setSelection([{ kind: "layer", id: selectedSplitLayerId }]);
+      rememberUndo(snapshot);
+      setStatus("Layer split");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Layer split failed");
+      await loadGraph(projectId);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const applyRestoredGraph = (nextGraph: Graph) => {
+    setGraph(nextGraph);
+    setSelection([]);
+    setSelectedRelationStyleId((current) =>
+      current && nextGraph.relation_styles.some((style) => style.id === current)
+        ? current
+        : nextGraph.relation_styles[0]?.id ?? ""
+    );
+    const boxPresets = nextGraph.box_presets ?? [];
+    setSelectedBoxPresetId((current) =>
+      current && boxPresets.some((preset) => preset.id === current)
+        ? current
+        : boxPresets.find((preset) => preset.is_default)?.id ?? boxPresets[0]?.id ?? ""
+    );
+  };
+
+  const undoGraph = async () => {
+    if (!projectId || !graph || undoStack.length === 0) return;
+    const target = undoStack[undoStack.length - 1];
+    const current = cloneGraph(graph);
+    setBusy(true);
+    try {
+      const restored = await api.restoreGraph(projectId, target);
+      setUndoStack((stack) => stack.slice(0, -1));
+      setRedoStack((stack) => [...stack, current].slice(-HISTORY_LIMIT));
+      applyRestoredGraph(restored);
+      setStatus("Undo");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Undo failed");
+      await loadGraph(projectId);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const redoGraph = async () => {
+    if (!projectId || !graph || redoStack.length === 0) return;
+    const target = redoStack[redoStack.length - 1];
+    const current = cloneGraph(graph);
+    setBusy(true);
+    try {
+      const restored = await api.restoreGraph(projectId, target);
+      setRedoStack((stack) => stack.slice(0, -1));
+      setUndoStack((stack) => [...stack, current].slice(-HISTORY_LIMIT));
+      applyRestoredGraph(restored);
+      setStatus("Redo");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Redo failed");
+      await loadGraph(projectId);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const onSelectItem = (item: SelectionItem, additive = false) => {
     setSelection((current) => applySelection(current, item, additive));
   };
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
+      const key = event.key.toLowerCase();
+      if ((event.ctrlKey || event.metaKey) && key === "z") {
+        event.preventDefault();
+        if (event.shiftKey) void redoGraph();
+        else void undoGraph();
+      }
+      if ((event.ctrlKey || event.metaKey) && key === "y") {
+        event.preventDefault();
+        void redoGraph();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  });
 
   const createRelationStyle = () => {
     void mutateGraph(
@@ -385,6 +813,39 @@ export default function App() {
         }),
       "Arrow style added"
     );
+  };
+
+  const createBoxPreset = () => {
+    if (!projectId) return;
+    void mutateGraph(
+      () =>
+        api.createBoxPreset(projectId, {
+          name: nextUniqueName(graph?.box_presets?.map((preset) => preset.name) ?? [], "Box"),
+          fill_color: "#dbeafe",
+          stroke_color: "#2563eb",
+          text_color: "#111827",
+          font_size: 16,
+          width: 180,
+          height: 72,
+          stroke_width: 2,
+          is_default: !(graph?.box_presets?.length ?? 0),
+          sort_order: graph?.box_presets?.length ?? 0
+        }),
+      "Box preset added"
+    );
+  };
+
+  const updateBoxPreset = (presetId: string, payload: Partial<BoxPreset>) => {
+    if (!projectId) return;
+    void mutateGraph(() => api.updateBoxPreset(projectId, presetId, payload), "Box preset saved");
+  };
+
+  const deleteBoxPreset = (presetId: string) => {
+    if (!projectId || !graph) return;
+    const preset = graph.box_presets.find((item) => item.id === presetId);
+    if (!preset) return;
+    if (!window.confirm(`Delete box preset '${preset.name}'? Existing layers will not change.`)) return;
+    void mutateGraph(() => api.deleteBoxPreset(projectId, presetId), "Box preset deleted");
   };
 
   const deleteRelationStyle = (styleId: string) => {
@@ -475,13 +936,13 @@ export default function App() {
     ]
       .map(
         ([id, color]) =>
-          `<marker id="arrow-${id}" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth"><path d="M 1 1 L 11 6 L 1 11 z" fill="${color}"/></marker>`
+          `<marker id="arrow-${id}" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 z" fill="${color}"/></marker>`
       )
       .join("");
     const styleMarkers = graph.relation_styles
       .map(
         (style) =>
-          `<marker id="arrow-${style.id}" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth"><path d="M 1 1 L 11 6 L 1 11 z" fill="${escapeXml(style.stroke_color)}"/></marker>`
+          `<marker id="arrow-${style.id}" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L 10 5 L 0 10 z" fill="${escapeXml(style.stroke_color)}"/></marker>`
       )
       .join("");
     const layers = graph.layers
@@ -489,7 +950,9 @@ export default function App() {
         const layout = layoutById.get(layer.id);
         const style = styleById.get(layer.id);
         if (!layout) return "";
-        return `<rect x="${layout.x}" y="${layout.y}" width="${layout.width}" height="${layout.height}" rx="6" fill="${style?.fill_color ?? "#fff"}" stroke="${style?.stroke_color ?? "#2563eb"}" stroke-width="${style?.stroke_width ?? 2}"/><text x="${layout.x + layout.width / 2}" y="${layout.y + layout.height / 2 + 5}" text-anchor="middle" font-size="${style?.font_size ?? 14}" fill="${style?.text_color ?? "#111827"}">${escapeXml(layer.name)}</text>`;
+        const fontSize = style?.font_size ?? 14;
+        const text = multilineSvgText(layer.name, layout.x + layout.width / 2, layout.y + layout.height / 2, fontSize);
+        return `<rect x="${layout.x}" y="${layout.y}" width="${layout.width}" height="${layout.height}" rx="6" fill="${style?.fill_color ?? "#fff"}" stroke="${style?.stroke_color ?? "#2563eb"}" stroke-width="${style?.stroke_width ?? 2}"/><text text-anchor="middle" font-size="${fontSize}" fill="${style?.text_color ?? "#111827"}">${text}</text>`;
       })
       .join("");
     const relationLines = graph.relations
@@ -554,6 +1017,7 @@ export default function App() {
           onCreateProject={(name) => void createProject(name)}
           onLoadSample={() => void loadSample()}
           onDownloadTemplate={downloadTemplate}
+          onDeleteProject={(id) => void deleteProject(id)}
         />
       )}
       {view === "import" && (
@@ -571,9 +1035,12 @@ export default function App() {
             void mutateGraph(() => api.updateRelationStyle(projectId, styleId, payload), "Arrow style saved")
           }
           onDeleteRelationStyle={deleteRelationStyle}
+          onCreateBoxPreset={createBoxPreset}
+          onUpdateBoxPreset={updateBoxPreset}
+          onDeleteBoxPreset={deleteBoxPreset}
           onImportLayers={(rows) => void importLayers(rows)}
           onImportRelations={(rows) => void importRelations(rows)}
-          onValidate={() => void mutateGraph(() => api.validate(projectId), "Validation executed")}
+          onValidate={() => void mutateGraph(() => api.validate(projectId), "Validation executed", false)}
           onBuildTree={() => void mutateGraph(() => api.autoLayout(projectId), "Align tree built")}
         />
       )}
@@ -586,11 +1053,22 @@ export default function App() {
         projectId={projectId}
         relationStyles={graph?.relation_styles ?? []}
         selectedRelationStyleId={selectedRelationStyleId}
+        boxPresets={graph?.box_presets ?? []}
+        selectedBoxPresetId={selectedBoxPresetId}
+        selectedLayerCount={selectedLayerIds.length}
+        canUndo={undoStack.length > 0}
+        canRedo={redoStack.length > 0}
+        canSplitLayer={Boolean(selectedSplitLayerId)}
         onRelationStyleChange={setSelectedRelationStyleId}
+        onBoxPresetChange={setSelectedBoxPresetId}
         onCreateRelationStyle={createRelationStyle}
         onModeChange={setMode}
         onCreateLayer={() => void createLayer()}
         onCreateTextBox={() => void createTextBox()}
+        onMergeLayers={() => void mergeSelectedLayers()}
+        onSplitLayer={() => void splitSelectedLayer()}
+        onUndo={() => void undoGraph()}
+        onRedo={() => void redoGraph()}
         onAutoLayout={() => mutateGraph(() => api.autoLayout(projectId), "Auto layout applied")}
         onDelete={() => void deleteSelection()}
         onRefresh={() => void loadGraph()}
@@ -602,7 +1080,7 @@ export default function App() {
           onSelect={(id, additive) => onSelectItem({ kind: "layer", id }, additive)}
         />
         <CanvasEditor
-          graph={graph}
+          graph={displayGraph}
           selection={selection}
           mode={mode}
           selectedRelationStyleId={selectedRelationStyleId}
@@ -621,6 +1099,7 @@ export default function App() {
         <PropertyPanel
           graph={graph}
           selection={selection}
+          canSplitLayer={Boolean(selectedSplitLayerId)}
           onSelectionChange={setSelection}
           onUpdateLayer={(layerId, payload) =>
             mutateGraph(() => api.updateLayer(projectId, layerId, payload), "Layer saved")
@@ -638,6 +1117,8 @@ export default function App() {
             saveTextBox(textBoxId, payload)
           }
           onUpdateStyles={saveStyleBatch}
+          onMergeLayers={() => void mergeSelectedLayers()}
+          onSplitLayer={() => void splitSelectedLayer()}
         />
       </section>
         </section>

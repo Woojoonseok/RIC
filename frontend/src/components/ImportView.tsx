@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Graph, Layer, Relation, RelationStyle, SelectionItem } from "../types";
+import type { BoxPreset, Graph, Layer, Relation, RelationStyle, SelectionItem } from "../types";
 
 interface ParsedRow {
   [key: string]: string;
@@ -17,6 +17,9 @@ interface Props {
   onCreateRelationStyle: () => void;
   onUpdateRelationStyle: (styleId: string, payload: Partial<RelationStyle>) => void;
   onDeleteRelationStyle: (styleId: string) => void;
+  onCreateBoxPreset: () => void;
+  onUpdateBoxPreset: (presetId: string, payload: Partial<BoxPreset>) => void;
+  onDeleteBoxPreset: (presetId: string) => void;
   onImportLayers: (rows: ParsedRow[]) => void;
   onImportRelations: (rows: ParsedRow[]) => void;
   onValidate: () => void;
@@ -24,7 +27,16 @@ interface Props {
 }
 
 const ALIGN_HEADERS = ["Step", "Layer", "Layer_Property", "Align", "Align_side"];
-const RELATION_HEADERS = ["Parent_Layer", "Child_Layer", "Relation_Type"];
+const RELATION_HEADERS = ["Parent_Layer", "Child_Layer", "Relation_Type", "Same Group"];
+const BOX_SWATCHES = ["#2563eb", "#d97706", "#dc2626", "#16a34a", "#7c3aed", "#0891b2", "#6b7280", "#111827"];
+
+function softFill(color: string) {
+  const match = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(color);
+  if (!match) return color;
+  const [r, g, b] = match.slice(1).map((value) => parseInt(value, 16));
+  const mix = (channel: number) => Math.round(channel + (255 - channel) * 0.82);
+  return `#${[mix(r), mix(g), mix(b)].map((value) => value.toString(16).padStart(2, "0")).join("")}`;
+}
 
 function parseDelimited(text: string, headers: string[]): ParsedRow[] {
   return text
@@ -33,7 +45,8 @@ function parseDelimited(text: string, headers: string[]): ParsedRow[] {
     .filter(Boolean)
     .map((line) => {
       const cells = line.split(line.includes("\t") ? "\t" : ",").map((cell) => cell.trim());
-      const hasHeader = headers.every((header, index) => cells[index]?.toLowerCase() === header.toLowerCase());
+      // A line is a header if the first two cells match the first two headers
+      const hasHeader = headers.slice(0, 2).every((header, index) => cells[index]?.toLowerCase() === header.toLowerCase());
       return hasHeader ? null : Object.fromEntries(headers.map((header, index) => [header, cells[index] ?? ""]));
     })
     .filter((row): row is ParsedRow => Boolean(row));
@@ -91,8 +104,8 @@ function RelationStyleRow({
       </select>
       <svg viewBox="0 0 90 18" aria-label={`${style.name} preview`}>
         <defs>
-          <marker id={`import-arrow-${style.id}`} markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-            <path d="M 1 1 L 7 4 L 1 7 z" fill={strokeColor} />
+          <marker id={`import-arrow-${style.id}`} markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="userSpaceOnUse">
+            <path d="M 0 0 L 7 3.5 L 0 7 z" fill={strokeColor} />
           </marker>
         </defs>
         <line
@@ -113,6 +126,93 @@ function RelationStyleRow({
   );
 }
 
+function BoxPresetRow({
+  preset,
+  onUpdate,
+  onDelete
+}: {
+  preset: BoxPreset;
+  onUpdate: (presetId: string, payload: Partial<BoxPreset>) => void;
+  onDelete: (presetId: string) => void;
+}) {
+  const [color, setColor] = useState(preset.stroke_color);
+
+  useEffect(() => {
+    setColor(preset.stroke_color);
+  }, [preset.stroke_color]);
+
+  const commitColor = (nextColor = color) => {
+    onUpdate(preset.id, { stroke_color: nextColor, fill_color: softFill(nextColor) });
+  };
+
+  return (
+    <div className="box-preset-row">
+      <input defaultValue={preset.name} onBlur={(event) => onUpdate(preset.id, { name: event.target.value })} />
+      <div
+        className="box-preset-preview"
+        style={{
+          backgroundColor: preset.fill_color,
+          borderColor: preset.stroke_color,
+          color: preset.text_color,
+          fontSize: Math.min(18, preset.font_size)
+        }}
+      >
+        {preset.name}
+      </div>
+      <div className="box-preset-colors">
+        <input
+          type="color"
+          value={color}
+          onChange={(event) => setColor(event.target.value)}
+          onBlur={() => commitColor()}
+          aria-label={`${preset.name} color`}
+        />
+        <div className="box-swatch-strip">
+          {BOX_SWATCHES.map((swatch) => (
+            <button
+              key={swatch}
+              type="button"
+              className="box-swatch"
+              style={{ backgroundColor: swatch }}
+              title={swatch}
+              onClick={() => {
+                setColor(swatch);
+                commitColor(swatch);
+              }}
+            />
+          ))}
+        </div>
+      </div>
+      <input
+        type="number"
+        min="8"
+        max="72"
+        defaultValue={preset.font_size}
+        aria-label={`${preset.name} font size`}
+        onBlur={(event) => onUpdate(preset.id, { font_size: Number(event.target.value) })}
+      />
+      <input
+        type="number"
+        min="60"
+        defaultValue={Math.round(preset.width)}
+        aria-label={`${preset.name} width`}
+        onBlur={(event) => onUpdate(preset.id, { width: Number(event.target.value) })}
+      />
+      <input
+        type="number"
+        min="36"
+        defaultValue={Math.round(preset.height)}
+        aria-label={`${preset.name} height`}
+        onBlur={(event) => onUpdate(preset.id, { height: Number(event.target.value) })}
+      />
+      <button type="button" className={preset.is_default ? "active" : ""} onClick={() => onUpdate(preset.id, { is_default: true })}>
+        Default
+      </button>
+      <button type="button" onClick={() => onDelete(preset.id)}>Delete</button>
+    </div>
+  );
+}
+
 export default function ImportView({
   graph,
   selection,
@@ -125,6 +225,9 @@ export default function ImportView({
   onCreateRelationStyle,
   onUpdateRelationStyle,
   onDeleteRelationStyle,
+  onCreateBoxPreset,
+  onUpdateBoxPreset,
+  onDeleteBoxPreset,
   onImportLayers,
   onImportRelations,
   onValidate,
@@ -230,6 +333,11 @@ export default function ImportView({
                   <option key={style.id} value={style.id}>{style.name}</option>
                 ))}
               </select>
+              <input
+                defaultValue={relation.same_group ?? ""}
+                onBlur={(event) => onUpdateRelation(relation.id, { same_group: event.target.value.trim() || null })}
+                placeholder="e.g. 1"
+              />
             </div>
           ))}
           {graph && graph.relations.length === 0 && <div className="empty-state">Add or paste relation rows.</div>}
@@ -255,6 +363,32 @@ export default function ImportView({
           </div>
           {graph?.relation_styles.map((style) => (
             <RelationStyleRow key={style.id} style={style} onUpdate={onUpdateRelationStyle} onDelete={onDeleteRelationStyle} />
+          ))}
+        </div>
+      </section>
+
+      <section className="panel-block table-panel box-presets-panel">
+        <div className="panel-head">
+          <div className="panel-title">Box Preset</div>
+          <div className="button-strip">
+            <button type="button" onClick={onCreateBoxPreset}>Add Box</button>
+          </div>
+        </div>
+        <div className="box-preset-header">
+          <span>Name</span>
+          <span>Preview</span>
+          <span>Color</span>
+          <span>Font</span>
+          <span>W</span>
+          <span>H</span>
+          <span></span>
+          <span></span>
+        </div>
+        <div className="box-preset-list">
+          {!graph && <div className="empty-state">Open a project to customize Layer boxes.</div>}
+          {(graph?.box_presets?.length ?? 0) === 0 && graph && <div className="empty-state">Add a box preset.</div>}
+          {graph?.box_presets?.map((preset) => (
+            <BoxPresetRow key={preset.id} preset={preset} onUpdate={onUpdateBoxPreset} onDelete={onDeleteBoxPreset} />
           ))}
         </div>
       </section>

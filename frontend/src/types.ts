@@ -43,6 +43,21 @@ export interface ShapeStyle {
   stroke_width: number;
 }
 
+export interface BoxPreset {
+  id: string;
+  project_id: string;
+  name: string;
+  fill_color: string;
+  stroke_color: string;
+  text_color: string;
+  font_size: number;
+  width: number;
+  height: number;
+  stroke_width: number;
+  is_default: boolean;
+  sort_order: number;
+}
+
 export interface RelationStyle {
   id: string;
   project_id: string;
@@ -63,6 +78,8 @@ export interface Relation {
   relation_style_id: string | null;
   source_port: PortName;
   target_port: PortName;
+  same_group: string | null;
+  attached_relation_id: string | null;
 }
 
 export interface TextBox {
@@ -98,6 +115,7 @@ export interface Graph {
   layers: Layer[];
   layouts: Layout[];
   styles: ShapeStyle[];
+  box_presets: BoxPreset[];
   relation_styles: RelationStyle[];
   relations: Relation[];
   text_boxes: TextBox[];
@@ -125,4 +143,13 @@ export interface GraphBatchUpdate {
   layouts?: LayoutBatchUpdate[];
   styles?: StyleBatchUpdate[];
   text_boxes?: TextBoxBatchUpdate[];
+}
+
+export interface LayerMergeRequest {
+  layer_ids: string[];
+  name?: string;
+}
+
+export interface LayerSplitRequest {
+  orientation?: "vertical" | "horizontal";
 }

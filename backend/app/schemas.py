@@ -38,6 +38,7 @@ class LayerCreate(LayerBase):
     y: float = 80
     width: float = 180
     height: float = 72
+    box_preset_id: uuid.UUID | None = None
 
 
 class LayerUpdate(BaseModel):
@@ -47,6 +48,15 @@ class LayerUpdate(BaseModel):
     align: str | None = None
     align_side: str | None = None
     metadata_json: dict[str, Any] | None = None
+
+
+class LayerMergeRequest(BaseModel):
+    layer_ids: list[uuid.UUID] = Field(min_length=2)
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+
+
+class LayerSplitRequest(BaseModel):
+    orientation: Literal["vertical", "horizontal"] = "vertical"
 
 
 class LayerRead(OrmModel, LayerBase):
@@ -100,6 +110,41 @@ class StyleRead(OrmModel):
     stroke_width: int
 
 
+class BoxPresetBase(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    fill_color: str = "#dbeafe"
+    stroke_color: str = "#2563eb"
+    text_color: str = "#111827"
+    font_size: int = Field(default=16, ge=8, le=72)
+    width: float = Field(default=180, ge=60)
+    height: float = Field(default=72, ge=36)
+    stroke_width: int = Field(default=2, ge=1, le=12)
+    is_default: bool = False
+    sort_order: int = 0
+
+
+class BoxPresetCreate(BoxPresetBase):
+    pass
+
+
+class BoxPresetUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    fill_color: str | None = None
+    stroke_color: str | None = None
+    text_color: str | None = None
+    font_size: int | None = Field(default=None, ge=8, le=72)
+    width: float | None = Field(default=None, ge=60)
+    height: float | None = Field(default=None, ge=36)
+    stroke_width: int | None = Field(default=None, ge=1, le=12)
+    is_default: bool | None = None
+    sort_order: int | None = None
+
+
+class BoxPresetRead(OrmModel, BoxPresetBase):
+    id: uuid.UUID
+    project_id: uuid.UUID
+
+
 class RelationStyleBase(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     stroke_color: str = "#111827"
@@ -134,6 +179,9 @@ class RelationBase(BaseModel):
     relation_style_id: uuid.UUID | None = None
     source_port: Literal["top", "right", "bottom", "left"] = "right"
     target_port: Literal["top", "right", "bottom", "left"] = "left"
+    same_group: str | None = None
+    attached_relation_id: uuid.UUID | None = None
+    waypoints: list[dict[str, float]] | None = None
 
 
 class RelationCreate(RelationBase):
@@ -147,6 +195,9 @@ class RelationUpdate(BaseModel):
     relation_style_id: uuid.UUID | None = None
     source_port: Literal["top", "right", "bottom", "left"] | None = None
     target_port: Literal["top", "right", "bottom", "left"] | None = None
+    same_group: str | None = None
+    attached_relation_id: uuid.UUID | None = None
+    waypoints: list[dict[str, float]] | None = None
 
 
 class RelationRead(OrmModel, RelationBase):
@@ -198,6 +249,7 @@ class GraphRead(BaseModel):
     layers: list[LayerRead]
     layouts: list[LayoutRead]
     styles: list[StyleRead]
+    box_presets: list[BoxPresetRead]
     relation_styles: list[RelationStyleRead]
     relations: list[RelationRead]
     text_boxes: list[TextBoxRead]
@@ -208,6 +260,7 @@ class GraphUpdate(BaseModel):
     layers: list[LayerRead] | None = None
     layouts: list[LayoutRead] | None = None
     styles: list[StyleRead] | None = None
+    box_presets: list[BoxPresetRead] | None = None
     relation_styles: list[RelationStyleRead] | None = None
     relations: list[RelationRead] | None = None
     text_boxes: list[TextBoxRead] | None = None
@@ -217,6 +270,16 @@ class GraphBatchUpdate(BaseModel):
     layouts: list[LayoutBatchUpdate] = Field(default_factory=list)
     styles: list[StyleBatchUpdate] = Field(default_factory=list)
     text_boxes: list[TextBoxBatchUpdate] = Field(default_factory=list)
+
+
+class GraphRestore(BaseModel):
+    layers: list[LayerRead] = Field(default_factory=list)
+    layouts: list[LayoutRead] = Field(default_factory=list)
+    styles: list[StyleRead] = Field(default_factory=list)
+    box_presets: list[BoxPresetRead] = Field(default_factory=list)
+    relation_styles: list[RelationStyleRead] = Field(default_factory=list)
+    relations: list[RelationRead] = Field(default_factory=list)
+    text_boxes: list[TextBoxRead] = Field(default_factory=list)
 
 
 class ValidationIssue(BaseModel):

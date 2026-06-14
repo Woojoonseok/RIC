@@ -84,8 +84,9 @@ def validate_project_graph(db: Session, project_id: uuid.UUID) -> schemas.Valida
         relation_keys.add(key)
 
         if relation.parent_layer_id in layer_ids and relation.child_layer_id in layer_ids:
-            graph[relation.parent_layer_id].append(relation.child_layer_id)
-            indegree[relation.child_layer_id] += 1
+            if not relation.same_group:
+                graph[relation.parent_layer_id].append(relation.child_layer_id)
+                indegree[relation.child_layer_id] += 1
 
     visited_count = 0
     queue = deque(layer_id for layer_id, count in indegree.items() if count == 0)

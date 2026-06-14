@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from sqlalchemy import inspect, text
 
-from ..database import engine
+from .. import models
+from ..database import SessionLocal, engine
+from .box_presets import ensure_default_box_presets
 
 
 def run_local_dev_migrations() -> None:
@@ -13,3 +15,19 @@ def run_local_dev_migrations() -> None:
     if "relation_style_id" not in columns and engine.url.drivername.startswith("sqlite"):
         with engine.begin() as connection:
             connection.execute(text("ALTER TABLE layer_relations ADD COLUMN relation_style_id CHAR(32)"))
+    if "same_group" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE layer_relations ADD COLUMN same_group VARCHAR(80)"))
+    if "attached_relation_id" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE layer_relations ADD COLUMN attached_relation_id CHAR(36)"))
+    if "waypoints" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE layer_relations ADD COLUMN waypoints JSON"))
+
+    if "box_presets" in inspector.get_table_names():
+        with SessionLocal() as db:
+            project_ids = [project.id for project in db.query(models.Project).all()]
+            for project_id in project_ids:
+                ensure_default_box_presets(db, project_id)
+            db.commit()

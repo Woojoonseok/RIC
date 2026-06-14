@@ -4,6 +4,7 @@ import type { Graph, Layout, Relation, SelectionItem, ShapeStyle, TextBox } from
 interface Props {
   graph: Graph | null;
   selection: SelectionItem[];
+  canSplitLayer: boolean;
   onSelectionChange: (selection: SelectionItem[]) => void;
   onUpdateLayer: (layerId: string, payload: Record<string, unknown>) => Promise<void>;
   onUpdateStyle: (layerId: string, payload: Partial<ShapeStyle>) => Promise<void>;
@@ -11,6 +12,8 @@ interface Props {
   onUpdateRelation: (relationId: string, payload: Partial<Relation>) => Promise<void>;
   onUpdateTextBox: (textBoxId: string, payload: Partial<TextBox>) => Promise<void>;
   onUpdateStyles: (layerIds: string[], payload: Partial<ShapeStyle>) => Promise<void>;
+  onMergeLayers: () => void;
+  onSplitLayer: () => void;
 }
 
 const RELATION_TYPES = ["parent_child", "reference", "optional", "blocking"];
@@ -94,13 +97,16 @@ function DraftNumberInput({
 export default function PropertyPanel({
   graph,
   selection,
+  canSplitLayer,
   onSelectionChange,
   onUpdateLayer,
   onUpdateStyle,
   onUpdateLayout,
   onUpdateRelation,
   onUpdateTextBox,
-  onUpdateStyles
+  onUpdateStyles,
+  onMergeLayers,
+  onSplitLayer
 }: Props) {
   const selectedLayers = selection
     .filter((item) => item.kind === "layer")
@@ -138,6 +144,9 @@ export default function PropertyPanel({
       {selectedLayers.length > 1 && (
         <section className="property-section">
           <h2>{selectedLayers.length} Layers</h2>
+          <button type="button" className="primary-action" onClick={onMergeLayers}>
+            Merge into one Layer
+          </button>
           <label>
             Fill
             <input type="color" onChange={(event) => updateManyStyles({ fill_color: event.target.value })} />
@@ -164,6 +173,11 @@ export default function PropertyPanel({
         <>
           <section className="property-section">
             <h2>Layer</h2>
+            {canSplitLayer && (
+              <button type="button" className="primary-action" onClick={onSplitLayer}>
+                Split merged Layer
+              </button>
+            )}
             <label>
               Name
               <input

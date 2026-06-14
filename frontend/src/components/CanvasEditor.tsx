@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import type React from "react";
-import type { EditorMode, Graph, GraphBatchUpdate, Layout, PortName, RelationStyle, SelectionItem, TextBox } from "../types";
+import type { EditorMode, Graph, GraphBatchUpdate, Layout, PortName, Relation, RelationStyle, SelectionItem, TextBox } from "../types";
 
 interface Props {
   graph: Graph | null;
@@ -70,7 +70,15 @@ function intersects(a: { x: number; y: number; width: number; height: number }, 
   return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
 }
 
-function relationStroke(type: string, style?: RelationStyle) {
+function relationStroke(type: string, style?: RelationStyle, sameGroup?: string | null) {
+  if (sameGroup) {
+    return {
+      strokeDasharray: "4 4",
+      stroke: "#16a34a",
+      strokeWidth: 3,
+      markerEnd: undefined
+    };
+  }
   if (style) {
     const dash =
       style.line_pattern === "dashed"
@@ -92,6 +100,48 @@ function relationStroke(type: string, style?: RelationStyle) {
   if (normalized === "optional" || normalized === "warning") return { strokeDasharray: "2 5", stroke: "#0891b2", strokeWidth: 2, markerEnd: "url(#arrow-optional)" };
   if (normalized === "overlay") return { strokeDasharray: undefined, stroke: "#f97316", strokeWidth: 2, markerEnd: "url(#arrow-overlay)" };
   return { strokeDasharray: undefined, stroke: "#334155", strokeWidth: 2, markerEnd: "url(#arrow-default)" };
+}
+
+function textLines(value: string) {
+  const lines = value.split(/\r?\n/);
+  return lines.length > 0 ? lines : [value];
+}
+
+function getClosestPointOnSegment(p: Point, s: Point, e: Point): Point {
+  const vx = e.x - s.x;
+  const vy = e.y - s.y;
+  const wx = p.x - s.x;
+  const wy = p.y - s.y;
+  const lenSq = vx * vx + vy * vy;
+  if (lenSq === 0) return s;
+  let t = (wx * vx + wy * vy) / lenSq;
+  t = Math.max(0.05, Math.min(0.95, t)); // Clamped to [0.05, 0.95] to prevent attaching exactly at the ends
+  return { x: s.x + t * vx, y: s.y + t * vy };
+}
+
+function getRelationEndpoints(
+  relation: Relation,
+  layoutByLayer: Map<string, Layout>,
+  relationsById: Map<string, Relation>,
+  displayLayout: (l: Layout) => Layout,
+  visited = new Set<string>()
+): { a: Point; b: Point } {
+  const source = layoutByLayer.get(relation.parent_layer_id);
+  const a = source ? portPoint(displayLayout(source), relation.source_port) : { x: 0, y: 0 };
+
+  if (relation.attached_relation_id && !visited.has(relation.id)) {
+    visited.add(relation.id);
+    const targetRel = relationsById.get(relation.attached_relation_id);
+    if (targetRel) {
+      const targetPts = getRelationEndpoints(targetRel, layoutByLayer, relationsById, displayLayout, visited);
+      const b = getClosestPointOnSegment(a, targetPts.a, targetPts.b);
+      return { a, b };
+    }
+  }
+
+  const target = layoutByLayer.get(relation.child_layer_id);
+  const b = target ? portPoint(displayLayout(target), relation.target_port) : { x: 0, y: 0 };
+  return { a, b };
 }
 
 export default function CanvasEditor({
@@ -167,10 +217,15 @@ export default function CanvasEditor({
 
   const zoomPercent = Math.round((1600 / viewBox.width) * 100);
 
-  const toCanvasPoint = (event: React.PointerEvent<SVGElement>): Point => {
+  const toCanvasPoint = (event: React.PointerEvent<SVGElement> | React.WheelEvent<SVGSVGElement>): Point => {
     const svg = svgRef.current;
     if (!svg) {
       return { x: 0, y: 0 };
+    }
+    const transform = svg.getScreenCTM();
+    if (transform) {
+      const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(transform.inverse());
+      return { x: point.x, y: point.y };
     }
     const rect = svg.getBoundingClientRect();
     return {
@@ -208,6 +263,41 @@ export default function CanvasEditor({
     }
     return textBox;
   };
+
+  const relationsById = useMemo(() => {
+    const map = new Map<string, Relation>();
+    graph?.relations.forEach((rel) => map.set(rel.id, rel));
+    return map;
+  }, [graph]);
+
+  const snappedRelation = useMemo(() => {
+    if (!connectStart || !pointerCanvas || !graph) return null;
+    let minDistance = 24; // snap threshold in pixels
+    let snapPt: Point | null = null;
+    let targetRel: Relation | null = null;
+
+    for (const rel of graph.relations) {
+      // Do not snap to a relation that starts or ends at the same layer to prevent self-connection issues
+      if (rel.parent_layer_id === connectStart.layerId || rel.child_layer_id === connectStart.layerId) continue;
+
+      const pts = getRelationEndpoints(rel, layoutByLayer, relationsById, displayLayout);
+      const closest = getClosestPointOnSegment(pointerCanvas, pts.a, pts.b);
+      const dx = pointerCanvas.x - closest.x;
+      const dy = pointerCanvas.y - closest.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+
+      if (distance < minDistance) {
+        minDistance = distance;
+        snapPt = closest;
+        targetRel = rel;
+      }
+    }
+
+    if (snapPt && targetRel) {
+      return { point: snapPt, relation: targetRel };
+    }
+    return null;
+  }, [connectStart, pointerCanvas, graph, layoutByLayer, relationsById, displayLayout]);
 
   const beginMove = (event: React.PointerEvent<SVGElement>, item: SelectionItem) => {
     if (!graph) return;
@@ -249,6 +339,20 @@ export default function CanvasEditor({
     }
     if (mode === "text") {
       onCreateTextBox(point.x, point.y);
+      onModeChange("select");
+      return;
+    }
+    if (connectStart && snappedRelation) {
+      void onCreateRelation({
+        parent_layer_id: connectStart.layerId,
+        child_layer_id: snappedRelation.relation.child_layer_id,
+        attached_relation_id: snappedRelation.relation.id,
+        source_port: connectStart.port,
+        target_port: snappedRelation.relation.target_port,
+        relation_type: relationStyleById.get(selectedRelationStyleId)?.name ?? "Align",
+        relation_style_id: selectedRelationStyleId || null
+      });
+      setConnectStart(null);
       onModeChange("select");
       return;
     }
@@ -335,7 +439,7 @@ export default function CanvasEditor({
   const handleWheel = (event: React.WheelEvent<SVGSVGElement>) => {
     event.preventDefault();
     const factor = event.deltaY > 0 ? 1.08 : 0.92;
-    const point = toCanvasPoint(event as unknown as React.PointerEvent<SVGElement>);
+    const point = toCanvasPoint(event);
     setViewBox((current) => {
       const width = Math.min(3600, Math.max(360, current.width * factor));
       const height = Math.min(2400, Math.max(240, current.height * factor));
@@ -449,26 +553,22 @@ export default function CanvasEditor({
             ["optional", "#0891b2"],
             ["overlay", "#f97316"]
           ].map(([id, color]) => (
-            <marker key={id} id={`arrow-${id}`} markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
-              <path d="M 1 1 L 11 6 L 1 11 z" fill={color} />
+            <marker key={id} id={`arrow-${id}`} markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill={color} />
             </marker>
           ))}
           {graph?.relation_styles.map((style) => (
-            <marker key={style.id} id={`arrow-${style.id}`} markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
-              <path d="M 1 1 L 11 6 L 1 11 z" fill={style.stroke_color} />
+            <marker key={style.id} id={`arrow-${style.id}`} markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill={style.stroke_color} />
             </marker>
           ))}
         </defs>
         <rect className="canvas-bg" x={viewBox.x - 2000} y={viewBox.y - 2000} width={viewBox.width + 4000} height={viewBox.height + 4000} fill="url(#grid)" />
         {graph?.relations.map((relation) => {
-          const source = layoutByLayer.get(relation.parent_layer_id);
-          const target = layoutByLayer.get(relation.child_layer_id);
-          if (!source || !target) return null;
-          const sourceLayout = displayLayout(source);
-          const targetLayout = displayLayout(target);
-          const a = portPoint(sourceLayout, relation.source_port);
-          const b = portPoint(targetLayout, relation.target_port);
-          const style = relationStroke(relation.relation_type, relation.relation_style_id ? relationStyleById.get(relation.relation_style_id) : undefined);
+          const { a, b } = getRelationEndpoints(relation, layoutByLayer, relationsById, displayLayout);
+          const style = relationStroke(relation.relation_type, relation.relation_style_id ? relationStyleById.get(relation.relation_style_id) : undefined, relation.same_group);
+          const midX = (a.x + b.x) / 2;
+          const midY = (a.y + b.y) / 2;
           return (
             <g key={relation.id}>
               <line
@@ -482,6 +582,30 @@ export default function CanvasEditor({
                 strokeDasharray={style.strokeDasharray}
                 markerEnd={style.markerEnd}
               />
+              {relation.same_group && (
+                <g style={{ cursor: "default", userSelect: "none" }}>
+                  <rect
+                    x={midX - 16}
+                    y={midY - 10}
+                    width={32}
+                    height={18}
+                    rx={3}
+                    fill="#ffffff"
+                    stroke="#16a34a"
+                    strokeWidth={1.5}
+                  />
+                  <text
+                    x={midX}
+                    y={midY + 3}
+                    textAnchor="middle"
+                    fill="#16a34a"
+                    fontSize="10"
+                    fontWeight="bold"
+                  >
+                    {`G${relation.same_group}`}
+                  </text>
+                </g>
+              )}
               <line
                 className="relation-hit"
                 x1={a.x}
@@ -490,7 +614,23 @@ export default function CanvasEditor({
                 y2={b.y}
                 onPointerDown={(event) => {
                   event.stopPropagation();
-                  onSelectItem({ kind: "relation", id: relation.id }, event.ctrlKey || event.metaKey || event.shiftKey);
+                  if (connectStart) {
+                    if (connectStart.layerId !== relation.parent_layer_id && connectStart.layerId !== relation.child_layer_id) {
+                      void onCreateRelation({
+                        parent_layer_id: connectStart.layerId,
+                        child_layer_id: relation.child_layer_id,
+                        attached_relation_id: relation.id,
+                        source_port: connectStart.port,
+                        target_port: relation.target_port,
+                        relation_type: relationStyleById.get(selectedRelationStyleId)?.name ?? "Align",
+                        relation_style_id: selectedRelationStyleId || null
+                      });
+                    }
+                    setConnectStart(null);
+                    onModeChange("select");
+                  } else {
+                    onSelectItem({ kind: "relation", id: relation.id }, event.ctrlKey || event.metaKey || event.shiftKey);
+                  }
                 }}
               />
             </g>
@@ -500,7 +640,31 @@ export default function CanvasEditor({
           const source = layoutByLayer.get(connectStart.layerId);
           if (!source) return null;
           const start = portHandlePoint(displayLayout(source), connectStart.port);
-          return <line className="connector-preview" x1={start.x} y1={start.y} x2={pointerCanvas.x} y2={pointerCanvas.y} />;
+          const endPoint = snappedRelation ? snappedRelation.point : pointerCanvas;
+          return (
+            <g>
+              <line className="connector-preview" x1={start.x} y1={start.y} x2={endPoint.x} y2={endPoint.y} />
+              {snappedRelation && (
+                <g style={{ pointerEvents: "none" }}>
+                  <circle
+                    cx={endPoint.x}
+                    cy={endPoint.y}
+                    r="8"
+                    fill="#22c55e"
+                    stroke="#ffffff"
+                    strokeWidth="2.5"
+                    style={{ filter: "drop-shadow(0px 2px 4px rgba(0,0,0,0.2))" }}
+                  />
+                  <circle
+                    cx={endPoint.x}
+                    cy={endPoint.y}
+                    r="3"
+                    fill="#ffffff"
+                  />
+                </g>
+              )}
+            </g>
+          );
         })()}
         {graph?.text_boxes.map((textBox) => {
           const box = displayTextBox(textBox);
@@ -535,6 +699,10 @@ export default function CanvasEditor({
           const style = styleByLayer.get(layer.id);
           const selected = selectedLayerIds.has(layer.id);
           const showPorts = selected || mode === "connect" || Boolean(connectStart);
+          const fontSize = style?.font_size ?? 14;
+          const lines = textLines(layer.name);
+          const lineHeight = fontSize * 1.2;
+          const firstLineY = layout.y + layout.height / 2 - ((lines.length - 1) * lineHeight) / 2 + fontSize / 3;
           return (
             <g key={layer.id} className={selected ? "layer-node selected" : "layer-node"} onPointerDown={(event) => beginMove(event, { kind: "layer", id: layer.id })}>
               <rect
@@ -552,9 +720,13 @@ export default function CanvasEditor({
                 y={layout.y + layout.height / 2 + (style?.font_size ?? 14) / 3}
                 textAnchor="middle"
                 fill={style?.text_color ?? "#111827"}
-                fontSize={style?.font_size ?? 14}
+                fontSize={fontSize}
               >
-                {layer.name}
+                {lines.map((line, index) => (
+                  <tspan key={`${line}-${index}`} x={layout.x + layout.width / 2} y={index === 0 ? firstLineY : undefined} dy={index === 0 ? undefined : lineHeight}>
+                    {line}
+                  </tspan>
+                ))}
               </text>
               {showPorts &&
                 PORTS.map((port) => {
@@ -632,8 +804,8 @@ export default function CanvasEditor({
             <div key={style.id} className="legend-row">
               <svg viewBox="0 0 74 16" aria-hidden="true">
                 <defs>
-                  <marker id={`legend-arrow-${style.id}`} markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-                    <path d="M 1 1 L 7 4 L 1 7 z" fill={preview.stroke} />
+                  <marker id={`legend-arrow-${style.id}`} markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="userSpaceOnUse">
+                    <path d="M 0 0 L 7 3.5 L 0 7 z" fill={preview.stroke} />
                   </marker>
                 </defs>
                 <line
