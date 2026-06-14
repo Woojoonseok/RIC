@@ -59,6 +59,145 @@ function isMergedLayer(layer: Graph["layers"][number] | null | undefined) {
   return Array.isArray(metadata.merged_layers) || Array.isArray(metadata.merged_layer_names) || layer.name.includes("\n");
 }
 
+function computeDisplayGraph(rawGraph: Graph): Graph {
+  const sameGroupRelations = rawGraph.relations.filter((r) => r.same_group !== null && r.same_group !== "");
+  if (sameGroupRelations.length === 0) {
+    return rawGraph;
+  }
+
+  // 1. Group layer IDs by same_group value
+  const groupMap = new Map<string, string[]>();
+  sameGroupRelations.forEach((rel) => {
+    const groupVal = rel.same_group!.trim();
+    if (!groupMap.has(groupVal)) {
+      groupMap.set(groupVal, []);
+    }
+    groupMap.get(groupVal)!.push(rel.parent_layer_id, rel.child_layer_id);
+  });
+
+  const groups: string[][] = [];
+  groupMap.forEach((layerIds) => {
+    groups.push(Array.from(new Set(layerIds)));
+  });
+
+  const getGroupOfLayer = (layerId: string): string[] | undefined => {
+    return groups.find((g) => g.includes(layerId));
+  };
+
+  const mergedLayerIds = new Set<string>();
+  const anchorByLayerId = new Map<string, string>();
+
+  groups.forEach((group) => {
+    const anchorId = group[0];
+    group.forEach((id) => {
+      anchorByLayerId.set(id, anchorId);
+      if (id !== anchorId) {
+        mergedLayerIds.add(id);
+      }
+    });
+  });
+
+  // 2. Build merged layers
+  const layers: Graph["layers"] = [];
+  const layerById = new Map(rawGraph.layers.map((l) => [l.id, l]));
+
+  rawGraph.layers.forEach((layer) => {
+    if (mergedLayerIds.has(layer.id)) return;
+
+    const group = getGroupOfLayer(layer.id);
+    if (group) {
+      const groupLayers = group.map((id) => layerById.get(id)).filter(Boolean) as Graph["layers"];
+      const combinedName = groupLayers.map((l) => l.name).join("\n");
+      
+      layers.push({
+        ...layer,
+        name: combinedName,
+        step: groupLayers.map((l) => l.step).filter(Boolean).join("\n") || null,
+        layer_property: groupLayers.map((l) => l.layer_property).filter(Boolean).join("\n") || null,
+        metadata_json: {
+          ...layer.metadata_json,
+          merged_layer_ids: group,
+          merged_layer_names: groupLayers.map((l) => l.name),
+        }
+      });
+    } else {
+      layers.push(layer);
+    }
+  });
+
+  // 3. Build merged layouts
+  const layouts: Graph["layouts"] = [];
+  const layoutByLayer = new Map(rawGraph.layouts.map((l) => [l.layer_id, l]));
+
+  rawGraph.layouts.forEach((layout) => {
+    if (mergedLayerIds.has(layout.layer_id)) return;
+
+    const group = getGroupOfLayer(layout.layer_id);
+    if (group) {
+      const groupLayouts = group.map((id) => layoutByLayer.get(id)).filter(Boolean) as Graph["layouts"];
+      const minX = Math.min(...groupLayouts.map((l) => l.x));
+      const minY = Math.min(...groupLayouts.map((l) => l.y));
+      const maxX = Math.max(...groupLayouts.map((l) => l.x + l.width));
+      const maxY = Math.max(...groupLayouts.map((l) => l.y + l.height));
+
+      layouts.push({
+        ...layout,
+        x: minX,
+        y: minY,
+        width: Math.max(180, maxX - minX),
+        height: Math.max(72, maxY - minY),
+      });
+    } else {
+      layouts.push(layout);
+    }
+  });
+
+  // 4. Styles
+  const styles: Graph["styles"] = [];
+  rawGraph.styles.forEach((style) => {
+    if (!mergedLayerIds.has(style.layer_id)) {
+      styles.push(style);
+    }
+  });
+
+  // 5. Relations
+  const relations: Graph["relations"] = [];
+  const keptKeys = new Set<string>();
+
+  rawGraph.relations.forEach((rel) => {
+    if (rel.same_group !== null && rel.same_group !== "") {
+      return;
+    }
+
+    const parentAnchorId = anchorByLayerId.get(rel.parent_layer_id) || rel.parent_layer_id;
+    const childAnchorId = anchorByLayerId.get(rel.child_layer_id) || rel.child_layer_id;
+
+    if (parentAnchorId === childAnchorId) {
+      return;
+    }
+
+    const key = `${parentAnchorId}->${childAnchorId}`;
+    if (keptKeys.has(key)) {
+      return;
+    }
+    keptKeys.add(key);
+
+    relations.push({
+      ...rel,
+      parent_layer_id: parentAnchorId,
+      child_layer_id: childAnchorId,
+    });
+  });
+
+  return {
+    ...rawGraph,
+    layers,
+    layouts,
+    styles,
+    relations,
+  };
+}
+
 function escapeXml(value: string) {
   return value
     .replace(/&/g, "&amp;")
@@ -139,9 +278,49 @@ export default function App() {
   );
   const selectedSplitLayerId = useMemo(() => {
     if (!graph || selectedLayerIds.length !== 1) return "";
-    const layer = graph.layers.find((item) => item.id === selectedLayerIds[0]);
-    return layer && isMergedLayer(layer) ? layer.id : "";
+    const layerId = selectedLayerIds[0];
+    const layer = graph.layers.find((item) => item.id === layerId);
+    if (!layer) return "";
+    const isLegacy = isMergedLayer(layer);
+    const hasGroup = graph.relations.some(
+      (rel) => rel.same_group && (rel.parent_layer_id === layerId || rel.child_layer_id === layerId)
+    );
+    return isLegacy || hasGroup ? layerId : "";
   }, [graph, selectedLayerIds]);
+
+  const { anchorByLayerId, groupToLayerIds } = useMemo(() => {
+    if (!graph) return { anchorByLayerId: new Map<string, string>(), groupToLayerIds: new Map<string, string[]>() };
+    const sameGroupRelations = graph.relations.filter((r) => r.same_group !== null && r.same_group !== "");
+    
+    const groupMap = new Map<string, string[]>();
+    sameGroupRelations.forEach((rel) => {
+      const groupVal = rel.same_group!.trim();
+      if (!groupMap.has(groupVal)) {
+        groupMap.set(groupVal, []);
+      }
+      groupMap.get(groupVal)!.push(rel.parent_layer_id, rel.child_layer_id);
+    });
+
+    const groups: string[][] = [];
+    groupMap.forEach((layerIds) => {
+      groups.push(Array.from(new Set(layerIds)));
+    });
+
+    const anchorByLayerId = new Map<string, string>();
+    const groupToLayerIds = new Map<string, string[]>();
+
+    groups.forEach((group) => {
+      const anchorId = group[0];
+      groupToLayerIds.set(anchorId, group);
+      group.forEach((id) => {
+        anchorByLayerId.set(id, anchorId);
+      });
+    });
+
+    return { anchorByLayerId, groupToLayerIds };
+  }, [graph]);
+
+  const displayGraph = useMemo(() => (graph ? computeDisplayGraph(graph) : null), [graph]);
 
   const rememberUndo = (snapshot: Graph | null) => {
     if (!snapshot) return;
@@ -218,6 +397,34 @@ export default function App() {
     }
   };
 
+  const deleteProject = async (targetId: string) => {
+    const project = projects.find((p) => p.id === targetId);
+    if (!project) return;
+    if (
+      !window.confirm(
+        `정말로 프로젝트 '${project.name}'을(를) 삭제하시겠습니까?\n이 프로젝트에 포함된 모든 레이어와 관계가 영구적으로 삭제됩니다.`
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.deleteProject(targetId);
+      const list = await api.listProjects();
+      setProjects(list);
+      if (targetId === projectId) {
+        setProjectId(list[0]?.id ?? "");
+        setGraph(null);
+      }
+      setStatus("Project deleted");
+    } catch (error) {
+      console.error(error);
+      alert(error instanceof Error ? error.message : "Failed to delete project");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const mutateGraph = async (operation: () => Promise<unknown>, message: string, trackHistory = true) => {
     if (!projectId) {
       return;
@@ -253,8 +460,45 @@ export default function App() {
   });
 
   const saveGraphBatch = async (payload: GraphBatchUpdate, message: string) => {
-    if (!projectId) return;
-    const snapshot = graph ? cloneGraph(graph) : null;
+    if (!projectId || !graph) return;
+    const snapshot = cloneGraph(graph);
+
+    if (payload.layouts) {
+      const expandedLayouts: typeof payload.layouts = [];
+      payload.layouts.forEach((layoutUpdate) => {
+        const groupLayerIds = groupToLayerIds.get(layoutUpdate.layer_id);
+        if (groupLayerIds) {
+          groupLayerIds.forEach((id) => {
+            expandedLayouts.push({
+              ...layoutUpdate,
+              layer_id: id
+            });
+          });
+        } else {
+          expandedLayouts.push(layoutUpdate);
+        }
+      });
+      payload = { ...payload, layouts: expandedLayouts };
+    }
+
+    if (payload.styles) {
+      const expandedStyles: typeof payload.styles = [];
+      payload.styles.forEach((styleUpdate) => {
+        const groupLayerIds = groupToLayerIds.get(styleUpdate.layer_id);
+        if (groupLayerIds) {
+          groupLayerIds.forEach((id) => {
+            expandedStyles.push({
+              ...styleUpdate,
+              layer_id: id
+            });
+          });
+        } else {
+          expandedStyles.push(styleUpdate);
+        }
+      });
+      payload = { ...payload, styles: expandedStyles };
+    }
+
     setGraph((current) => (current ? mergeBatchIntoGraph(current, payload) : current));
     setStatus("Saving...");
     try {
@@ -384,7 +628,8 @@ export default function App() {
           relation_type: row.Relation_Type || "Align",
           relation_style_id: styleByName.get((row.Relation_Type || "").trim().toLowerCase()) ?? currentGraph.relation_styles[0]?.id ?? null,
           source_port: "right",
-          target_port: "left"
+          target_port: "left",
+          same_group: (row["Same Group"] || "").trim() || null
         });
       }
     }, "Relation rows imported");
@@ -772,6 +1017,7 @@ export default function App() {
           onCreateProject={(name) => void createProject(name)}
           onLoadSample={() => void loadSample()}
           onDownloadTemplate={downloadTemplate}
+          onDeleteProject={(id) => void deleteProject(id)}
         />
       )}
       {view === "import" && (
@@ -834,7 +1080,7 @@ export default function App() {
           onSelect={(id, additive) => onSelectItem({ kind: "layer", id }, additive)}
         />
         <CanvasEditor
-          graph={graph}
+          graph={displayGraph}
           selection={selection}
           mode={mode}
           selectedRelationStyleId={selectedRelationStyleId}

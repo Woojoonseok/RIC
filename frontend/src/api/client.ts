@@ -48,6 +48,7 @@ export const api = {
   listProjects: () => request<Project[]>("/projects"),
   createProject: (payload: { name: string; description?: string | null }) =>
     request<Project>("/projects", { method: "POST", body: JSON.stringify(payload) }),
+  deleteProject: (projectId: string) => request<void>(`/projects/${projectId}`, { method: "DELETE" }),
   getGraph: (projectId: string) => request<Graph>(`/projects/${projectId}/graph`),
   batchUpdateGraph: (projectId: string, payload: GraphBatchUpdate) =>
     request<Graph>(`/projects/${projectId}/graph/batch`, { method: "PATCH", body: JSON.stringify(payload) }),

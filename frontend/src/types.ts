@@ -78,6 +78,8 @@ export interface Relation {
   relation_style_id: string | null;
   source_port: PortName;
   target_port: PortName;
+  same_group: string | null;
+  attached_relation_id: string | null;
 }
 
 export interface TextBox {
