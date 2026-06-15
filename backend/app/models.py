@@ -69,6 +69,11 @@ class LayerRelation(Base, TimestampMixin):
     relation_style_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("relation_styles.id", ondelete="SET NULL"), index=True)
     source_port: Mapped[str] = mapped_column(String(20), default="right")
     target_port: Mapped[str] = mapped_column(String(20), default="left")
+    same_group: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    attached_relation_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("layer_relations.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    waypoints: Mapped[list[dict[str, float]] | None] = mapped_column(JSON, default=list)
 
     project: Mapped[Project] = relationship(back_populates="relations")
     parent_layer: Mapped[Layer] = relationship(foreign_keys=[parent_layer_id])

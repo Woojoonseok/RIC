@@ -8,6 +8,7 @@ interface Props {
   onCreateProject: (name: string) => void;
   onLoadSample: () => void;
   onDownloadTemplate: () => void;
+  onDeleteProject: (projectId: string) => void;
 }
 
 export default function HomeView({
@@ -16,7 +17,8 @@ export default function HomeView({
   onOpenProject,
   onCreateProject,
   onLoadSample,
-  onDownloadTemplate
+  onDownloadTemplate,
+  onDeleteProject
 }: Props) {
   const [projectName, setProjectName] = useState("");
 
@@ -50,15 +52,27 @@ export default function HomeView({
         <div className="project-list">
           {projects.length === 0 && <div className="empty-state">No projects yet.</div>}
           {projects.map((project) => (
-            <button
-              key={project.id}
-              type="button"
-              className={project.id === currentProjectId ? "project-card selected" : "project-card"}
-              onClick={() => onOpenProject(project.id)}
-            >
-              <strong>{project.name}</strong>
-              <small>{new Date(project.updated_at).toLocaleString()}</small>
-            </button>
+            <div key={project.id} className="project-row">
+              <button
+                type="button"
+                className={project.id === currentProjectId ? "project-card selected" : "project-card"}
+                onClick={() => onOpenProject(project.id)}
+              >
+                <strong>{project.name}</strong>
+                <small>{new Date(project.updated_at).toLocaleString()}</small>
+              </button>
+              <button
+                type="button"
+                className="delete-project-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDeleteProject(project.id);
+                }}
+                title="Delete project"
+              >
+                Delete
+              </button>
+            </div>
           ))}
         </div>
       </section>

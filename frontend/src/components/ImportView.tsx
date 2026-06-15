@@ -27,7 +27,7 @@ interface Props {
 }
 
 const ALIGN_HEADERS = ["Step", "Layer", "Layer_Property", "Align", "Align_side"];
-const RELATION_HEADERS = ["Parent_Layer", "Child_Layer", "Relation_Type"];
+const RELATION_HEADERS = ["Parent_Layer", "Child_Layer", "Relation_Type", "Same Group"];
 const BOX_SWATCHES = ["#2563eb", "#d97706", "#dc2626", "#16a34a", "#7c3aed", "#0891b2", "#6b7280", "#111827"];
 
 function softFill(color: string) {
@@ -45,7 +45,8 @@ function parseDelimited(text: string, headers: string[]): ParsedRow[] {
     .filter(Boolean)
     .map((line) => {
       const cells = line.split(line.includes("\t") ? "\t" : ",").map((cell) => cell.trim());
-      const hasHeader = headers.every((header, index) => cells[index]?.toLowerCase() === header.toLowerCase());
+      // A line is a header if the first two cells match the first two headers
+      const hasHeader = headers.slice(0, 2).every((header, index) => cells[index]?.toLowerCase() === header.toLowerCase());
       return hasHeader ? null : Object.fromEntries(headers.map((header, index) => [header, cells[index] ?? ""]));
     })
     .filter((row): row is ParsedRow => Boolean(row));
@@ -332,6 +333,11 @@ export default function ImportView({
                   <option key={style.id} value={style.id}>{style.name}</option>
                 ))}
               </select>
+              <input
+                defaultValue={relation.same_group ?? ""}
+                onBlur={(event) => onUpdateRelation(relation.id, { same_group: event.target.value.trim() || null })}
+                placeholder="e.g. 1"
+              />
             </div>
           ))}
           {graph && graph.relations.length === 0 && <div className="empty-state">Add or paste relation rows.</div>}

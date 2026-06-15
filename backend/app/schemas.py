@@ -179,6 +179,9 @@ class RelationBase(BaseModel):
     relation_style_id: uuid.UUID | None = None
     source_port: Literal["top", "right", "bottom", "left"] = "right"
     target_port: Literal["top", "right", "bottom", "left"] = "left"
+    same_group: str | None = None
+    attached_relation_id: uuid.UUID | None = None
+    waypoints: list[dict[str, float]] | None = None
 
 
 class RelationCreate(RelationBase):
@@ -192,6 +195,9 @@ class RelationUpdate(BaseModel):
     relation_style_id: uuid.UUID | None = None
     source_port: Literal["top", "right", "bottom", "left"] | None = None
     target_port: Literal["top", "right", "bottom", "left"] | None = None
+    same_group: str | None = None
+    attached_relation_id: uuid.UUID | None = None
+    waypoints: list[dict[str, float]] | None = None
 
 
 class RelationRead(OrmModel, RelationBase):

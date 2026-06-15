@@ -310,17 +310,12 @@ def _compact_values(values: list[str | None], max_length: int = 160) -> str | No
     return "\n".join(compacted)[:max_length] if compacted else None
 
 
-@router.post("/layers/merge", response_model=schemas.GraphRead)
-def merge_layers(
+def _merge_layers_in_db(
+    db: Session,
     project_id: uuid.UUID,
-    payload: schemas.LayerMergeRequest,
-    db: Session = Depends(get_db),
-) -> schemas.GraphRead:
-    crud.get_project_or_404(db, project_id)
-    layer_ids = list(dict.fromkeys(payload.layer_ids))
-    if len(layer_ids) < 2:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Select at least two layers to merge")
-
+    layer_ids: list[uuid.UUID],
+    override_name: str | None = None,
+) -> models.Layer:
     layer_rows = (
         db.query(models.Layer)
         .filter(models.Layer.project_id == project_id, models.Layer.id.in_(layer_ids))
@@ -329,7 +324,7 @@ def merge_layers(
     layer_by_id = {layer.id: layer for layer in layer_rows}
     missing_ids = [str(layer_id) for layer_id in layer_ids if layer_id not in layer_by_id]
     if missing_ids:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Layer not found: {', '.join(missing_ids)}")
+        raise ValueError(f"Layer not found: {', '.join(missing_ids)}")
 
     layers = [layer_by_id[layer_id] for layer_id in layer_ids]
     anchor = layers[0]
@@ -343,7 +338,7 @@ def merge_layers(
     )
     layout_by_layer = {layout.layer_id: layout for layout in layout_rows}
     if not all(layer.id in layout_by_layer for layer in layers):
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Selected layers must have layouts")
+        raise ValueError("Selected layers must have layouts")
 
     style_rows = (
         db.query(models.ShapeStyle)
@@ -370,7 +365,7 @@ def merge_layers(
     anchor_layout.height = max(72, max_y - min_y)
 
     original_metadata = anchor.metadata_json or {}
-    anchor.name = _merge_layer_name(layers, payload.name)
+    anchor.name = _merge_layer_name(layers, override_name)
     anchor.step = _compact_values([layer.step for layer in layers], 120)
     anchor.layer_property = _compact_values([layer.layer_property for layer in layers])
     anchor.align = _compact_values([layer.align for layer in layers])
@@ -418,6 +413,7 @@ def merge_layers(
                     "relation_style_id": relation.relation_style_id,
                     "source_port": _port_towards(source_layout, target_layout) if source_layout and target_layout else relation.source_port,
                     "target_port": _port_towards(target_layout, source_layout) if source_layout and target_layout else relation.target_port,
+                    "same_group": relation.same_group,
                 }
             )
             kept_keys.add(key)
@@ -437,6 +433,86 @@ def merge_layers(
 
     for layer in layers[1:]:
         db.delete(layer)
+
+    db.flush()
+    return anchor
+
+
+@router.post("/layers/merge", response_model=schemas.GraphRead)
+def merge_layers(
+    project_id: uuid.UUID,
+    payload: schemas.LayerMergeRequest,
+    db: Session = Depends(get_db),
+) -> schemas.GraphRead:
+    crud.get_project_or_404(db, project_id)
+    layer_ids = list(dict.fromkeys(payload.layer_ids))
+    if len(layer_ids) < 2:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Select at least two layers to merge")
+
+    layer_rows = (
+        db.query(models.Layer)
+        .filter(models.Layer.project_id == project_id, models.Layer.id.in_(layer_ids))
+        .all()
+    )
+    layer_by_id = {layer.id: layer for layer in layer_rows}
+    missing_ids = [str(layer_id) for layer_id in layer_ids if layer_id not in layer_by_id]
+    if missing_ids:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Layer not found: {', '.join(missing_ids)}")
+
+    # Find next available group number
+    existing_groups = db.query(models.LayerRelation.same_group).filter(
+        models.LayerRelation.project_id == project_id,
+        models.LayerRelation.same_group != None,
+        models.LayerRelation.same_group != ""
+    ).all()
+    group_numbers = []
+    for g in existing_groups:
+        try:
+            group_numbers.append(int(g[0]))
+        except ValueError:
+            pass
+    next_group = str(max(group_numbers) + 1) if group_numbers else "1"
+
+    anchor_id = layer_ids[0]
+    for other_id in layer_ids[1:]:
+        existing = db.query(models.LayerRelation).filter(
+            models.LayerRelation.project_id == project_id,
+            ((models.LayerRelation.parent_layer_id == anchor_id) & (models.LayerRelation.child_layer_id == other_id)) |
+            ((models.LayerRelation.parent_layer_id == other_id) & (models.LayerRelation.child_layer_id == anchor_id))
+        ).first()
+        if existing:
+            existing.same_group = next_group
+        else:
+            new_rel = models.LayerRelation(
+                project_id=project_id,
+                parent_layer_id=anchor_id,
+                child_layer_id=other_id,
+                relation_type="Same Group",
+                same_group=next_group,
+                source_port="right",
+                target_port="left"
+            )
+            db.add(new_rel)
+
+    # Align layouts of all group members to the group bounding box
+    layout_rows = (
+        db.query(models.GraphLayout)
+        .filter(models.GraphLayout.project_id == project_id, models.GraphLayout.layer_id.in_(layer_ids))
+        .all()
+    )
+    if layout_rows:
+        min_x = min(l.x for l in layout_rows)
+        min_y = min(l.y for l in layout_rows)
+        max_x = max(l.x + l.width for l in layout_rows)
+        max_y = max(l.y + l.height for l in layout_rows)
+        new_w = max(180, max_x - min_x)
+        new_h = max(72, max_y - min_y)
+        
+        for l in layout_rows:
+            l.x = min_x
+            l.y = min_y
+            l.width = new_w
+            l.height = new_h
 
     try:
         db.flush()
@@ -463,6 +539,30 @@ def split_layer(
     stored_layers = metadata.get("merged_layers")
     stored_relations = metadata.get("merged_relations")
     stored_names = metadata.get("merged_layer_names")
+
+    is_legacy_merged = (isinstance(stored_layers, list) and len(stored_layers) >= 2) or (not stored_layers and layer.name and "\n" in layer.name)
+
+    if not is_legacy_merged:
+        # New non-destructive split logic: delete same_group relations involving this layer's group
+        group_rels = db.query(models.LayerRelation).filter(
+            models.LayerRelation.project_id == project_id,
+            (models.LayerRelation.parent_layer_id == layer_id) | (models.LayerRelation.child_layer_id == layer_id),
+            models.LayerRelation.same_group != None,
+            models.LayerRelation.same_group != ""
+        ).all()
+        if not group_rels:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Selected layer is not a merged/grouped layer")
+        
+        group_ids = {r.same_group for r in group_rels}
+        all_group_rels = db.query(models.LayerRelation).filter(
+            models.LayerRelation.project_id == project_id,
+            models.LayerRelation.same_group.in_(group_ids)
+        ).all()
+        for r in all_group_rels:
+            db.delete(r)
+        db.commit()
+        return crud.read_graph(db, project_id)
+
     if not isinstance(stored_layers, list):
         names = stored_names if isinstance(stored_names, list) else layer.name.splitlines()
         stored_layers = [{"id": str(uuid.uuid4()), "name": name} for name in names if str(name).strip()]
