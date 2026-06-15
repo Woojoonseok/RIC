@@ -80,6 +80,7 @@ export interface Relation {
   target_port: PortName;
   same_group: string | null;
   attached_relation_id: string | null;
+  waypoints: { x: number; y: number }[] | null;
 }
 
 export interface TextBox {
