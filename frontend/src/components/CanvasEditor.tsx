@@ -16,6 +16,7 @@ interface Props {
   onUpdateTextBox: (textBoxId: string, payload: Partial<TextBox>) => Promise<void>;
   onUpdateBatch: (payload: GraphBatchUpdate) => Promise<void>;
   onCreateRelation: (payload: Record<string, unknown>) => Promise<void>;
+  onUpdateRelation: (relationId: string, payload: Partial<Relation>) => Promise<void>;
 }
 
 interface Point {
@@ -36,7 +37,15 @@ type DragState =
       textOrigins: Record<string, TextBox>;
     }
   | { type: "resize-layer"; start: Point; current: Point; layerId: string; origin: Layout }
-  | { type: "resize-text"; start: Point; current: Point; textBoxId: string; origin: TextBox };
+  | { type: "resize-text"; start: Point; current: Point; textBoxId: string; origin: TextBox }
+  | {
+      type: "drag-waypoint";
+      relationId: string;
+      index: number;
+      originWaypoints: Point[];
+      start: Point;
+      current: Point;
+    };
 
 interface ConnectStart {
   layerId: string;
@@ -119,29 +128,79 @@ function getClosestPointOnSegment(p: Point, s: Point, e: Point): Point {
   return { x: s.x + t * vx, y: s.y + t * vy };
 }
 
-function getRelationEndpoints(
+interface Segment {
+  start: Point;
+  end: Point;
+}
+
+interface RelationGeometry {
+  a: Point;
+  b: Point;
+  path: string;
+  segments: Segment[];
+}
+
+function getRelationPathInfo(
+  a: Point,
+  b: Point,
+  waypoints: { x: number; y: number }[] | null | undefined
+): { path: string; segments: Segment[] } {
+  const segments: Segment[] = [];
+  const pts = [a, ...(waypoints ?? []), b];
+
+  for (let i = 0; i < pts.length - 1; i++) {
+    segments.push({ start: pts[i], end: pts[i + 1] });
+  }
+
+  let path = `M ${a.x} ${a.y}`;
+  for (let i = 1; i < pts.length; i++) {
+    path += ` L ${pts[i].x} ${pts[i].y}`;
+  }
+
+  return { path, segments };
+}
+
+function getRelationGeometry(
   relation: Relation,
   layoutByLayer: Map<string, Layout>,
   relationsById: Map<string, Relation>,
   displayLayout: (l: Layout) => Layout,
   visited = new Set<string>()
-): { a: Point; b: Point } {
+): RelationGeometry {
   const source = layoutByLayer.get(relation.parent_layer_id);
   const a = source ? portPoint(displayLayout(source), relation.source_port) : { x: 0, y: 0 };
 
+  let b: Point;
   if (relation.attached_relation_id && !visited.has(relation.id)) {
     visited.add(relation.id);
     const targetRel = relationsById.get(relation.attached_relation_id);
     if (targetRel) {
-      const targetPts = getRelationEndpoints(targetRel, layoutByLayer, relationsById, displayLayout, visited);
-      const b = getClosestPointOnSegment(a, targetPts.a, targetPts.b);
-      return { a, b };
+      const targetGeom = getRelationGeometry(targetRel, layoutByLayer, relationsById, displayLayout, visited);
+      let minDistance = Infinity;
+      let closestPt = targetGeom.b;
+
+      targetGeom.segments.forEach((seg) => {
+        const pt = getClosestPointOnSegment(a, seg.start, seg.end);
+        const dx = a.x - pt.x;
+        const dy = a.y - pt.y;
+        const dist = dx * dx + dy * dy;
+        if (dist < minDistance) {
+          minDistance = dist;
+          closestPt = pt;
+        }
+      });
+      b = closestPt;
+    } else {
+      const target = layoutByLayer.get(relation.child_layer_id);
+      b = target ? portPoint(displayLayout(target), relation.target_port) : { x: 0, y: 0 };
     }
+  } else {
+    const target = layoutByLayer.get(relation.child_layer_id);
+    b = target ? portPoint(displayLayout(target), relation.target_port) : { x: 0, y: 0 };
   }
 
-  const target = layoutByLayer.get(relation.child_layer_id);
-  const b = target ? portPoint(displayLayout(target), relation.target_port) : { x: 0, y: 0 };
-  return { a, b };
+  const { path, segments } = getRelationPathInfo(a, b, relation.waypoints);
+  return { a, b, path, segments };
 }
 
 export default function CanvasEditor({
@@ -157,7 +216,8 @@ export default function CanvasEditor({
   onUpdateLayout,
   onUpdateTextBox,
   onUpdateBatch,
-  onCreateRelation
+  onCreateRelation,
+  onUpdateRelation
 }: Props) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [viewBox, setViewBox] = useState({ x: 0, y: 0, width: 1600, height: 1000 });
@@ -264,6 +324,25 @@ export default function CanvasEditor({
     return textBox;
   };
 
+  const displayRelation = (relation: Relation): Relation => {
+    if (drag?.type === "drag-waypoint" && drag.relationId === relation.id) {
+      const dx = drag.current.x - drag.start.x;
+      const dy = drag.current.y - drag.start.y;
+
+      const nextWaypoints = drag.originWaypoints.map((w, idx) => {
+        if (idx === drag.index) {
+          return {
+            x: Math.round(snap(w.x + dx, snapToGrid)),
+            y: Math.round(snap(w.y + dy, snapToGrid))
+          };
+        }
+        return w;
+      });
+      return { ...relation, waypoints: nextWaypoints };
+    }
+    return relation;
+  };
+
   const relationsById = useMemo(() => {
     const map = new Map<string, Relation>();
     graph?.relations.forEach((rel) => map.set(rel.id, rel));
@@ -280,16 +359,18 @@ export default function CanvasEditor({
       // Do not snap to a relation that starts or ends at the same layer to prevent self-connection issues
       if (rel.parent_layer_id === connectStart.layerId || rel.child_layer_id === connectStart.layerId) continue;
 
-      const pts = getRelationEndpoints(rel, layoutByLayer, relationsById, displayLayout);
-      const closest = getClosestPointOnSegment(pointerCanvas, pts.a, pts.b);
-      const dx = pointerCanvas.x - closest.x;
-      const dy = pointerCanvas.y - closest.y;
-      const distance = Math.sqrt(dx * dx + dy * dy);
+      const geom = getRelationGeometry(rel, layoutByLayer, relationsById, displayLayout);
+      for (const seg of geom.segments) {
+        const closest = getClosestPointOnSegment(pointerCanvas, seg.start, seg.end);
+        const dx = pointerCanvas.x - closest.x;
+        const dy = pointerCanvas.y - closest.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
 
-      if (distance < minDistance) {
-        minDistance = distance;
-        snapPt = closest;
-        targetRel = rel;
+        if (distance < minDistance) {
+          minDistance = distance;
+          snapPt = closest;
+          targetRel = rel;
+        }
       }
     }
 
@@ -433,6 +514,22 @@ export default function CanvasEditor({
       void onUpdateTextBox(drag.textBoxId, { width, height });
     }
 
+    if (drag.type === "drag-waypoint") {
+      const dx = drag.current.x - drag.start.x;
+      const dy = drag.current.y - drag.start.y;
+
+      const nextWaypoints = drag.originWaypoints.map((w, idx) => {
+        if (idx === drag.index) {
+          return {
+            x: Math.round(snap(w.x + dx, snapToGrid)),
+            y: Math.round(snap(w.y + dy, snapToGrid))
+          };
+        }
+        return w;
+      });
+      void onUpdateRelation(drag.relationId, { waypoints: nextWaypoints });
+    }
+
     setDrag(null);
   };
 
@@ -564,23 +661,24 @@ export default function CanvasEditor({
           ))}
         </defs>
         <rect className="canvas-bg" x={viewBox.x - 2000} y={viewBox.y - 2000} width={viewBox.width + 4000} height={viewBox.height + 4000} fill="url(#grid)" />
-        {graph?.relations.map((relation) => {
-          const { a, b } = getRelationEndpoints(relation, layoutByLayer, relationsById, displayLayout);
+        {graph?.relations.map((rel) => {
+          const relation = displayRelation(rel);
+          const geom = getRelationGeometry(relation, layoutByLayer, relationsById, displayLayout);
+          const { a, b, path, segments } = geom;
           const style = relationStroke(relation.relation_type, relation.relation_style_id ? relationStyleById.get(relation.relation_style_id) : undefined, relation.same_group);
-          const midX = (a.x + b.x) / 2;
-          const midY = (a.y + b.y) / 2;
+          const midSeg = segments[Math.floor(segments.length / 2)];
+          const midX = midSeg ? (midSeg.start.x + midSeg.end.x) / 2 : (a.x + b.x) / 2;
+          const midY = midSeg ? (midSeg.start.y + midSeg.end.y) / 2 : (a.y + b.y) / 2;
           return (
             <g key={relation.id}>
-              <line
+              <path
                 className={selectedRelationIds.has(relation.id) ? "relation selected" : "relation"}
-                x1={a.x}
-                y1={a.y}
-                x2={b.x}
-                y2={b.y}
+                d={path}
                 stroke={style.stroke}
                 strokeWidth={style.strokeWidth}
                 strokeDasharray={style.strokeDasharray}
                 markerEnd={style.markerEnd}
+                fill="none"
               />
               {relation.same_group && (
                 <g style={{ cursor: "default", userSelect: "none" }}>
@@ -606,12 +704,10 @@ export default function CanvasEditor({
                   </text>
                 </g>
               )}
-              <line
+              <path
                 className="relation-hit"
-                x1={a.x}
-                y1={a.y}
-                x2={b.x}
-                y2={b.y}
+                d={path}
+                fill="none"
                 onPointerDown={(event) => {
                   event.stopPropagation();
                   if (connectStart) {
@@ -633,6 +729,77 @@ export default function CanvasEditor({
                   }
                 }}
               />
+              {selectedRelationIds.has(relation.id) && (
+                <g>
+                  {/* Render Midpoint Handles */}
+                  {segments.map((seg, idx) => {
+                    const midX = (seg.start.x + seg.end.x) / 2;
+                    const midY = (seg.start.y + seg.end.y) / 2;
+                    return (
+                      <circle
+                        key={`mid-${relation.id}-${idx}`}
+                        cx={midX}
+                        cy={midY}
+                        r="5"
+                        fill="#0ea5e9"
+                        stroke="#ffffff"
+                        strokeWidth="1.2"
+                        opacity="0.6"
+                        style={{ cursor: "pointer" }}
+                        onPointerDown={(event) => {
+                          event.stopPropagation();
+                          const point = toCanvasPoint(event);
+                          const currentWaypoints = relation.waypoints ?? [];
+                          const nextWaypoints = [
+                            ...currentWaypoints.slice(0, idx),
+                            { x: midX, y: midY },
+                            ...currentWaypoints.slice(idx)
+                          ];
+                          setDrag({
+                            type: "drag-waypoint",
+                            relationId: relation.id,
+                            index: idx,
+                            originWaypoints: nextWaypoints,
+                            start: point,
+                            current: point
+                          });
+                        }}
+                      />
+                    );
+                  })}
+
+                  {/* Render Waypoint Handles */}
+                  {(relation.waypoints ?? []).map((w, idx) => (
+                    <circle
+                      key={`way-${relation.id}-${idx}`}
+                      cx={w.x}
+                      cy={w.y}
+                      r="7"
+                      fill="#f97316"
+                      stroke="#ffffff"
+                      strokeWidth="1.5"
+                      style={{ cursor: "move" }}
+                      onPointerDown={(event) => {
+                        event.stopPropagation();
+                        const point = toCanvasPoint(event);
+                        setDrag({
+                          type: "drag-waypoint",
+                          relationId: relation.id,
+                          index: idx,
+                          originWaypoints: relation.waypoints ? [...relation.waypoints] : [],
+                          start: point,
+                          current: point
+                        });
+                      }}
+                      onDoubleClick={(event) => {
+                        event.stopPropagation();
+                        const nextWaypoints = (relation.waypoints ?? []).filter((_, i) => i !== idx);
+                        void onUpdateRelation(relation.id, { waypoints: nextWaypoints });
+                      }}
+                    />
+                  ))}
+                </g>
+              )}
             </g>
           );
         })}

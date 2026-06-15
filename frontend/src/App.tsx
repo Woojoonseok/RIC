@@ -1095,6 +1095,9 @@ export default function App() {
           onCreateRelation={(payload) =>
             mutateGraph(() => api.createRelation(projectId, payload), "Relation added")
           }
+          onUpdateRelation={(relationId, payload) =>
+            mutateGraph(() => api.updateRelation(projectId, relationId, payload), "Relation saved")
+          }
         />
         <PropertyPanel
           graph={graph}
