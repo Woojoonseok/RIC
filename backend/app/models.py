@@ -30,11 +30,109 @@ class Project(Base, TimestampMixin):
 
     layers: Mapped[list[Layer]] = relationship(back_populates="project", cascade="all, delete-orphan")
     relations: Mapped[list[LayerRelation]] = relationship(back_populates="project", cascade="all, delete-orphan")
-    relation_styles: Mapped[list[RelationStyle]] = relationship(back_populates="project", cascade="all, delete-orphan")
-    box_presets: Mapped[list[BoxPreset]] = relationship(back_populates="project", cascade="all, delete-orphan")
     layouts: Mapped[list[GraphLayout]] = relationship(back_populates="project", cascade="all, delete-orphan")
     styles: Mapped[list[ShapeStyle]] = relationship(back_populates="project", cascade="all, delete-orphan")
     text_boxes: Mapped[list[TextBox]] = relationship(back_populates="project", cascade="all, delete-orphan")
+
+
+class RelationStyle(Base):
+    __tablename__ = "relation_styles"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    name: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
+    stroke_color: Mapped[str] = mapped_column(String(20), default="#111827")
+    stroke_width: Mapped[int] = mapped_column(Integer, default=2)
+    line_pattern: Mapped[str] = mapped_column(String(40), default="solid")
+    marker_type: Mapped[str] = mapped_column(String(40), default="arrow")
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class BoxPreset(Base):
+    __tablename__ = "box_presets"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    name: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
+    fill_color: Mapped[str] = mapped_column(String(20), default="#dbeafe")
+    stroke_color: Mapped[str] = mapped_column(String(20), default="#2563eb")
+    text_color: Mapped[str] = mapped_column(String(20), default="#111827")
+    font_size: Mapped[int] = mapped_column(Integer, default=16)
+    width: Mapped[float] = mapped_column(Float, default=180)
+    height: Mapped[float] = mapped_column(Float, default=72)
+    stroke_width: Mapped[int] = mapped_column(Integer, default=2)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class KeyLayoutType(Base):
+    __tablename__ = "key_layout_types"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    name: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
+    scribe_lane_rows: Mapped[int | None] = mapped_column(Integer)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    priorities: Mapped[list[LayerMasterPriority]] = relationship(
+        back_populates="key_layout_type", cascade="all, delete-orphan"
+    )
+
+
+class KeyDrawingType(Base):
+    __tablename__ = "key_drawing_types"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    symbol: Mapped[str | None] = mapped_column(String(80))
+    trench_mesa: Mapped[str | None] = mapped_column(String(80))
+    key_shape: Mapped[str | None] = mapped_column(String(120))
+    ri_notation: Mapped[str | None] = mapped_column(String(120))
+    drawing_guide: Mapped[str | None] = mapped_column(String(200))
+    gds_path: Mapped[str | None] = mapped_column(String(200))
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class KeyShape(Base):
+    __tablename__ = "key_shapes"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    key_shape: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
+    drawing_guide: Mapped[str | None] = mapped_column(String(200))
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class LayerMaster(Base):
+    __tablename__ = "layer_masters"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    name: Mapped[str] = mapped_column(String(160), unique=True, nullable=False)
+    layer_number: Mapped[str | None] = mapped_column(String(40))
+    mask_main_fld: Mapped[str | None] = mapped_column(String(40))
+    mask_sl_fld: Mapped[str | None] = mapped_column(String(40))
+    pr_wf: Mapped[str | None] = mapped_column(String(40))
+    dev_wf: Mapped[str | None] = mapped_column(String(40))
+    pr_type: Mapped[str | None] = mapped_column(String(40))
+    light_source: Mapped[str | None] = mapped_column(String(40))
+    pr_open_close: Mapped[str | None] = mapped_column(String(40))
+    validation_rule: Mapped[str | None] = mapped_column(Text)
+    comment: Mapped[str | None] = mapped_column(Text)
+    priority_rows: Mapped[list[LayerMasterPriority]] = relationship(
+        back_populates="layer_master", cascade="all, delete-orphan"
+    )
+
+
+class LayerMasterPriority(Base):
+    __tablename__ = "layer_master_priorities"
+    __table_args__ = (
+        UniqueConstraint("layer_master_id", "key_layout_type_id", name="uq_master_layout_priority"),
+    )
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    layer_master_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("layer_masters.id", ondelete="CASCADE"), index=True
+    )
+    key_layout_type_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("key_layout_types.id", ondelete="CASCADE"), index=True
+    )
+    value: Mapped[str | None] = mapped_column(String(40))
+    layer_master: Mapped[LayerMaster] = relationship(back_populates="priority_rows")
+    key_layout_type: Mapped[KeyLayoutType] = relationship(back_populates="priorities")
 
 
 class Layer(Base, TimestampMixin):
@@ -48,9 +146,15 @@ class Layer(Base, TimestampMixin):
     layer_property: Mapped[str | None] = mapped_column(String(160))
     align: Mapped[str | None] = mapped_column(String(160))
     align_side: Mapped[str | None] = mapped_column(String(80))
+    description: Mapped[str | None] = mapped_column(Text)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    box_preset_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("box_presets.id", ondelete="SET NULL"), index=True
+    )
+    pending_group: Mapped[str | None] = mapped_column(String(80))
 
     project: Mapped[Project] = relationship(back_populates="layers")
+    box_preset: Mapped[BoxPreset | None] = relationship()
     layout: Mapped[GraphLayout | None] = relationship(back_populates="layer", cascade="all, delete-orphan")
     style: Mapped[ShapeStyle | None] = relationship(back_populates="layer", cascade="all, delete-orphan")
 
@@ -58,66 +162,39 @@ class Layer(Base, TimestampMixin):
 class LayerRelation(Base, TimestampMixin):
     __tablename__ = "layer_relations"
     __table_args__ = (
-        UniqueConstraint("project_id", "parent_layer_id", "child_layer_id", name="uq_relations_parent_child"),
+        UniqueConstraint(
+            "project_id", "parent_layer_id", "child_layer_id", "instance", name="uq_relations_parent_child_instance"
+        ),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
-    parent_layer_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("layers.id", ondelete="CASCADE"), index=True)
-    child_layer_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("layers.id", ondelete="CASCADE"), index=True)
+    parent_layer_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("layers.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    child_layer_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("layers.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     relation_type: Mapped[str] = mapped_column(String(80), default="parent_child")
-    relation_style_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("relation_styles.id", ondelete="SET NULL"), index=True)
+    instance: Mapped[str | None] = mapped_column(String(120))
+    relation_style_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("relation_styles.id", ondelete="SET NULL"), index=True
+    )
     source_port: Mapped[str] = mapped_column(String(20), default="right")
     target_port: Mapped[str] = mapped_column(String(20), default="left")
-    same_group: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    same_group: Mapped[str | None] = mapped_column(String(80))
     attached_relation_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("layer_relations.id", ondelete="SET NULL"), nullable=True, index=True
     )
-    waypoints: Mapped[list[dict[str, float]] | None] = mapped_column(JSON, default=list)
+    waypoints: Mapped[list[dict[str, float]]] = mapped_column(JSON, default=list)
 
     project: Mapped[Project] = relationship(back_populates="relations")
-    parent_layer: Mapped[Layer] = relationship(foreign_keys=[parent_layer_id])
-    child_layer: Mapped[Layer] = relationship(foreign_keys=[child_layer_id])
+    parent_layer: Mapped[Layer | None] = relationship(foreign_keys=[parent_layer_id])
+    child_layer: Mapped[Layer | None] = relationship(foreign_keys=[child_layer_id])
     relation_style: Mapped[RelationStyle | None] = relationship(foreign_keys=[relation_style_id])
 
 
-class RelationStyle(Base, TimestampMixin):
-    __tablename__ = "relation_styles"
-    __table_args__ = (UniqueConstraint("project_id", "name", name="uq_relation_styles_project_name"),)
-
-    id: Mapped[uuid.UUID] = uuid_pk()
-    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
-    name: Mapped[str] = mapped_column(String(120), nullable=False)
-    stroke_color: Mapped[str] = mapped_column(String(20), default="#111827")
-    stroke_width: Mapped[int] = mapped_column(Integer, default=2)
-    line_pattern: Mapped[str] = mapped_column(String(40), default="solid")
-    marker_type: Mapped[str] = mapped_column(String(40), default="arrow")
-    sort_order: Mapped[int] = mapped_column(Integer, default=0)
-
-    project: Mapped[Project] = relationship(back_populates="relation_styles")
-
-
-class BoxPreset(Base, TimestampMixin):
-    __tablename__ = "box_presets"
-    __table_args__ = (UniqueConstraint("project_id", "name", name="uq_box_presets_project_name"),)
-
-    id: Mapped[uuid.UUID] = uuid_pk()
-    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
-    name: Mapped[str] = mapped_column(String(120), nullable=False)
-    fill_color: Mapped[str] = mapped_column(String(20), default="#dbeafe")
-    stroke_color: Mapped[str] = mapped_column(String(20), default="#2563eb")
-    text_color: Mapped[str] = mapped_column(String(20), default="#111827")
-    font_size: Mapped[int] = mapped_column(Integer, default=16)
-    width: Mapped[float] = mapped_column(Float, default=180)
-    height: Mapped[float] = mapped_column(Float, default=72)
-    stroke_width: Mapped[int] = mapped_column(Integer, default=2)
-    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
-    sort_order: Mapped[int] = mapped_column(Integer, default=0)
-
-    project: Mapped[Project] = relationship(back_populates="box_presets")
-
-
-class GraphLayout(Base, TimestampMixin):
+class GraphLayout(Base):
     __tablename__ = "graph_layouts"
     __table_args__ = (UniqueConstraint("project_id", "layer_id", name="uq_layouts_project_layer"),)
 
@@ -134,7 +211,7 @@ class GraphLayout(Base, TimestampMixin):
     layer: Mapped[Layer] = relationship(back_populates="layout")
 
 
-class ShapeStyle(Base, TimestampMixin):
+class ShapeStyle(Base):
     __tablename__ = "shape_styles"
     __table_args__ = (UniqueConstraint("project_id", "layer_id", name="uq_styles_project_layer"),)
 
@@ -151,7 +228,7 @@ class ShapeStyle(Base, TimestampMixin):
     layer: Mapped[Layer] = relationship(back_populates="style")
 
 
-class TextBox(Base, TimestampMixin):
+class TextBox(Base):
     __tablename__ = "text_boxes"
 
     id: Mapped[uuid.UUID] = uuid_pk()
@@ -168,12 +245,3 @@ class TextBox(Base, TimestampMixin):
     locked: Mapped[bool] = mapped_column(Boolean, default=False)
 
     project: Mapped[Project] = relationship(back_populates="text_boxes")
-
-
-class ChangeHistory(Base, TimestampMixin):
-    __tablename__ = "change_history"
-
-    id: Mapped[uuid.UUID] = uuid_pk()
-    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
-    action: Mapped[str] = mapped_column(String(80), nullable=False)
-    payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)

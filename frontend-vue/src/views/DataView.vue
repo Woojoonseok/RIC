@@ -1,0 +1,14 @@
+<script setup lang="ts">
+import { computed } from "vue";
+import SpreadsheetGrid from "../components/grid/SpreadsheetGrid.vue";
+import { api } from "../api/client";
+import { useEditorStore } from "../stores/editor";
+const store = useEditorStore();
+const layerColumns = [{ key: "name", label: "Layer" }, { key: "step", label: "Step" }, { key: "layer_property", label: "Property" }, { key: "align", label: "Align" }, { key: "align_side", label: "Align Side" }, { key: "pending_group", label: "Group" }];
+const relationColumns = [{ key: "parent", label: "Parent Layer" }, { key: "child", label: "Child Layer" }, { key: "relation_type", label: "Type" }, { key: "instance", label: "Instance" }, { key: "source_port", label: "Source Port" }, { key: "target_port", label: "Target Port" }];
+const layerRows = computed(() => store.graph?.layers.map((row) => ({ ...row })) ?? []);
+const relationRows = computed(() => { const names = new Map(store.graph?.layers.map((row) => [row.id, row.name])); return store.graph?.relations.filter((row) => !row.same_group).map((row) => ({ ...row, parent: row.parent_layer_id ? names.get(row.parent_layer_id) : "", child: row.child_layer_id ? names.get(row.child_layer_id) : "" })) ?? [] });
+async function commitLayers(rows: Array<Record<string, unknown>>) { for (const row of rows) { const body = Object.fromEntries(layerColumns.map((column) => [column.key, row[column.key] || null])); if (row.id) await api.updateLayer(store.projectId, String(row.id), body); else if (row.name) await api.createLayer(store.projectId, body) } await store.loadGraph() }
+async function commitRelations(rows: Array<Record<string, unknown>>) { const ids = new Map(store.graph?.layers.map((row) => [row.name, row.id])); for (const row of rows) { const body = { parent_layer_id: ids.get(String(row.parent ?? "")) ?? null, child_layer_id: ids.get(String(row.child ?? "")) ?? null, relation_type: row.relation_type || "parent_child", instance: row.instance || null, source_port: row.source_port || "right", target_port: row.target_port || "left" }; if (row.id) await api.updateRelation(store.projectId, String(row.id), body); else await api.createRelation(store.projectId, body) } await store.loadGraph() }
+</script>
+<template><section class="page wide-page"><div class="page-title"><div><p class="eyebrow">STRUCTURED INPUT</p><h1>Data</h1><p>Excel처럼 범위를 선택하고 TSV 데이터를 붙여넣은 뒤 한 번에 저장합니다.</p></div></div><div v-if="store.graph" class="data-stack"><div class="panel"><div class="panel-heading"><h2>Align Input</h2><span>{{ layerRows.length }} Layers</span></div><SpreadsheetGrid :columns="layerColumns" :rows="layerRows" @commit="commitLayers" /></div><div class="panel"><div class="panel-heading"><h2>Layer Relation</h2><span>{{ relationRows.length }} Relations</span></div><SpreadsheetGrid :columns="relationColumns" :rows="relationRows" @commit="commitRelations" /></div></div><div v-else class="empty-page">프로젝트를 선택하세요.</div></section></template>
