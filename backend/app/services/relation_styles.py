@@ -7,28 +7,28 @@ from .. import models
 
 DEFAULT_RELATION_STYLES = [
     {
-        "name": "Black",
+        "name": "Black Solid Arrow",
         "stroke_color": "#111827",
         "stroke_width": 2,
         "line_pattern": "solid",
         "marker_type": "arrow",
     },
     {
-        "name": "Gray",
+        "name": "Gray Solid Arrow",
         "stroke_color": "#6b7280",
         "stroke_width": 2,
         "line_pattern": "solid",
         "marker_type": "arrow",
     },
     {
-        "name": "Red",
+        "name": "Red Solid Arrow",
         "stroke_color": "#dc2626",
         "stroke_width": 2,
         "line_pattern": "solid",
         "marker_type": "arrow",
     },
     {
-        "name": "Blue",
+        "name": "Blue Solid Arrow",
         "stroke_color": "#2563eb",
         "stroke_width": 2,
         "line_pattern": "solid",
@@ -54,7 +54,7 @@ DEFAULT_RELATION_STYLES = [
 def ensure_default_relation_styles(db: Session) -> list[models.RelationStyle]:
     existing = (
         db.query(models.RelationStyle)
-        .order_by(models.RelationStyle.sort_order, models.RelationStyle.name)
+        .order_by(models.RelationStyle.sort_order, models.RelationStyle.created_at)
         .all()
     )
     if existing:
@@ -70,11 +70,11 @@ def ensure_default_relation_styles(db: Session) -> list[models.RelationStyle]:
         existing.extend(created)
     return (
         db.query(models.RelationStyle)
-        .order_by(models.RelationStyle.sort_order, models.RelationStyle.name)
+        .order_by(models.RelationStyle.sort_order, models.RelationStyle.created_at)
         .all()
     )
 
 
-def default_relation_style_id(db: Session, _project_id=None):
+def default_relation_style_id(db: Session):
     styles = ensure_default_relation_styles(db)
     return styles[0].id if styles else None

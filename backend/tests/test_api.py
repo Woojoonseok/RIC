@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
-from app.routers import graph, layer_master, projects, reference, validation
+from app.routers import graph, layer_master, projects, reference_data, validation
 
 
 @pytest.fixture()
@@ -28,7 +28,7 @@ def client() -> Generator[TestClient, None, None]:
     Base.metadata.create_all(engine)
     session_factory = sessionmaker(engine, expire_on_commit=False)
     app = FastAPI()
-    for router in (projects.router, graph.router, validation.router, reference.router, layer_master.router):
+    for router in (projects.router, graph.router, validation.router, reference_data.router, layer_master.router):
         app.include_router(router)
 
     def override_db() -> Generator[Session, None, None]:

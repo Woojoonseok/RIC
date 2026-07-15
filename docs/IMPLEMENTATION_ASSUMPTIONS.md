@@ -4,7 +4,7 @@
 
 - 명세의 `GET/POST/PUT/DELETE CRUD`를 컬렉션 `/api/reference/{resource}`와 항목 `/api/reference/{resource}/{id}`로 해석한다.
 - 이유: 표준 REST 구조이며 프론트의 공통 CRUD client와 grid를 재사용할 수 있다.
-- 변경 가능 지점: `backend/app/routers/reference.py`의 router factory와 `frontend-vue/src/api/client.ts`의 resource 경로.
+- 변경 가능 지점: `backend/app/routers/reference_data.py`의 router factory와 `frontend-vue/src/api/client.ts`의 resource 경로.
 
 ## Layer group 변경 payload
 
@@ -22,7 +22,20 @@
 - 순수 `computeDisplayGraph`에서 raw graph의 Layer 배열에 먼저 나타나는 그룹 멤버를 anchor로 사용한다.
 - 서버의 `created_at` 순서와 일치하므로 결과가 결정적이며, 별도 영속 anchor 필드가 필요 없다.
 
+## 관계선 attachment geometry fallback
+
+- `attached_relation_id` 대상은 visited relation ID 집합을 전달하며 재귀적으로 polyline을 계산한다.
+- 대상 관계가 없거나, draft라 유효한 선분이 없거나, cycle이 감지되면 해당 attachment 관계를 렌더링하지 않는다.
+- 불완전한 attachment를 임의의 target port에 연결하면 저장 데이터와 다른 의미를 보여줄 수 있으므로, 명시적인 비렌더링 방식을 선택했다. Validation 화면에서는 원본 관계 오류를 계속 확인할 수 있다.
+
+## 그룹 관계 생성
+
+- Canvas와 Data 입력의 완성 관계는 `개별→개별 1개`, `개별→그룹 1:N`, `그룹→개별 N:1`, `그룹→그룹 차단` 규칙으로 확장한다.
+- 생성 전에 self relation, 기존 `parent-child-instance` 조합, 요청 내부 중복을 제거한다.
+- 여러 생성 요청 중 일부가 실패하면 서버 graph를 즉시 다시 읽고, 성공 수와 전체 요청 수를 상태 메시지에 남긴다.
+
 ## 개발 DB 마이그레이션
 
-- 명세와 호환되지 않는 초기 SQLite DB는 자동으로 백업한 뒤 최종 스키마를 새로 만드는 방식이 안전하다. PostgreSQL은 새 환경에서 최종 metadata로 생성한다.
+- 로컬 SQLite의 호환 가능한 컬럼 변경은 `dev_migrations.py`에서 기존 데이터를 유지한 채 적용한다. 관계 nullable 변경처럼 SQLite `ALTER`로 처리할 수 없는 경우에만 테이블을 재구축해 행을 복사한다.
+- 기존 전역 기준정보 모델과 충돌하는 초기 개발 스키마는 최종 전역 테이블로 교체하고 기본값을 다시 시드한다.
 - 운영 데이터 마이그레이션은 실제 배포 DB와 데이터 샘플을 받은 뒤 Alembic revision으로 별도 제공해야 한다.

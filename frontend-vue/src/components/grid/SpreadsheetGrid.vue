@@ -3,8 +3,8 @@ import { computed, nextTick, ref, watch } from "vue";
 import { parseTsv, toTsv } from "../../domain/tsv";
 
 export interface GridColumn { key: string; label: string; width?: number; readonly?: boolean }
-const props = defineProps<{ columns: GridColumn[]; rows: Array<Record<string, unknown>>; rowKey?: string }>();
-const emit = defineEmits<{ commit: [rows: Array<Record<string, unknown>>] }>();
+const props = defineProps<{ columns: GridColumn[]; rows: Array<Record<string, unknown>>; rowKey?: string; selectedRows?: string[]; emptyHint?: string }>();
+const emit = defineEmits<{ commit: [rows: Array<Record<string, unknown>>]; rowSelect: [id: string, additive: boolean]; addRow: [] }>();
 const draft = ref<Array<Record<string, unknown>>>(structuredClone(props.rows));
 const active = ref({ row: 0, col: 0 });
 const anchor = ref({ row: 0, col: 0 });
@@ -20,7 +20,11 @@ const gridColumns = computed(() => `42px ${props.columns.map((column) => `${widt
 function isSelected(row: number, col: number) { const s = selected.value; return row >= s.r1 && row <= s.r2 && col >= s.c1 && col <= s.c2 }
 function activate(row: number, col: number, extend = false) { active.value = { row, col }; if (!extend) anchor.value = { row, col } }
 function selectColumn(col: number) { anchor.value = { row: 0, col }; active.value = { row: Math.max(0, draft.value.length - 1), col } }
-function selectRow(row: number) { anchor.value = { row, col: 0 }; active.value = { row, col: Math.max(0, props.columns.length - 1) } }
+function selectRow(row: number, event: MouseEvent) {
+  anchor.value = { row, col: 0 }; active.value = { row, col: Math.max(0, props.columns.length - 1) };
+  const id = String(draft.value[row]?.[props.rowKey ?? "id"] ?? "");
+  if (id) emit("rowSelect", id, event.ctrlKey || event.metaKey || event.shiftKey);
+}
 function selectAll() { anchor.value = { row: 0, col: 0 }; active.value = { row: Math.max(0, draft.value.length - 1), col: Math.max(0, props.columns.length - 1) } }
 function move(rowDelta: number, colDelta: number, extend = false) {
   activate(Math.max(0, Math.min(draft.value.length - 1, active.value.row + rowDelta)), Math.max(0, Math.min(props.columns.length - 1, active.value.col + colDelta)), extend);
@@ -82,17 +86,17 @@ function commit() { emit("commit", structuredClone(draft.value)) }
         {{ column.label }}<span class="column-resizer" @pointerdown.stop="resize(column, $event)" />
       </div>
     </div>
-    <div v-for="(row, rowIndex) in draft" :key="String(row[rowKey ?? 'id'] ?? rowIndex)" class="sheet-row" :style="{ gridTemplateColumns: gridColumns }">
-      <button type="button" class="sheet-row-number" @click="selectRow(rowIndex)">{{ rowIndex + 1 }}</button>
+    <div v-for="(row, rowIndex) in draft" :key="String(row[rowKey ?? 'id'] ?? rowIndex)" class="sheet-row" :class="{ 'row-selected': selectedRows?.includes(String(row[rowKey ?? 'id'])) }" :style="{ gridTemplateColumns: gridColumns }">
+      <button type="button" class="sheet-row-number" @click="selectRow(rowIndex, $event)">{{ rowIndex + 1 }}</button>
       <div v-for="(column, colIndex) in columns" :key="column.key" class="sheet-cell" :class="{ selected: isSelected(rowIndex, colIndex), active: active.row === rowIndex && active.col === colIndex, editing: editing && active.row === rowIndex && active.col === colIndex }" @mousedown="activate(rowIndex, colIndex, $event.shiftKey)" @dblclick="editCell(rowIndex, colIndex)">
         <input v-if="editing && active.row === rowIndex && active.col === colIndex && !column.readonly" v-model="row[column.key] as string" @blur="editing = false" @keydown.enter.stop.prevent="editing = false; move(1, 0)" />
         <span v-else>{{ row[column.key] }}</span>
       </div>
     </div>
-    <div v-if="!draft.length" class="sheet-empty">행이 없습니다.</div>
+    <div v-if="!draft.length" class="sheet-empty">{{ emptyHint || '행이 없습니다.' }}</div>
   </div>
   <div class="sheet-actions">
-    <button type="button" @click="draft.push(Object.fromEntries(columns.map((column) => [column.key, ''])))">행 추가</button>
+    <button type="button" @click="draft.push(Object.fromEntries(columns.map((column) => [column.key, '']))); emit('addRow')">행 추가</button>
     <button type="button" class="primary" @click="commit">변경사항 저장</button>
   </div>
 </template>

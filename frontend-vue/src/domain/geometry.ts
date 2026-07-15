@@ -1,4 +1,6 @@
-import type { Layout, Point, PortName, Relation } from "../types";
+import type { Layout, Point, PortName, Relation, RelationStyle } from "../types";
+
+export interface Aabb { x: number; y: number; width: number; height: number }
 
 export function portPoint(layout: Layout, port: PortName): Point {
   if (port === "top") return { x: layout.x + layout.width / 2, y: layout.y };
@@ -7,7 +9,42 @@ export function portPoint(layout: Layout, port: PortName): Point {
   return { x: layout.x, y: layout.y + layout.height / 2 };
 }
 
-export function closestPointOnSegment(point: Point, start: Point, end: Point): Point & { t: number; distance: number } {
+export function portHandlePoint(layout: Layout, port: PortName, distance = 18): Point {
+  const point = portPoint(layout, port);
+  if (port === "top") return { x: point.x, y: point.y - distance };
+  if (port === "right") return { x: point.x + distance, y: point.y };
+  if (port === "bottom") return { x: point.x, y: point.y + distance };
+  return { x: point.x - distance, y: point.y };
+}
+
+export function relationStroke(style?: RelationStyle, type = "", sameGroup?: string | null) {
+  if (sameGroup) return { stroke: "#16a34a", strokeWidth: 3, strokeDasharray: "4 4", markerEnd: undefined };
+  if (style) {
+    const pattern = style.line_pattern;
+    return {
+      stroke: style.stroke_color,
+      strokeWidth: style.stroke_width,
+      strokeDasharray: pattern === "dashed" ? "8 6" : pattern === "dotted" ? "2 6" : pattern === "reference" ? "10 4 2 4" : undefined,
+      markerEnd: style.marker_type === "none" ? undefined : "url(#arrow)",
+    };
+  }
+  const normalized = type.toLowerCase();
+  if (normalized === "reference") return { stroke: "#7c3aed", strokeWidth: 2, strokeDasharray: "10 4 2 4", markerEnd: "url(#arrow)" };
+  if (normalized === "optional" || normalized === "warning") return { stroke: "#0891b2", strokeWidth: 2, strokeDasharray: "2 5", markerEnd: "url(#arrow)" };
+  if (normalized === "overlay") return { stroke: "#f97316", strokeWidth: 2, strokeDasharray: undefined, markerEnd: "url(#arrow)" };
+  return { stroke: "#334155", strokeWidth: 2, strokeDasharray: undefined, markerEnd: "url(#arrow)" };
+}
+
+export function snap(value: number, gridSize = 20): number {
+  if (gridSize <= 0) return value;
+  return Math.round(value / gridSize) * gridSize;
+}
+
+export function intersects(a: Aabb, b: Aabb): boolean {
+  return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+}
+
+export function getClosestPointOnSegment(point: Point, start: Point, end: Point): Point & { t: number; distance: number } {
   const dx = end.x - start.x;
   const dy = end.y - start.y;
   const lengthSquared = dx * dx + dy * dy;
@@ -18,39 +55,46 @@ export function closestPointOnSegment(point: Point, start: Point, end: Point): P
   return { x, y, t, distance: Math.hypot(point.x - x, point.y - y) };
 }
 
-export function relationPoints(
+export const closestPointOnSegment = getClosestPointOnSegment;
+
+export function relationGeometry(
   relation: Relation,
   layouts: Map<string, Layout>,
   relations: Map<string, Relation>,
-  visiting = new Set<string>(),
+  visited = new Set<string>(),
 ): Point[] {
-  if (visiting.has(relation.id) || !relation.parent_layer_id) return [];
+  if (visited.has(relation.id) || !relation.parent_layer_id) return [];
   const sourceLayout = layouts.get(relation.parent_layer_id);
   if (!sourceLayout) return [];
-  const nextVisiting = new Set(visiting).add(relation.id);
+
+  const nextVisited = new Set(visited).add(relation.id);
   const points: Point[] = [portPoint(sourceLayout, relation.source_port), ...(relation.waypoints ?? [])];
   if (relation.attached_relation_id) {
     const targetRelation = relations.get(relation.attached_relation_id);
-    const targetPath = targetRelation ? relationPoints(targetRelation, layouts, relations, nextVisiting) : [];
+    const targetPath = targetRelation ? relationGeometry(targetRelation, layouts, relations, nextVisited) : [];
+    if (targetPath.length < 2) return [];
     const probe = points.at(-1)!;
-    let closest: Point & { distance: number } | null = null;
+    let closest: ReturnType<typeof getClosestPointOnSegment> | null = null;
     for (let index = 0; index < targetPath.length - 1; index += 1) {
-      const candidate = closestPointOnSegment(probe, targetPath[index], targetPath[index + 1]);
+      const candidate = getClosestPointOnSegment(probe, targetPath[index], targetPath[index + 1]);
       if (!closest || candidate.distance < closest.distance) closest = candidate;
     }
-    if (closest) points.push({ x: closest.x, y: closest.y });
-  } else if (relation.child_layer_id) {
-    const targetLayout = layouts.get(relation.child_layer_id);
-    if (targetLayout) points.push(portPoint(targetLayout, relation.target_port));
+    if (!closest) return [];
+    return [...points, { x: closest.x, y: closest.y }];
   }
-  return points;
+
+  if (!relation.child_layer_id) return [];
+  const targetLayout = layouts.get(relation.child_layer_id);
+  return targetLayout ? [...points, portPoint(targetLayout, relation.target_port)] : [];
 }
+
+export const relationPoints = relationGeometry;
 
 export function findRelationSnap(point: Point, paths: Array<{ relationId: string; points: Point[] }>, threshold = 24) {
   let best: { relationId: string; point: Point; distance: number } | null = null;
   for (const path of paths) {
     for (let index = 0; index < path.points.length - 1; index += 1) {
-      const candidate = closestPointOnSegment(point, path.points[index], path.points[index + 1]);
+      const candidate = getClosestPointOnSegment(point, path.points[index], path.points[index + 1]);
       if (candidate.distance <= threshold && (!best || candidate.distance < best.distance)) {
         best = { relationId: path.relationId, point: { x: candidate.x, y: candidate.y }, distance: candidate.distance };
       }
@@ -58,5 +102,3 @@ export function findRelationSnap(point: Point, paths: Array<{ relationId: string
   }
   return best;
 }
-
-export function snap(value: number, gridSize = 20) { return Math.round(value / gridSize) * gridSize }
