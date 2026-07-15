@@ -22,6 +22,18 @@
 - 순수 `computeDisplayGraph`에서 raw graph의 Layer 배열에 먼저 나타나는 그룹 멤버를 anchor로 사용한다.
 - 서버의 `created_at` 순서와 일치하므로 결과가 결정적이며, 별도 영속 anchor 필드가 필요 없다.
 
+## 관계선 attachment geometry fallback
+
+- `attached_relation_id` 대상은 visited relation ID 집합을 전달하며 재귀적으로 polyline을 계산한다.
+- 대상 관계가 없거나, draft라 유효한 선분이 없거나, cycle이 감지되면 해당 attachment 관계를 렌더링하지 않는다.
+- 불완전한 attachment를 임의의 target port에 연결하면 저장 데이터와 다른 의미를 보여줄 수 있으므로, 명시적인 비렌더링 방식을 선택했다. Validation 화면에서는 원본 관계 오류를 계속 확인할 수 있다.
+
+## 그룹 관계 생성
+
+- Canvas와 Data 입력의 완성 관계는 `개별→개별 1개`, `개별→그룹 1:N`, `그룹→개별 N:1`, `그룹→그룹 차단` 규칙으로 확장한다.
+- 생성 전에 self relation, 기존 `parent-child-instance` 조합, 요청 내부 중복을 제거한다.
+- 여러 생성 요청 중 일부가 실패하면 서버 graph를 즉시 다시 읽고, 성공 수와 전체 요청 수를 상태 메시지에 남긴다.
+
 ## 개발 DB 마이그레이션
 
 - 명세와 호환되지 않는 초기 SQLite DB는 자동으로 백업한 뒤 최종 스키마를 새로 만드는 방식이 안전하다. PostgreSQL은 새 환경에서 최종 metadata로 생성한다.

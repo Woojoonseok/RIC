@@ -1,4 +1,4 @@
-import type { Graph, Layer, Layout, Relation } from "../types";
+import type { Graph, Layer, Layout, Relation, RelationCreate } from "../types";
 
 class UnionFind {
   private parent = new Map<string, string>();
@@ -109,4 +109,47 @@ export function groupMaps(raw: Graph) {
     if (anchor) ids.forEach((id) => { anchorByLayerId[id] = anchor });
   }
   return { anchorByLayerId, groupToLayerIds };
+}
+
+function relationKey(parentId: string, childId: string, instance?: string | null) {
+  return `${parentId}\u0000${childId}\u0000${instance ?? ""}`;
+}
+
+export function expandRelationCandidates(raw: Graph, input: RelationCreate): RelationCreate[] {
+  const parentId = input.parent_layer_id;
+  const childId = input.child_layer_id;
+  if (!parentId || !childId) return [input];
+
+  const { groupToLayerIds } = groupMaps(raw);
+  const members = (layerId: string) => Object.values(groupToLayerIds).find((ids) => ids.includes(layerId)) ?? [layerId];
+  const parents = members(parentId);
+  const children = members(childId);
+  if (parents.length > 1 && children.length > 1) throw new Error("그룹 간 관계는 생성할 수 없습니다.");
+
+  const existing = new Set(raw.relations.flatMap((relation) =>
+    relation.parent_layer_id && relation.child_layer_id
+      ? [relationKey(relation.parent_layer_id, relation.child_layer_id, relation.instance)]
+      : [],
+  ));
+  const requested = new Set<string>();
+  const result: RelationCreate[] = [];
+  for (const parent of parents) {
+    for (const child of children) {
+      const key = relationKey(parent, child, input.instance);
+      if (parent === child || existing.has(key) || requested.has(key)) continue;
+      requested.add(key);
+      result.push({ ...input, parent_layer_id: parent, child_layer_id: child });
+    }
+  }
+  return result;
+}
+
+export function graphRestoreFromGraph(graph: Graph) {
+  return {
+    layers: graph.layers,
+    layouts: graph.layouts,
+    styles: graph.styles,
+    relations: graph.relations,
+    text_boxes: graph.text_boxes,
+  };
 }

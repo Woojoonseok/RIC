@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { api } from "../api/client";
+import { useReferenceStore } from "../stores/reference";
+import type { ReferenceResource } from "../types";
 
 type Row = Record<string, unknown> & { id?: string };
 const resources = {
@@ -11,17 +13,21 @@ const resources = {
   "box-presets": { label: "Box Preset", columns: ["name", "fill_color", "stroke_color", "text_color", "font_size", "width", "height", "stroke_width", "is_default", "sort_order"] },
 } as const;
 type Resource = keyof typeof resources;
+const reference = useReferenceStore();
 const active = ref<Resource>("key-layout-types");
-const rows = ref<Record<Resource, Row[]>>({ "key-layout-types": [], "key-drawing-types": [], "key-shapes": [], "relation-styles": [], "box-presets": [] });
+const rows = computed<Record<Resource, Row[]>>(() => ({
+  "key-layout-types": reference.keyLayoutTypes as unknown as Row[],
+  "key-drawing-types": reference.keyDrawingTypes as unknown as Row[],
+  "key-shapes": reference.keyShapes as unknown as Row[],
+  "relation-styles": reference.relationStyles as unknown as Row[],
+  "box-presets": reference.boxPresets as unknown as Row[],
+}));
 const status = ref("");
-async function load() {
-  const [layouts, drawings, shapes, styles, presets] = await Promise.all([api.keyLayoutTypes(), api.keyDrawingTypes(), api.keyShapes(), api.relationStyles(), api.boxPresets()]);
-  rows.value = { "key-layout-types": layouts as unknown as Row[], "key-drawing-types": drawings as unknown as Row[], "key-shapes": shapes as unknown as Row[], "relation-styles": styles as unknown as Row[], "box-presets": presets as unknown as Row[] };
-}
+async function load() { await reference.loadAll() }
 function add() { rows.value[active.value].push(Object.fromEntries(resources[active.value].columns.map((column) => [column, column === "sort_order" ? rows.value[active.value].length : column === "is_default" ? false : ""]))) }
 async function save(row: Row) {
   const data = { ...row }; delete data.id;
-  if (row.id) await api.updateReference(active.value, row.id, data); else await api.createReference(active.value, data);
+  if (row.id) await api.updateReference(active.value as ReferenceResource, row.id, data as never); else await api.createReference(active.value as ReferenceResource, data as never);
   status.value = "저장 완료"; await load();
 }
 async function remove(row: Row) { if (!row.id || !confirm("기준정보를 삭제할까요?")) return; await api.deleteReference(active.value, row.id); await load() }

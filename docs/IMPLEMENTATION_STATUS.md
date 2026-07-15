@@ -9,6 +9,9 @@
 - draft relation, instance, pending_group 승격, same_group merge/split, 그룹 저장 확장 구현
 - validation rollback, auto layout, Graph restore/batch, 서버 기반 Undo/Redo 구현
 - raw graph를 보존하는 순수 `computeDisplayGraph` 구현
+- app/project/graph/reference Pinia Store 분리와 명시적 Read/Write DTO 기반 API client 구현
+- 6종 discriminated union drag state와 ghost layout/text/relation 기반 Canvas composable 구현
+- attachment cycle guard, AABB marquee, 0.05~0.95 선분 projection, 그룹 관계 1:N/N:1 확장 구현
 - SVG Canvas pan/zoom/marquee/move/resize/port/waypoint/relation attachment/minimap/search 구현
 - Excel식 범위 선택·키보드·TSV copy/cut/paste·행/열 선택·resize/auto-fit grid 구현
 - Excel template/export, SVG export, `pptxgenjs` PPTX export 구현
@@ -18,7 +21,7 @@
 
 | 초기 React | Vue 3 구현 |
 | --- | --- |
-| `App.tsx`의 로컬 상태 | `stores/editor.ts` Pinia setup store |
+| `App.tsx`의 로컬 상태 | `stores/app.ts`, `project.ts`, `graph.ts`, `reference.ts` Pinia setup store |
 | `computeDisplayGraph` | `domain/graph.ts` 순수 함수와 단위 테스트 |
 | `CanvasEditor.tsx` | `components/canvas/CanvasEditor.vue` |
 | `ImportView.tsx`의 단순 table | 재사용 `SpreadsheetGrid.vue` + `DataView.vue` |
@@ -53,7 +56,7 @@
 ```text
 ruff check backend/app backend/tests       PASS
 pytest backend/tests                       3 PASS
-vitest frontend-vue/tests                  5 PASS
+vitest frontend-vue/tests                 12 PASS
 vue-tsc --noEmit                           PASS
 vite build                                 PASS
 FastAPI startup + health + seed            PASS (relation styles 6, box presets 4)
