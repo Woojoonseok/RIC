@@ -112,7 +112,9 @@ h1, h2, strong, .brand { font-family: "Manrope", sans-serif; }
 .sheet-cell input { width: 100%; height: 34px; border: 0; border-radius: 0; box-shadow: none; }
 .sheet-empty { padding: 28px; color: #98a2b3; text-align: center; }
 .sheet-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
-.editor-page { display: grid; grid-template-rows: 38px 52px minmax(0, 1fr); height: 100%; }
+.project-workspace-shell { display: grid; grid-template-rows: 38px minmax(0, 1fr); height: 100%; min-height: 0; }
+.project-workspace-shell > .page { min-height: 0; }
+.editor-page { display: grid; grid-template-rows: 52px minmax(0, 1fr); height: 100%; min-height: 0; }
 .workspace-tabs { display: flex; align-items: end; gap: 4px; border-bottom: 1px solid var(--line); background: white; padding: 0 14px; }
 .workspace-tabs button { height: 37px; border: 0; border-radius: 0; background: transparent; padding: 0 14px; }
 .workspace-tabs button.active { border-bottom: 2px solid var(--blue); color: var(--blue); font-weight: 700; }
@@ -158,7 +160,8 @@ h1, h2, strong, .brand { font-family: "Manrope", sans-serif; }
 .property-split { height: 1px; margin: 15px 0; background: #eaecf0; }
 .meta-box { border-radius: 8px; background: #f2f4f7; color: #667085; font-size: 11px; line-height: 1.7; padding: 10px; }
 .canvas-pane { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: #fff; }
-.canvas { display: block; width: 100%; height: 100%; cursor: default; touch-action: none; }
+.canvas { display: block; width: 100%; height: 100%; cursor: default; touch-action: none; user-select: none; -webkit-user-drag: none; }
+.canvas * { user-select: none; -webkit-user-drag: none; }
 .canvas.connect-mode { cursor: crosshair; }
 .canvas.text-mode { cursor: text; }
 .canvas-float { position: absolute; top: 12px; left: 12px; z-index: 5; display: flex; gap: 5px; border: 1px solid #d0d5dd; border-radius: 10px; background: rgba(255,255,255,.94); box-shadow: 0 6px 18px rgba(16,24,40,.08); padding: 6px; }
@@ -175,6 +178,7 @@ h1, h2, strong, .brand { font-family: "Manrope", sans-serif; }
 .port { fill: white; stroke: #1570ef; stroke-width: 2; cursor: crosshair; }
 .port-stem { stroke: #1570ef; stroke-width: 2; pointer-events: none; }
 .port:hover { fill: #b2ddff; }
+.port.connectable { stroke: #12b76a; stroke-width: 3; }
 .resize-handle { fill: #1570ef; stroke: white; stroke-width: 2; cursor: nwse-resize; }
 .waypoint { fill: white; stroke: #7f56d9; stroke-width: 3; cursor: move; }
 .connect-preview { fill: none; stroke: #1570ef; stroke-width: 3; stroke-dasharray: 9 6; pointer-events: none; }

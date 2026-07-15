@@ -29,7 +29,10 @@ export function useCanvasEditor() {
   const previewLayouts = ref<Record<string, Layout>>({});
   const previewTexts = ref<Record<string, TextBox>>({});
   const previewWaypoints = ref<Record<string, Point[]>>({});
-  const connect = ref<null | { layerId: string; port: PortName; start: Point }>(null);
+  const connect = ref<null | {
+    layerId: string; port: PortName; start: Point; pointerId: number; originClient: Point; pressed: boolean; moved: boolean;
+  }>(null);
+  const portSnap = ref<null | { layerId: string; port: PortName; point: Point }>(null);
   const relationSnap = ref<ReturnType<typeof findRelationSnap>>(null);
 
   const graph = computed(() => graphStore.displayGraph);
@@ -41,10 +44,16 @@ export function useCanvasEditor() {
     row.id,
     previewWaypoints.value[row.id] ? { ...row, waypoints: previewWaypoints.value[row.id] } : row,
   ]) ?? []));
-  const relationPaths = computed(() => graph.value?.relations.map((relation) => ({
-    relationId: relation.id,
-    points: relationGeometry(relations.value.get(relation.id)!, layouts.value, relations.value),
-  })).filter((path) => path.points.length >= 2) ?? []);
+  const relationPaths = computed(() => graph.value?.relations.map((relation) => {
+    const points = relationGeometry(relations.value.get(relation.id)!, layouts.value, relations.value);
+    return {
+      relationId: relation.id,
+      relation,
+      points,
+      polyline: points.map((point) => `${point.x},${point.y}`).join(" "),
+      appearance: relationAppearance(relation),
+    };
+  }).filter((path) => path.points.length >= 2) ?? []);
   const selectedLayers = computed(() => new Set(app.selection.filter((row) => row.kind === "layer").map((row) => row.id)));
   const selectedRelation = computed(() => app.selection.find((row) => row.kind === "relation")?.id ?? null);
   const selectedTexts = computed(() => new Set(app.selection.filter((row) => row.kind === "text").map((row) => row.id)));
@@ -76,11 +85,16 @@ export function useCanvasEditor() {
   }
 
   function capture(event: PointerEvent) {
-    (event.currentTarget as Element | null)?.setPointerCapture?.(event.pointerId);
+    svg.value?.setPointerCapture?.(event.pointerId);
+  }
+
+  function release(event: PointerEvent) {
+    if (svg.value?.hasPointerCapture?.(event.pointerId)) svg.value.releasePointerCapture(event.pointerId);
   }
 
   function nodePointerDown(event: PointerEvent, id: string, resize = false) {
     if (app.mode === "connect") return;
+    event.preventDefault();
     event.stopPropagation();
     const additive = event.ctrlKey || event.metaKey || event.shiftKey;
     const alreadySelected = app.selection.some((item) => item.kind === "layer" && item.id === id);
@@ -108,6 +122,7 @@ export function useCanvasEditor() {
 
   function textPointerDown(event: PointerEvent, row: TextBox, resize = false) {
     if (row.locked) return;
+    event.preventDefault();
     event.stopPropagation();
     const additive = event.ctrlKey || event.metaKey || event.shiftKey;
     const alreadySelected = app.selection.some((item) => item.kind === "text" && item.id === row.id);
@@ -132,8 +147,15 @@ export function useCanvasEditor() {
   }
 
   function canvasDown(event: PointerEvent) {
+    event.preventDefault();
     const point = clientPoint(event);
     pointer.value = point;
+    if (connect.value && !connect.value.pressed) {
+      connect.value = null;
+      portSnap.value = null;
+      relationSnap.value = null;
+      app.mode = "select";
+    }
     if (event.altKey || event.button === 1) {
       drag.value = { type: "pan", startClient: { x: event.clientX, y: event.clientY }, origin: { x: viewBox.value.x, y: viewBox.value.y } };
     } else if (app.mode === "text") {
@@ -150,9 +172,29 @@ export function useCanvasEditor() {
     const point = clientPoint(event);
     pointer.value = point;
     if (connect.value) {
+      if (connect.value.pressed && event.pointerId === connect.value.pointerId) {
+        const moved = Math.hypot(event.clientX - connect.value.originClient.x, event.clientY - connect.value.originClient.y) > 4;
+        if (moved && !connect.value.moved) connect.value = { ...connect.value, moved: true };
+      }
+      const threshold = 18 * viewBox.value.width / Math.max(1, svg.value?.clientWidth ?? 1600);
+      let closest: typeof portSnap.value = null;
+      let closestDistance = threshold;
+      for (const layer of graph.value?.layers ?? []) {
+        if (layer.id === connect.value.layerId) continue;
+        const layout = layouts.value.get(layer.id);
+        if (!layout) continue;
+        for (const port of ports) {
+          const target = portHandlePoint(layout, port);
+          const distance = Math.hypot(point.x - target.x, point.y - target.y);
+          if (distance <= closestDistance) {
+            closestDistance = distance;
+            closest = { layerId: layer.id, port, point: target };
+          }
+        }
+      }
+      portSnap.value = closest;
       const candidates = relationPaths.value.filter((path) => path.relationId !== selectedRelation.value);
-      const threshold = 24 * viewBox.value.width / Math.max(1, svg.value?.clientWidth ?? 1600);
-      relationSnap.value = findRelationSnap(point, candidates, threshold);
+      relationSnap.value = closest ? null : findRelationSnap(point, candidates, threshold);
     }
     const active = drag.value;
     if (!active) return;
@@ -186,7 +228,12 @@ export function useCanvasEditor() {
 
   async function pointerUp(event: PointerEvent) {
     const point = clientPoint(event);
-    if (connect.value) { await finishConnect(point); return }
+    release(event);
+    if (connect.value?.pressed) {
+      if (connect.value.moved && (portSnap.value || relationSnap.value)) await finishConnect(point);
+      else connect.value = { ...connect.value, pressed: false };
+      return;
+    }
     const active = drag.value;
     drag.value = null;
     if (!active || active.type === "pan") return;
@@ -216,26 +263,39 @@ export function useCanvasEditor() {
         x: snapEnabled.value ? snap(row.x) : row.x,
         y: snapEnabled.value ? snap(row.y) : row.y,
       }));
-      previewLayouts.value = {};
-      previewTexts.value = {};
-      if (layouts.length || text_boxes.length) await graphStore.mutateGraph("선택 항목 이동", () => api.batchGraph(project.projectId, { layouts, text_boxes }));
+      previewLayouts.value = Object.fromEntries(Object.values(previewLayouts.value).map((row) => [row.layer_id, {
+        ...row, x: snapEnabled.value ? snap(row.x) : row.x, y: snapEnabled.value ? snap(row.y) : row.y,
+      }]));
+      previewTexts.value = Object.fromEntries(Object.values(previewTexts.value).map((row) => [row.id, {
+        ...row, x: snapEnabled.value ? snap(row.x) : row.x, y: snapEnabled.value ? snap(row.y) : row.y,
+      }]));
+      try {
+        if (layouts.length || text_boxes.length) await graphStore.mutateGraph("선택 항목 이동", () => api.batchGraph(project.projectId, { layouts, text_boxes }));
+      } finally {
+        previewLayouts.value = {};
+        previewTexts.value = {};
+      }
     } else if (active.type === "resize-layer" && previewLayouts.value[active.id]) {
       const ghost = previewLayouts.value[active.id];
-      previewLayouts.value = {};
       const width = Math.max(60, snapEnabled.value ? snap(ghost.width) : ghost.width);
       const height = Math.max(36, snapEnabled.value ? snap(ghost.height) : ghost.height);
-      await graphStore.mutateGraph("Layer 크기 저장", () => api.batchGraph(project.projectId, { layouts: [{ layer_id: active.id, width, height }] }));
+      previewLayouts.value = { ...previewLayouts.value, [active.id]: { ...ghost, width, height } };
+      try {
+        await graphStore.mutateGraph("Layer 크기 저장", () => api.batchGraph(project.projectId, { layouts: [{ layer_id: active.id, width, height }] }));
+      } finally { previewLayouts.value = {} }
     } else if (active.type === "resize-text" && previewTexts.value[active.id]) {
       const ghost = previewTexts.value[active.id];
-      previewTexts.value = {};
-      await graphStore.mutateGraph("텍스트 크기 저장", () => api.updateText(project.projectId, active.id, {
-        width: Math.max(40, snapEnabled.value ? snap(ghost.width) : ghost.width),
-        height: Math.max(24, snapEnabled.value ? snap(ghost.height) : ghost.height),
-      }));
+      const width = Math.max(40, snapEnabled.value ? snap(ghost.width) : ghost.width);
+      const height = Math.max(24, snapEnabled.value ? snap(ghost.height) : ghost.height);
+      previewTexts.value = { ...previewTexts.value, [active.id]: { ...ghost, width, height } };
+      try {
+        await graphStore.mutateGraph("텍스트 크기 저장", () => api.updateText(project.projectId, active.id, { width, height }));
+      } finally { previewTexts.value = {} }
     } else if (active.type === "drag-waypoint" && previewWaypoints.value[active.id]) {
       const waypoints = previewWaypoints.value[active.id];
-      previewWaypoints.value = {};
-      await graphStore.mutateGraph("Waypoint 저장", () => api.updateRelation(project.projectId, active.id, { waypoints }));
+      try {
+        await graphStore.mutateGraph("Waypoint 저장", () => api.updateRelation(project.projectId, active.id, { waypoints }));
+      } finally { previewWaypoints.value = {} }
     }
   }
 
@@ -250,40 +310,55 @@ export function useCanvasEditor() {
     viewBox.value = { x: point.x - width * ratioX, y: point.y - height * ratioY, width, height };
   }
 
-  function startConnect(event: PointerEvent, layerId: string, port: PortName) {
+  async function startConnect(event: PointerEvent, layerId: string, port: PortName) {
+    event.preventDefault();
     event.stopPropagation();
     const layout = layouts.value.get(layerId);
     if (!layout) return;
-    connect.value = { layerId, port, start: portHandlePoint(layout, port) };
+    if (connect.value) {
+      const source = connect.value;
+      if (source.layerId !== layerId) {
+        connect.value = null;
+        portSnap.value = null;
+        relationSnap.value = null;
+        app.mode = "select";
+        await graphStore.createRelationExpanded({
+          parent_layer_id: source.layerId, child_layer_id: layerId, source_port: source.port, target_port: port,
+          relation_style_id: reference.selectedRelationStyleId || null,
+        });
+      } else {
+        connect.value = { ...source, port, start: portHandlePoint(layout, port), pressed: false, moved: false };
+      }
+      return;
+    }
+    connect.value = {
+      layerId, port, start: portHandlePoint(layout, port), pointerId: event.pointerId,
+      originClient: { x: event.clientX, y: event.clientY }, pressed: true, moved: false,
+    };
     pointer.value = clientPoint(event);
+    app.select({ kind: "layer", id: layerId });
+    app.mode = "connect";
     capture(event);
-  }
-
-  async function finishPort(event: PointerEvent, layerId: string, port: PortName) {
-    event.stopPropagation();
-    if (!connect.value || connect.value.layerId === layerId) return;
-    const source = connect.value;
-    connect.value = null;
-    relationSnap.value = null;
-    await graphStore.createRelationExpanded({
-      parent_layer_id: source.layerId, child_layer_id: layerId, source_port: source.port, target_port: port,
-      relation_style_id: reference.selectedRelationStyleId || null,
-    });
   }
 
   async function finishConnect(_point: Point) {
     const source = connect.value;
+    const targetPort = portSnap.value;
     const target = relationSnap.value;
     connect.value = null;
+    portSnap.value = null;
     relationSnap.value = null;
-    if (source && target) await graphStore.mutateGraph("관계선 연결", () => api.createRelation(project.projectId, {
+    app.mode = "select";
+    if (source && targetPort) {
+      await graphStore.createRelationExpanded({
+        parent_layer_id: source.layerId, child_layer_id: targetPort.layerId,
+        source_port: source.port, target_port: targetPort.port,
+        relation_style_id: reference.selectedRelationStyleId || null,
+      });
+    } else if (source && target) await graphStore.mutateGraph("관계선 연결", () => api.createRelation(project.projectId, {
       parent_layer_id: source.layerId, child_layer_id: null, source_port: source.port,
       attached_relation_id: target.relationId, relation_style_id: reference.selectedRelationStyleId || null,
     }));
-  }
-
-  function relationPolyline(relation: Relation) {
-    return relationGeometry(relations.value.get(relation.id)!, layouts.value, relations.value).map((point) => `${point.x},${point.y}`).join(" ");
   }
   function layerLabel(layer: { name: string; step: string | null }) {
     return app.labelField === "step" ? layer.step?.trim() || layer.name : layer.name;
@@ -335,9 +410,9 @@ export function useCanvasEditor() {
 
   return {
     app, graphStore, project, svg, viewBox, snapEnabled, query, pointer, drag, marquee, previewLayouts, previewTexts,
-    previewWaypoints, connect, relationSnap, graph, raw, layouts, styles, relationStyles, selectedLayers,
+    previewWaypoints, connect, portSnap, relationSnap, relationPaths, graph, raw, layouts, styles, relationStyles, selectedLayers,
     selectedRelation, selectedTexts, ports, viewBoxString, portPoint, portHandlePoint, layerLabel, nodePointerDown, textPointerDown, canvasDown,
-    pointerMove, pointerUp, wheel, startConnect, finishPort, relationPolyline, relationAppearance, addWaypoint,
+    pointerMove, pointerUp, wheel, startConnect, relationAppearance, addWaypoint,
     waypointDown, deleteWaypoint, focusSearch, editLayer, fit, zoom,
   };
 }
