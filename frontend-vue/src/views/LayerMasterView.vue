@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { api } from "../api/client";
 import SpreadsheetGrid from "../components/grid/SpreadsheetGrid.vue";
+import { cloneJson } from "../domain/clone";
 import { useAppStore } from "../stores/app";
 import { useGraphStore } from "../stores/graph";
 import { useProjectStore } from "../stores/project";
@@ -55,7 +56,7 @@ async function createLayer() {
   const master = reference.layerMasters.find((row) => row.id === selected.value[0]);
   if (!master || !project.projectId) return;
   await graph.mutateGraph("Master에서 Layer 생성", () => api.createLayer(project.projectId, {
-    name: master.name, step: master.layer_number, metadata_json: { layer_master: structuredClone(master) },
+    name: master.name, step: master.layer_number, metadata_json: { layer_master: cloneJson(master) },
   }));
   app.view = "editor";
 }

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { isReactive, reactive } from "vue";
 import { describeErrorDetail } from "../src/api/client";
+import { cloneJson } from "../src/domain/clone";
 import {
   getClosestPointOnSegment, intersects, portHandlePoint, portPoint, relationGeometry, relationStroke, snap,
 } from "../src/domain/geometry";
@@ -22,6 +24,16 @@ function graph(): Graph {
     text_boxes: [], validation: { ok: true, issues: [] },
   };
 }
+
+describe("DTO cloning", () => {
+  it("clones Vue reactive graph data into a plain history snapshot", () => {
+    const source = reactive(graph());
+    const snapshot = cloneJson(source);
+    expect(isReactive(source)).toBe(true);
+    expect(isReactive(snapshot)).toBe(false);
+    expect(snapshot).toEqual(graph());
+  });
+});
 
 describe("display graph", () => {
   it("groups without mutating raw graph and removes duplicate display relations", () => {

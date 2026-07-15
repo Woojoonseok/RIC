@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { api } from "../../api/client";
+import { cloneJson } from "../../domain/clone";
 import { useAppStore } from "../../stores/app";
 import { useGraphStore } from "../../stores/graph";
 import { useProjectStore } from "../../stores/project";
@@ -23,7 +24,7 @@ async function addLayer() {
 }
 async function addLayerFromMaster(master: LayerMaster) {
   app.layerMasterPickerOpen = false;
-  const snapshot = structuredClone(master);
+  const snapshot = cloneJson(master);
   await graph.mutateGraph("Layer 정보에서 추가", () => api.createLayer(project.projectId, {
     name: master.name,
     step: master.layer_number,

@@ -1,16 +1,17 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
+import { cloneJson } from "../../domain/clone";
 import { parseTsv, toTsv } from "../../domain/tsv";
 
 export interface GridColumn { key: string; label: string; width?: number; readonly?: boolean }
 const props = defineProps<{ columns: GridColumn[]; rows: Array<Record<string, unknown>>; rowKey?: string; selectedRows?: string[]; emptyHint?: string }>();
 const emit = defineEmits<{ commit: [rows: Array<Record<string, unknown>>]; rowSelect: [id: string, additive: boolean]; addRow: [] }>();
-const draft = ref<Array<Record<string, unknown>>>(structuredClone(props.rows));
+const draft = ref<Array<Record<string, unknown>>>(cloneJson(props.rows));
 const active = ref({ row: 0, col: 0 });
 const anchor = ref({ row: 0, col: 0 });
 const editing = ref(false);
 const widths = ref<Record<string, number>>({});
-watch(() => props.rows, (rows) => { draft.value = structuredClone(rows) }, { deep: true });
+watch(() => props.rows, (rows) => { draft.value = cloneJson(rows) }, { deep: true });
 
 const selected = computed(() => ({
   r1: Math.min(active.value.row, anchor.value.row), r2: Math.max(active.value.row, anchor.value.row),
@@ -75,7 +76,7 @@ function autoFit(column: GridColumn) {
   widths.value[column.key] = Math.min(360, Math.max(72, longest * 9 + 28));
 }
 function editCell(row: number, col: number) { activate(row, col); editing.value = true; void nextTick(() => (document.querySelector(".sheet-cell.editing input") as HTMLInputElement | null)?.focus()) }
-function commit() { emit("commit", structuredClone(draft.value)) }
+function commit() { emit("commit", cloneJson(draft.value)) }
 </script>
 
 <template>
