@@ -360,6 +360,28 @@ export function useCanvasEditor() {
       attached_relation_id: target.relationId, relation_style_id: reference.selectedRelationStyleId || null,
     }));
   }
+  async function relationPointerDown(event: PointerEvent, relation: Relation) {
+    event.preventDefault();
+    event.stopPropagation();
+    const source = connect.value;
+    if (!source) {
+      app.select({ kind: "relation", id: relation.id }, event.ctrlKey || event.metaKey || event.shiftKey);
+      return;
+    }
+    connect.value = null;
+    portSnap.value = null;
+    relationSnap.value = null;
+    app.mode = "select";
+    if (source.layerId === relation.parent_layer_id || source.layerId === relation.child_layer_id) return;
+    await graphStore.mutateGraph("관계선 중간 연결", () => api.createRelation(project.projectId, {
+      parent_layer_id: source.layerId,
+      child_layer_id: null,
+      source_port: source.port,
+      target_port: relation.target_port,
+      attached_relation_id: relation.id,
+      relation_style_id: reference.selectedRelationStyleId || null,
+    }));
+  }
   function layerLabel(layer: { name: string; step: string | null }) {
     return app.labelField === "step" ? layer.step?.trim() || layer.name : layer.name;
   }
@@ -412,7 +434,7 @@ export function useCanvasEditor() {
     app, graphStore, project, svg, viewBox, snapEnabled, query, pointer, drag, marquee, previewLayouts, previewTexts,
     previewWaypoints, connect, portSnap, relationSnap, relationPaths, graph, raw, layouts, styles, relationStyles, selectedLayers,
     selectedRelation, selectedTexts, ports, viewBoxString, portPoint, portHandlePoint, layerLabel, nodePointerDown, textPointerDown, canvasDown,
-    pointerMove, pointerUp, wheel, startConnect, relationAppearance, addWaypoint,
+    pointerMove, pointerUp, wheel, startConnect, relationPointerDown, relationAppearance, addWaypoint,
     waypointDown, deleteWaypoint, focusSearch, editLayer, fit, zoom,
   };
 }

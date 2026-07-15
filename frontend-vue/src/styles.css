@@ -86,6 +86,34 @@ h1, h2, strong, .brand { font-family: "Manrope", sans-serif; }
 .reference-row input[type="checkbox"] { width: 18px; justify-self: center; }
 .reference-head { color: #667085; font-size: 11px; font-weight: 700; text-transform: uppercase; }
 .reference-head span { padding: 6px 8px; }
+.resource-tabs { display: flex; gap: 8px; max-width: 1500px; margin: 0 auto 14px; overflow-x: auto; padding-bottom: 2px; }
+.resource-tabs button { display: flex; align-items: center; gap: 9px; white-space: nowrap; background: #fff; }
+.resource-tabs button b { min-width: 24px; border-radius: 99px; background: #f2f4f7; padding: 2px 7px; color: #667085; font-size: 11px; }
+.resource-tabs button.active { border-color: #84adff; background: #eff4ff; color: #175cd3; }
+.resource-tabs button.active b { background: #d1e0ff; color: #175cd3; }
+.reference-workbench { padding: 0; overflow: hidden; }
+.reference-heading { padding: 18px 20px 4px; }
+.reference-heading small { display: block; margin-top: 4px; color: #667085; }
+.reference-heading .button-strip { flex-wrap: wrap; justify-content: flex-end; }
+.reference-search { width: 210px; }
+.reference-table { overflow: auto; padding: 0 20px 20px; }
+.reference-row { align-items: center; }
+.reference-row > input, .reference-row > select, .compact-color, .boolean-cell { min-width: 0; }
+.new-reference-row { margin-top: 3px; border-radius: 8px; background: #f5f8ff; box-shadow: inset 3px 0 #528bff; }
+.compact-color { display: grid; grid-template-columns: 40px minmax(80px, 1fr); gap: 5px; }
+.compact-color input[type="color"] { width: 40px; }
+.boolean-cell { display: flex; align-items: center; justify-content: center; gap: 7px; color: #475467; font-size: 12px; }
+.row-actions { display: flex; gap: 5px; }
+.row-actions button { flex: 1; padding-right: 8px; padding-left: 8px; }
+.primary.subtle { border-color: #b2ccff; background: #eff4ff; color: #175cd3; }
+.danger.ghost { border-color: transparent; background: transparent; }
+.reference-empty { padding: 48px 20px; color: #667085; text-align: center; }
+.status-pill.busy { background: #fffaeb; color: #b54708; }
+.layer-master-summary { display: flex; align-items: center; gap: 10px; max-width: 1500px; margin: 0 auto 10px; padding: 12px 16px; }
+.layer-master-summary > div:not(.button-strip) { display: grid; min-width: 92px; border-right: 1px solid #eaecf0; }
+.layer-master-summary b { font-size: 18px; }.layer-master-summary span { color: #667085; font-size: 11px; }
+.layer-master-summary .button-strip { margin-left: auto; }
+.sheet-help { max-width: 1500px; margin: 0 auto 10px; border: 1px solid #b2ddff; border-radius: 8px; background: #eff8ff; padding: 9px 12px; color: #175cd3; font-size: 12px; }
 .master-scroll { max-width: 100%; overflow: auto; }
 .master-table { width: max-content; min-width: 100%; border-collapse: collapse; }
 .master-table th { position: sticky; top: 0; z-index: 2; background: #f8fafc; color: #475467; font-size: 11px; text-align: left; }
@@ -218,6 +246,12 @@ h1, h2, strong, .brand { font-family: "Manrope", sans-serif; }
 .add-layer-caret { border-left: 0; border-radius: 0 8px 8px 0; padding-right: 8px; padding-left: 8px; }
 .add-layer-menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 30; display: grid; min-width: 190px; border: 1px solid #d0d5dd; border-radius: 9px; background: white; box-shadow: 0 12px 24px rgba(16,24,40,.14); padding: 6px; }
 .add-layer-menu button { border: 0; text-align: left; }
+.dropdown-backdrop { position: fixed; inset: 0; z-index: 70; background: transparent; }
+.add-layer-menu-floating { position: fixed; z-index: 80; width: 220px; }
+.add-layer-menu-floating button { padding: 10px 12px; }
+.add-layer-menu-floating button:hover { background: #f2f4f7; }
+.relation-group.connect-target .relation-line { filter: drop-shadow(0 0 3px rgba(23, 92, 211, .55)); }
+.relation-group.connect-target .relation-hit { cursor: crosshair; }
 .toolbar-field { display: flex; align-items: center; gap: 5px; color: #667085; font-size: 11px; }
 .toolbar-field select { width: 90px; }
 .color-field { display: flex; align-items: center; gap: 6px; }

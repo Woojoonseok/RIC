@@ -42,7 +42,14 @@ describe("display graph", () => {
     expect(display.layers).toHaveLength(3);
     expect(display.layers[0].name).toBe("A\nB");
     expect(display.relations).toHaveLength(1);
+    expect(display.layouts.find((row) => row.layer_id === "a")).toEqual(raw.layouts[0]);
     expect(raw.layers).toHaveLength(4);
+  });
+  it("keeps attached relations in the display graph", () => {
+    const raw = graph();
+    raw.relations.push({ ...relation("branch", "d", null), attached_relation_id: "r1" });
+    const display = computeDisplayGraph(raw);
+    expect(display.relations.some((row) => row.id === "branch" && row.attached_relation_id === "r1")).toBe(true);
   });
 });
 

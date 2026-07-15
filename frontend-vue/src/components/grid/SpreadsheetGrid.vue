@@ -77,6 +77,13 @@ function autoFit(column: GridColumn) {
 }
 function editCell(row: number, col: number) { activate(row, col); editing.value = true; void nextTick(() => (document.querySelector(".sheet-cell.editing input") as HTMLInputElement | null)?.focus()) }
 function commit() { emit("commit", cloneJson(draft.value)) }
+function addDraftRow() {
+  draft.value.push(Object.fromEntries(props.columns.map((column) => [column.key, ""])));
+  active.value = { row: draft.value.length - 1, col: 0 };
+  anchor.value = { ...active.value };
+  emit("addRow");
+}
+defineExpose({ addDraftRow });
 </script>
 
 <template>
@@ -97,7 +104,7 @@ function commit() { emit("commit", cloneJson(draft.value)) }
     <div v-if="!draft.length" class="sheet-empty">{{ emptyHint || '행이 없습니다.' }}</div>
   </div>
   <div class="sheet-actions">
-    <button type="button" @click="draft.push(Object.fromEntries(columns.map((column) => [column.key, '']))); emit('addRow')">행 추가</button>
+    <button type="button" @click="addDraftRow">행 추가</button>
     <button type="button" class="primary" @click="commit">변경사항 저장</button>
   </div>
 </template>

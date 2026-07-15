@@ -123,12 +123,31 @@ def test_pending_group_merge_and_split(client: TestClient) -> None:
     assert promoted.status_code == 200, promoted.text
     assert any(row["same_group"] == "ETCH" for row in promoted.json()["relations"])
 
+    resized = client.patch(
+        f"/api/projects/{project_id}/graph/layers/{first}/layout",
+        json={"x": 40, "y": 60, "width": 240, "height": 96},
+    )
+    assert resized.status_code == 200, resized.text
+    graph_before_merge = client.get(f"/api/projects/{project_id}/graph")
+    assert graph_before_merge.status_code == 200, graph_before_merge.text
+    before_merge = {
+        row["layer_id"]: (row["x"], row["y"], row["width"], row["height"])
+        for row in graph_before_merge.json()["layouts"]
+        if row["layer_id"] in {first, second, third}
+    }
+
     extended = client.post(
         f"/api/projects/{project_id}/graph/layers/merge",
         json={"layer_ids": [first, third]},
     )
     assert extended.status_code == 200, extended.text
     assert len([row for row in extended.json()["relations"] if row["same_group"]]) == 2
+    after_merge = {
+        row["layer_id"]: (row["x"], row["y"], row["width"], row["height"])
+        for row in extended.json()["layouts"]
+        if row["layer_id"] in {first, second, third}
+    }
+    assert after_merge == before_merge
     split = client.post(f"/api/projects/{project_id}/graph/layers/{first}/split", json={})
     assert split.status_code == 200, split.text
     assert not any(row["same_group"] for row in split.json()["relations"])

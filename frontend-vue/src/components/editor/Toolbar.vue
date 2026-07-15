@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import { api } from "../../api/client";
 import { cloneJson } from "../../domain/clone";
 import { useAppStore } from "../../stores/app";
@@ -14,6 +14,24 @@ const graph = useGraphStore();
 const project = useProjectStore();
 const reference = useReferenceStore();
 const addMenuOpen = ref(false);
+const addMenuButton = ref<HTMLButtonElement | null>(null);
+const addMenuPosition = ref({ top: "0px", left: "0px" });
+
+async function toggleAddMenu() {
+  addMenuOpen.value = !addMenuOpen.value;
+  if (!addMenuOpen.value) return;
+  await nextTick();
+  const rect = addMenuButton.value?.getBoundingClientRect();
+  if (!rect) return;
+  addMenuPosition.value = {
+    top: `${rect.bottom + 6}px`,
+    left: `${Math.max(8, Math.min(rect.right - 220, window.innerWidth - 228))}px`,
+  };
+}
+function closeAddMenu() { addMenuOpen.value = false }
+function onKeyDown(event: KeyboardEvent) { if (event.key === "Escape") closeAddMenu() }
+onMounted(() => window.addEventListener("keydown", onKeyDown));
+onBeforeUnmount(() => window.removeEventListener("keydown", onKeyDown));
 
 async function addLayer() {
   const index = (graph.rawGraph?.layers.length ?? 0) + 1;
@@ -36,6 +54,18 @@ async function addLayerFromMaster(master: LayerMaster) {
 }
 async function addText() { await graph.mutateGraph("텍스트 추가", () => api.createText(project.projectId, { text: "Text", x: 180, y: 160 })) }
 function selectAll() { app.selection = graph.displayGraph?.layers.map((layer) => ({ kind: "layer" as const, id: layer.id })) ?? [] }
+async function mergeSelected() {
+  const layerIds = [...app.selectedLayerIds];
+  if (layerIds.length < 2) return;
+  await graph.mutateGraph("Layer 병합", () => api.merge(project.projectId, { layer_ids: layerIds }));
+  app.selection = [{ kind: "layer", id: graph.anchorByLayerId[layerIds[0]] ?? layerIds[0] }];
+}
+async function splitSelected() {
+  const layerId = app.selectedSplitLayerId;
+  if (!layerId) return;
+  await graph.mutateGraph("Layer 분할", () => api.split(project.projectId, layerId));
+  app.selection = [{ kind: "layer", id: layerId }];
+}
 </script>
 
 <template>
@@ -49,16 +79,22 @@ function selectAll() { app.selection = graph.displayGraph?.layers.map((layer) =>
     <button v-for="item in (['select','connect','text'] as const)" :key="item" :class="{ active: app.mode === item }" @click="app.mode = item">{{ item[0].toUpperCase() + item.slice(1) }}</button>
     <span class="divider"/>
     <div class="add-layer-split">
-      <button @click="addLayer">Add Layer</button><button class="add-layer-caret" @click="addMenuOpen = !addMenuOpen">▾</button>
-      <div v-if="addMenuOpen" class="add-layer-menu"><button @click="addLayer(); addMenuOpen = false">빈 Layer 추가</button><button @click="app.layerMasterPickerOpen = true; addMenuOpen = false">Layer정보에서 가져오기</button></div>
+      <button @click="addLayer">Add Layer</button><button ref="addMenuButton" class="add-layer-caret" aria-label="Add layer options" :aria-expanded="addMenuOpen" @click="toggleAddMenu">▾</button>
     </div>
     <button @click="addText">Add Text</button>
     <button :disabled="!graph.displayGraph?.layers.length" @click="selectAll">Select All</button>
-    <button :disabled="app.selectedLayerIds.length < 2" @click="graph.mutateGraph('Layer 병합', () => api.merge(project.projectId, { layer_ids: app.selectedLayerIds }))">Merge</button>
-    <button :disabled="!app.selectedSplitLayerId" @click="graph.mutateGraph('Layer 분할', () => api.split(project.projectId, app.selectedSplitLayerId!))">Split</button>
+    <button :disabled="app.selectedLayerIds.length < 2" title="선택한 Layer를 첫 번째 Layer 크기로 묶습니다" @click="mergeSelected">Merge</button>
+    <button :disabled="!app.selectedSplitLayerId" title="병합 그룹을 원래 Layer로 분리합니다" @click="splitSelected">Split</button>
     <button :disabled="!project.projectId" @click="graph.mutateGraph('자동 배치', () => api.autoLayout(project.projectId))">Auto Layout</button>
     <button class="danger" :disabled="!app.selection.length" @click="graph.deleteSelection">Delete</button>
     <button @click="graph.reloadGraph">Refresh</button>
   </div>
+  <Teleport to="body">
+    <div v-if="addMenuOpen" class="dropdown-backdrop" @pointerdown="closeAddMenu"/>
+    <div v-if="addMenuOpen" class="add-layer-menu add-layer-menu-floating" :style="addMenuPosition" role="menu">
+      <button role="menuitem" @click="addLayer(); closeAddMenu()">빈 Layer 추가</button>
+      <button role="menuitem" @click="app.layerMasterPickerOpen = true; closeAddMenu()">Layer 정보에서 가져오기</button>
+    </div>
+  </Teleport>
   <LayerMasterPickerModal :open="app.layerMasterPickerOpen" @close="app.layerMasterPickerOpen = false" @confirm="addLayerFromMaster"/>
 </template>
