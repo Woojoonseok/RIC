@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { isReactive, reactive } from "vue";
 import { describeErrorDetail } from "../src/api/client";
+import { cloneJson } from "../src/domain/clone";
 import {
   getClosestPointOnSegment, intersects, portHandlePoint, portPoint, relationGeometry, relationStroke, snap,
 } from "../src/domain/geometry";
@@ -23,6 +25,16 @@ function graph(): Graph {
   };
 }
 
+describe("DTO cloning", () => {
+  it("clones Vue reactive graph data into a plain history snapshot", () => {
+    const source = reactive(graph());
+    const snapshot = cloneJson(source);
+    expect(isReactive(source)).toBe(true);
+    expect(isReactive(snapshot)).toBe(false);
+    expect(snapshot).toEqual(graph());
+  });
+});
+
 describe("display graph", () => {
   it("groups without mutating raw graph and removes duplicate display relations", () => {
     const raw = graph();
@@ -30,7 +42,14 @@ describe("display graph", () => {
     expect(display.layers).toHaveLength(3);
     expect(display.layers[0].name).toBe("A\nB");
     expect(display.relations).toHaveLength(1);
+    expect(display.layouts.find((row) => row.layer_id === "a")).toEqual(raw.layouts[0]);
     expect(raw.layers).toHaveLength(4);
+  });
+  it("keeps attached relations in the display graph", () => {
+    const raw = graph();
+    raw.relations.push({ ...relation("branch", "d", null), attached_relation_id: "r1" });
+    const display = computeDisplayGraph(raw);
+    expect(display.relations.some((row) => row.id === "branch" && row.attached_relation_id === "r1")).toBe(true);
   });
 });
 

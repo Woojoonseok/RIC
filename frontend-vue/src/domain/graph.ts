@@ -1,49 +1,37 @@
-import type { Graph, Layer, Layout, Relation, RelationCreate } from "../types";
+import type { Graph, Layer, Relation, RelationCreate } from "../types";
 
-class UnionFind {
-  private parent = new Map<string, string>();
-  add(id: string) { if (!this.parent.has(id)) this.parent.set(id, id) }
-  find(id: string): string {
-    this.add(id);
-    const parent = this.parent.get(id)!;
-    if (parent !== id) this.parent.set(id, this.find(parent));
-    return this.parent.get(id)!;
+function orderedGroups(raw: Graph) {
+  const groups = new Map<string, string[]>();
+  for (const relation of raw.relations) {
+    if (!relation.same_group) continue;
+    const members = groups.get(relation.same_group) ?? [];
+    for (const layerId of [relation.parent_layer_id, relation.child_layer_id]) {
+      if (layerId && !members.includes(layerId)) members.push(layerId);
+    }
+    groups.set(relation.same_group, members);
   }
-  union(a: string, b: string) { this.parent.set(this.find(b), this.find(a)) }
+  return groups;
 }
 
 export function computeDisplayGraph(raw: Graph): Graph {
-  const dsu = new UnionFind();
-  const groupedIds = new Set<string>();
-  for (const relation of raw.relations) {
-    if (relation.same_group && relation.parent_layer_id && relation.child_layer_id) {
-      dsu.union(relation.parent_layer_id, relation.child_layer_id);
-      groupedIds.add(relation.parent_layer_id);
-      groupedIds.add(relation.child_layer_id);
-    }
-  }
-  if (!groupedIds.size) return raw;
+  const groups = orderedGroups(raw);
+  if (!groups.size) return raw;
 
-  const groups = new Map<string, string[]>();
-  for (const layer of raw.layers) {
-    if (!groupedIds.has(layer.id)) continue;
-    const root = dsu.find(layer.id);
-    groups.set(root, [...(groups.get(root) ?? []), layer.id]);
-  }
+  const groupByLayerId = new Map<string, string[]>();
   const anchorById = new Map<string, string>();
   const hidden = new Set<string>();
   for (const ids of groups.values()) {
     const anchor = ids[0];
     for (const id of ids) {
+      groupByLayerId.set(id, ids);
       anchorById.set(id, anchor);
       if (id !== anchor) hidden.add(id);
     }
   }
 
   const layerById = new Map(raw.layers.map((layer) => [layer.id, layer]));
-  const layoutById = new Map(raw.layouts.map((layout) => [layout.layer_id, layout]));
   const layers: Layer[] = raw.layers.filter((layer) => !hidden.has(layer.id)).map((layer) => {
-    const ids = groups.get(dsu.find(layer.id));
+    const ids = groupByLayerId.get(layer.id);
     if (!ids) return layer;
     const members = ids.map((id) => layerById.get(id)).filter((row): row is Layer => Boolean(row));
     return {
@@ -58,28 +46,21 @@ export function computeDisplayGraph(raw: Graph): Graph {
       },
     };
   });
-  const layouts: Layout[] = raw.layouts.filter((layout) => !hidden.has(layout.layer_id)).map((layout) => {
-    const ids = groups.get(dsu.find(layout.layer_id));
-    if (!ids) return layout;
-    const rows = ids.map((id) => layoutById.get(id)).filter((row): row is Layout => Boolean(row));
-    const minX = Math.min(...rows.map((row) => row.x));
-    const minY = Math.min(...rows.map((row) => row.y));
-    return {
-      ...layout,
-      x: minX,
-      y: minY,
-      width: Math.max(180, Math.max(...rows.map((row) => row.x + row.width)) - minX),
-      height: Math.max(72, Math.max(...rows.map((row) => row.y + row.height)) - minY),
-    };
-  });
+  // A merge is a presentation grouping, not a geometry mutation. The first
+  // selected layer is the group anchor and keeps its exact position and size.
+  const layouts = raw.layouts.filter((layout) => !hidden.has(layout.layer_id));
   const seen = new Set<string>();
   const relations: Relation[] = [];
   for (const relation of raw.relations) {
-    if (relation.same_group || !relation.parent_layer_id || !relation.child_layer_id) continue;
-    const parent = anchorById.get(relation.parent_layer_id) ?? relation.parent_layer_id;
-    const child = anchorById.get(relation.child_layer_id) ?? relation.child_layer_id;
-    if (parent === child) continue;
-    const key = `${parent}:${child}:${relation.instance ?? ""}`;
+    if (relation.same_group) continue;
+    const parent = relation.parent_layer_id
+      ? (anchorById.get(relation.parent_layer_id) ?? relation.parent_layer_id)
+      : null;
+    const child = relation.child_layer_id
+      ? (anchorById.get(relation.child_layer_id) ?? relation.child_layer_id)
+      : null;
+    if (parent && child && parent === child) continue;
+    const key = `${parent ?? ""}:${child ?? ""}:${relation.instance ?? ""}:${relation.attached_relation_id ?? ""}`;
     if (seen.has(key)) continue;
     seen.add(key);
     relations.push({ ...relation, parent_layer_id: parent, child_layer_id: child });
@@ -105,7 +86,7 @@ export function groupMaps(raw: Graph) {
     groupToLayerIds[group] = values;
   }
   for (const ids of Object.values(groupToLayerIds)) {
-    const anchor = raw.layers.find((layer) => ids.includes(layer.id))?.id;
+    const anchor = ids[0];
     if (anchor) ids.forEach((id) => { anchorByLayerId[id] = anchor });
   }
   return { anchorByLayerId, groupToLayerIds };

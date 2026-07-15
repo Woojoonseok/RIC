@@ -453,11 +453,8 @@ def merge_layers(
     payload: schemas.LayerMergeRequest,
     db: Session = Depends(get_db),
 ) -> schemas.GraphRead:
-    import sys
-    print(f"[MERGE] Starting merge_layers with payload: {payload}", file=sys.stderr)
     crud.get_project_or_404(db, project_id)
     layer_ids = list(dict.fromkeys(payload.layer_ids))
-    print(f"[MERGE] layer_ids: {layer_ids}", file=sys.stderr)
     if len(layer_ids) < 2:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Select at least two layers to merge")
 
@@ -479,7 +476,6 @@ def merge_layers(
         models.LayerRelation.same_group != "",
     ).all()
 
-    print(f"[MERGE] all_group_rels count: {len(all_group_rels)}", file=sys.stderr)
     for rel in all_group_rels:
         if rel.parent_layer_id in layer_ids:
             group_membership[rel.parent_layer_id] = rel.same_group
@@ -487,9 +483,6 @@ def merge_layers(
             group_membership[rel.child_layer_id] = rel.same_group
 
     unique_groups = set(group_membership.values())
-    print(f"[MERGE] group_membership: {group_membership}", file=sys.stderr)
-    print(f"[MERGE] unique_groups: {unique_groups}", file=sys.stderr)
-    print(f"[MERGE] layer_ids count: {len(layer_ids)}, grouped count: {len(group_membership)}", file=sys.stderr)
 
     # Validation: Only allow:
     # 1. Individual (ungrouped) + Individual = OK (create new group)
@@ -500,17 +493,13 @@ def merge_layers(
 
     ungrouped_count = len(layer_ids) - len(group_membership)
 
-    print(f"[MERGE] unique_groups count: {len(unique_groups)}, ungrouped_count: {ungrouped_count}", file=sys.stderr)
-
     # Check for N:N merge (multiple groups)
     if len(unique_groups) > 1:
-        print(f"[MERGE] ERROR: Cannot merge {len(unique_groups)} different groups", file=sys.stderr)
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                           detail="두 개 이상의 그룹끼리는 병합할 수 없습니다. 그룹과 개별 레이어 한 개씩만 병합해주세요.")
 
     # Check for group + multiple individuals
     if unique_groups and ungrouped_count > 1:
-        print(f"[MERGE] ERROR: Cannot merge group with {ungrouped_count} individual layers", file=sys.stderr)
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                           detail="그룹과 여러 개의 개별 레이어는 동시에 병합할 수 없습니다. 한 번에 하나씩 추가해주세요.")
 
@@ -518,7 +507,6 @@ def merge_layers(
     if group_membership:
         # Use the existing group (only one group at this point due to validations above)
         next_group = next(iter(unique_groups))
-        print(f"[MERGE] Using existing group: {next_group}", file=sys.stderr)
     else:
         # Find next available group number
         all_groups = db.query(models.LayerRelation.same_group).filter(
@@ -533,10 +521,18 @@ def merge_layers(
             except ValueError:
                 pass
         next_group = str(max(group_numbers) + 1) if group_numbers else "1"
-        print(f"[MERGE] Creating new group: {next_group}", file=sys.stderr)
 
     anchor_id = layer_ids[0]
-    for other_id in layer_ids[1:]:
+    if group_membership:
+        anchor_id = next(
+            (
+                relation.parent_layer_id
+                for relation in all_group_rels
+                if relation.same_group == next_group and relation.parent_layer_id is not None
+            ),
+            anchor_id,
+        )
+    for other_id in (layer_id for layer_id in layer_ids if layer_id != anchor_id):
         existing = db.query(models.LayerRelation).filter(
             models.LayerRelation.project_id == project_id,
             ((models.LayerRelation.parent_layer_id == anchor_id) & (models.LayerRelation.child_layer_id == other_id)) |
@@ -556,25 +552,9 @@ def merge_layers(
             )
             db.add(new_rel)
 
-    # Align layouts of all group members to the group bounding box
-    layout_rows = (
-        db.query(models.GraphLayout)
-        .filter(models.GraphLayout.project_id == project_id, models.GraphLayout.layer_id.in_(layer_ids))
-        .all()
-    )
-    if layout_rows:
-        min_x = min(layout.x for layout in layout_rows)
-        min_y = min(layout.y for layout in layout_rows)
-        max_x = max(layout.x + layout.width for layout in layout_rows)
-        max_y = max(layout.y + layout.height for layout in layout_rows)
-        new_w = max(180, max_x - min_x)
-        new_h = max(72, max_y - min_y)
-        
-        for layout in layout_rows:
-            layout.x = min_x
-            layout.y = min_y
-            layout.width = new_w
-            layout.height = new_h
+    # Grouping must not rewrite layout geometry. The client renders the first
+    # selected layer as the anchor and split restores every member exactly where
+    # it was before the merge.
 
     try:
         db.flush()

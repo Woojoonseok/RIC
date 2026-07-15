@@ -1,6 +1,7 @@
 import { computed, ref } from "vue";
 import { defineStore } from "pinia";
 import { api } from "../api/client";
+import { cloneJson } from "../domain/clone";
 import { computeDisplayGraph, expandRelationCandidates, graphRestoreFromGraph, groupMaps } from "../domain/graph";
 import type { Graph, RelationCreate } from "../types";
 import { useAppStore } from "./app";
@@ -8,7 +9,7 @@ import { useProjectStore } from "./project";
 import { useReferenceStore } from "./reference";
 
 const HISTORY_LIMIT = 40;
-const clone = <T>(value: T): T => structuredClone(value);
+const clone = cloneJson;
 
 export const useGraphStore = defineStore("graph", () => {
   const app = useAppStore();
