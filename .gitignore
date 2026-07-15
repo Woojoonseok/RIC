@@ -10,3 +10,6 @@ backend/.venv/
 backend/*.egg-info/
 frontend/node_modules/
 frontend/dist/
+frontend-vue/node_modules/
+frontend-vue/dist/
+.pnpm-store/

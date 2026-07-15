@@ -22,8 +22,8 @@ def create_project(db: Session, payload: schemas.ProjectCreate) -> models.Projec
     project = models.Project(name=payload.name, description=payload.description)
     db.add(project)
     db.flush()
-    ensure_default_relation_styles(db, project.id)
-    ensure_default_box_presets(db, project.id)
+    ensure_default_relation_styles(db)
+    ensure_default_box_presets(db)
     db.commit()
     db.refresh(project)
     return project
@@ -39,7 +39,10 @@ def create_layer(db: Session, project_id: uuid.UUID, payload: schemas.LayerCreat
         layer_property=payload.layer_property,
         align=payload.align,
         align_side=payload.align_side,
+        description=payload.description,
         metadata_json=payload.metadata_json,
+        box_preset_id=preset.id if preset else None,
+        pending_group=payload.pending_group,
     )
     db.add(layer)
     db.flush()
@@ -85,14 +88,14 @@ def get_relation_or_404(db: Session, project_id: uuid.UUID, relation_id: uuid.UU
 
 def get_relation_style_or_404(db: Session, project_id: uuid.UUID, style_id: uuid.UUID) -> models.RelationStyle:
     relation_style = db.get(models.RelationStyle, style_id)
-    if relation_style is None or relation_style.project_id != project_id:
+    if relation_style is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Relation style not found")
     return relation_style
 
 
 def get_box_preset_or_404(db: Session, project_id: uuid.UUID, preset_id: uuid.UUID) -> models.BoxPreset:
     preset = db.get(models.BoxPreset, preset_id)
-    if preset is None or preset.project_id != project_id:
+    if preset is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Box preset not found")
     return preset
 
@@ -108,8 +111,7 @@ def read_graph(db: Session, project_id: uuid.UUID) -> schemas.GraphRead:
     project = get_project_or_404(db, project_id)
     relation_styles = (
         db.query(models.RelationStyle)
-        .filter(models.RelationStyle.project_id == project_id)
-        .order_by(models.RelationStyle.sort_order, models.RelationStyle.created_at)
+        .order_by(models.RelationStyle.sort_order, models.RelationStyle.name)
         .all()
     )
     layers = db.query(models.Layer).filter(models.Layer.project_id == project_id).order_by(models.Layer.created_at).all()
@@ -117,12 +119,11 @@ def read_graph(db: Session, project_id: uuid.UUID) -> schemas.GraphRead:
     styles = db.query(models.ShapeStyle).filter(models.ShapeStyle.project_id == project_id).all()
     box_presets = (
         db.query(models.BoxPreset)
-        .filter(models.BoxPreset.project_id == project_id)
-        .order_by(models.BoxPreset.sort_order, models.BoxPreset.created_at)
+        .order_by(models.BoxPreset.sort_order, models.BoxPreset.name)
         .all()
     )
     relations = db.query(models.LayerRelation).filter(models.LayerRelation.project_id == project_id).all()
-    text_boxes = db.query(models.TextBox).filter(models.TextBox.project_id == project_id).order_by(models.TextBox.created_at).all()
+    text_boxes = db.query(models.TextBox).filter(models.TextBox.project_id == project_id).order_by(models.TextBox.id).all()
     return schemas.GraphRead(
         project=project,
         layers=layers,

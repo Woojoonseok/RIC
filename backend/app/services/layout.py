@@ -100,7 +100,7 @@ def apply_auto_layout(db: Session, project_id: uuid.UUID) -> None:
                 if layout is None:
                     layout = models.GraphLayout(project_id=project_id, layer_id=lid)
                     db.add(layout)
-                layout.x = 120 + rank * 280
-                layout.y = 100 + group_index * 140
+                layout.x = 120 + rank * 260
+                layout.y = 100 + group_index * 160
                 layout.width = layout.width or 180
                 layout.height = layout.height or 72

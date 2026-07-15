@@ -16,6 +16,11 @@ from ..services.validation import validate_project_graph
 router = APIRouter(prefix="/api/projects/{project_id}/graph", tags=["graph"])
 
 
+def _blocking_issues(report: schemas.ValidationReport) -> list[schemas.ValidationIssue]:
+    draft_codes = {"relation_parent_missing", "relation_child_missing"}
+    return [issue for issue in report.issues if issue.severity == "error" and issue.code not in draft_codes]
+
+
 @router.get("", response_model=schemas.GraphRead)
 def read_graph(project_id: uuid.UUID, db: Session = Depends(get_db)) -> schemas.GraphRead:
     return crud.read_graph(db, project_id)
@@ -56,6 +61,25 @@ def _drop_merge_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
     return next_metadata
 
 
+def _group_members(db: Session, project_id: uuid.UUID, layer_id: uuid.UUID) -> tuple[str | None, set[uuid.UUID]]:
+    relations = db.query(models.LayerRelation).filter(
+        models.LayerRelation.project_id == project_id,
+        models.LayerRelation.same_group.is_not(None),
+        models.LayerRelation.same_group != "",
+    ).all()
+    label = next((row.same_group for row in relations if row.parent_layer_id == layer_id or row.child_layer_id == layer_id), None)
+    if not label:
+        return None, {layer_id}
+    members: set[uuid.UUID] = set()
+    for row in relations:
+        if row.same_group == label:
+            if row.parent_layer_id:
+                members.add(row.parent_layer_id)
+            if row.child_layer_id:
+                members.add(row.child_layer_id)
+    return label, members or {layer_id}
+
+
 def _dump_layer(layer: models.Layer, layout: models.GraphLayout | None, style: models.ShapeStyle | None) -> dict[str, Any]:
     return {
         "id": str(layer.id),
@@ -64,7 +88,10 @@ def _dump_layer(layer: models.Layer, layout: models.GraphLayout | None, style: m
         "layer_property": layer.layer_property,
         "align": layer.align,
         "align_side": layer.align_side,
+        "description": layer.description,
         "metadata_json": layer.metadata_json or {},
+        "box_preset_id": str(layer.box_preset_id) if layer.box_preset_id else None,
+        "pending_group": layer.pending_group,
         "layout": {
             "x": layout.x,
             "y": layout.y,
@@ -85,12 +112,16 @@ def _dump_layer(layer: models.Layer, layout: models.GraphLayout | None, style: m
 def _dump_relation(relation: models.LayerRelation) -> dict[str, Any]:
     return {
         "id": str(relation.id),
-        "parent_layer_id": str(relation.parent_layer_id),
-        "child_layer_id": str(relation.child_layer_id),
+        "parent_layer_id": str(relation.parent_layer_id) if relation.parent_layer_id else None,
+        "child_layer_id": str(relation.child_layer_id) if relation.child_layer_id else None,
         "relation_type": relation.relation_type,
+        "instance": relation.instance,
         "relation_style_id": str(relation.relation_style_id) if relation.relation_style_id else None,
         "source_port": relation.source_port,
         "target_port": relation.target_port,
+        "same_group": relation.same_group,
+        "attached_relation_id": str(relation.attached_relation_id) if relation.attached_relation_id else None,
+        "waypoints": relation.waypoints or [],
     }
 
 
@@ -106,8 +137,6 @@ def restore_graph(
     db.query(models.GraphLayout).filter(models.GraphLayout.project_id == project_id).delete(synchronize_session=False)
     db.query(models.ShapeStyle).filter(models.ShapeStyle.project_id == project_id).delete(synchronize_session=False)
     db.query(models.TextBox).filter(models.TextBox.project_id == project_id).delete(synchronize_session=False)
-    db.query(models.RelationStyle).filter(models.RelationStyle.project_id == project_id).delete(synchronize_session=False)
-    db.query(models.BoxPreset).filter(models.BoxPreset.project_id == project_id).delete(synchronize_session=False)
     db.query(models.Layer).filter(models.Layer.project_id == project_id).delete(synchronize_session=False)
     db.flush()
     db.expunge_all()
@@ -121,38 +150,19 @@ def restore_graph(
             layer_property=layer.layer_property,
             align=layer.align,
             align_side=layer.align_side,
+            description=layer.description,
             metadata_json=layer.metadata_json,
-        ))
-    for style in payload.relation_styles:
-        db.add(models.RelationStyle(
-            id=style.id,
-            project_id=project_id,
-            name=style.name,
-            stroke_color=style.stroke_color,
-            stroke_width=style.stroke_width,
-            line_pattern=style.line_pattern,
-            marker_type=style.marker_type,
-            sort_order=style.sort_order,
-        ))
-    for preset in payload.box_presets:
-        db.add(models.BoxPreset(
-            id=preset.id,
-            project_id=project_id,
-            name=preset.name,
-            fill_color=preset.fill_color,
-            stroke_color=preset.stroke_color,
-            text_color=preset.text_color,
-            font_size=preset.font_size,
-            width=preset.width,
-            height=preset.height,
-            stroke_width=preset.stroke_width,
-            is_default=preset.is_default,
-            sort_order=preset.sort_order,
+            box_preset_id=(
+                layer.box_preset_id
+                if layer.box_preset_id is not None and db.get(models.BoxPreset, layer.box_preset_id)
+                else None
+            ),
+            pending_group=layer.pending_group,
         ))
     db.flush()
 
     layer_ids = {layer.id for layer in payload.layers}
-    relation_style_ids = {style.id for style in payload.relation_styles}
+    relation_style_ids = {style.id for style in db.query(models.RelationStyle).all()}
     for layout in payload.layouts:
         if layout.layer_id in layer_ids:
             db.add(models.GraphLayout(
@@ -194,30 +204,46 @@ def restore_graph(
         ))
     db.flush()
 
-    relation_keys: set[tuple[uuid.UUID, uuid.UUID]] = set()
+    relation_keys: set[tuple[uuid.UUID | None, uuid.UUID | None, str | None]] = set()
+    restored_relations: dict[uuid.UUID, models.LayerRelation] = {}
+    requested_attachments: dict[uuid.UUID, uuid.UUID] = {}
     for relation in payload.relations:
-        if relation.parent_layer_id not in layer_ids or relation.child_layer_id not in layer_ids:
+        if relation.parent_layer_id is not None and relation.parent_layer_id not in layer_ids:
             continue
-        if relation.parent_layer_id == relation.child_layer_id:
+        if relation.child_layer_id is not None and relation.child_layer_id not in layer_ids:
             continue
-        key = (relation.parent_layer_id, relation.child_layer_id)
+        if relation.parent_layer_id is not None and relation.parent_layer_id == relation.child_layer_id:
+            continue
+        key = (relation.parent_layer_id, relation.child_layer_id, relation.instance)
         if key in relation_keys:
             continue
         relation_keys.add(key)
-        db.add(models.LayerRelation(
+        row = models.LayerRelation(
             id=relation.id,
             project_id=project_id,
             parent_layer_id=relation.parent_layer_id,
             child_layer_id=relation.child_layer_id,
             relation_type=relation.relation_type,
+            instance=relation.instance,
             relation_style_id=relation.relation_style_id if relation.relation_style_id in relation_style_ids else None,
             source_port=relation.source_port,
             target_port=relation.target_port,
-        ))
+            same_group=relation.same_group,
+            attached_relation_id=None,
+            waypoints=relation.waypoints,
+        )
+        db.add(row)
+        restored_relations[row.id] = row
+        if relation.attached_relation_id:
+            requested_attachments[row.id] = relation.attached_relation_id
 
     db.flush()
+    for relation_id, attached_id in requested_attachments.items():
+        if attached_id in restored_relations and attached_id != relation_id:
+            restored_relations[relation_id].attached_relation_id = attached_id
+    db.flush()
     report = validate_project_graph(db, project_id)
-    if not report.ok:
+    if _blocking_issues(report):
         db.rollback()
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=[issue.model_dump(mode="json") for issue in report.issues])
     db.commit()
@@ -280,6 +306,64 @@ def update_layer(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Layer name already exists") from exc
     db.refresh(layer)
     return layer
+
+
+@router.patch("/layers/{layer_id}/group", response_model=schemas.GraphRead)
+def update_layer_group(
+    project_id: uuid.UUID,
+    layer_id: uuid.UUID,
+    payload: schemas.LayerGroupUpdate,
+    db: Session = Depends(get_db),
+) -> schemas.GraphRead:
+    layer = crud.get_layer_or_404(db, project_id, layer_id)
+    current_label, _members = _group_members(db, project_id, layer_id)
+    if current_label:
+        db.query(models.LayerRelation).filter(
+            models.LayerRelation.project_id == project_id,
+            models.LayerRelation.same_group == current_label,
+        ).delete(synchronize_session=False)
+
+    label = (payload.group or "").strip() or None
+    layer.pending_group = None
+    if label:
+        group_relation = db.query(models.LayerRelation).filter(
+            models.LayerRelation.project_id == project_id,
+            models.LayerRelation.same_group == label,
+        ).first()
+        pending = db.query(models.Layer).filter(
+            models.Layer.project_id == project_id,
+            models.Layer.pending_group == label,
+            models.Layer.id != layer_id,
+        ).order_by(models.Layer.created_at).first()
+        anchor_id = None
+        if group_relation:
+            anchor_id = group_relation.parent_layer_id or group_relation.child_layer_id
+        elif pending:
+            anchor_id = pending.id
+            pending.pending_group = None
+
+        if anchor_id:
+            db.add(models.LayerRelation(
+                project_id=project_id,
+                parent_layer_id=anchor_id,
+                child_layer_id=layer_id,
+                relation_type="same_group",
+                instance=f"same_group:{label}:{layer_id}",
+                same_group=label,
+                source_port="right",
+                target_port="left",
+            ))
+        else:
+            layer.pending_group = label
+
+    db.flush()
+    report = validate_project_graph(db, project_id)
+    blocking = _blocking_issues(report)
+    if blocking:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=[issue.model_dump(mode="json") for issue in blocking])
+    db.commit()
+    return crud.read_graph(db, project_id)
 
 
 def _merge_layer_name(layers: list[models.Layer], override: str | None) -> str:
@@ -446,8 +530,11 @@ def merge_layers(
 ) -> schemas.GraphRead:
     crud.get_project_or_404(db, project_id)
     layer_ids = list(dict.fromkeys(payload.layer_ids))
-    if len(layer_ids) < 2:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Select at least two layers to merge")
+    if len(layer_ids) != 2:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Merge accepts two individual layers or one existing group and one individual layer",
+        )
 
     layer_rows = (
         db.query(models.Layer)
@@ -459,10 +546,14 @@ def merge_layers(
     if missing_ids:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Layer not found: {', '.join(missing_ids)}")
 
-    # Find next available group number
+    first_label, first_members = _group_members(db, project_id, layer_ids[0])
+    second_label, second_members = _group_members(db, project_id, layer_ids[1])
+    if first_label and second_label:
+        raise HTTPException(status_code=422, detail="Group-to-group merge is not allowed")
+
     existing_groups = db.query(models.LayerRelation.same_group).filter(
         models.LayerRelation.project_id == project_id,
-        models.LayerRelation.same_group != None,
+        models.LayerRelation.same_group.is_not(None),
         models.LayerRelation.same_group != ""
     ).all()
     group_numbers = []
@@ -471,53 +562,49 @@ def merge_layers(
             group_numbers.append(int(g[0]))
         except ValueError:
             pass
-    next_group = str(max(group_numbers) + 1) if group_numbers else "1"
-
-    anchor_id = layer_ids[0]
-    for other_id in layer_ids[1:]:
-        existing = db.query(models.LayerRelation).filter(
-            models.LayerRelation.project_id == project_id,
-            ((models.LayerRelation.parent_layer_id == anchor_id) & (models.LayerRelation.child_layer_id == other_id)) |
-            ((models.LayerRelation.parent_layer_id == other_id) & (models.LayerRelation.child_layer_id == anchor_id))
-        ).first()
-        if existing:
-            existing.same_group = next_group
-        else:
-            new_rel = models.LayerRelation(
-                project_id=project_id,
-                parent_layer_id=anchor_id,
-                child_layer_id=other_id,
-                relation_type="Same Group",
-                same_group=next_group,
-                source_port="right",
-                target_port="left"
-            )
-            db.add(new_rel)
+    group_label = first_label or second_label or (str(max(group_numbers) + 1) if group_numbers else "1")
+    existing_members = first_members if first_label else second_members if second_label else {layer_ids[0]}
+    new_member = layer_ids[1] if first_label or not second_label else layer_ids[0]
+    anchor_id = next(iter(existing_members))
+    db.add(models.LayerRelation(
+        project_id=project_id,
+        parent_layer_id=anchor_id,
+        child_layer_id=new_member,
+        relation_type="same_group",
+        instance=f"same_group:{group_label}",
+        same_group=group_label,
+        source_port="right",
+        target_port="left",
+    ))
+    all_member_ids = existing_members | {new_member}
+    db.query(models.Layer).filter(models.Layer.id.in_(all_member_ids)).update(
+        {"pending_group": None}, synchronize_session=False
+    )
 
     # Align layouts of all group members to the group bounding box
     layout_rows = (
         db.query(models.GraphLayout)
-        .filter(models.GraphLayout.project_id == project_id, models.GraphLayout.layer_id.in_(layer_ids))
+        .filter(models.GraphLayout.project_id == project_id, models.GraphLayout.layer_id.in_(all_member_ids))
         .all()
     )
     if layout_rows:
-        min_x = min(l.x for l in layout_rows)
-        min_y = min(l.y for l in layout_rows)
-        max_x = max(l.x + l.width for l in layout_rows)
-        max_y = max(l.y + l.height for l in layout_rows)
+        min_x = min(row.x for row in layout_rows)
+        min_y = min(row.y for row in layout_rows)
+        max_x = max(row.x + row.width for row in layout_rows)
+        max_y = max(row.y + row.height for row in layout_rows)
         new_w = max(180, max_x - min_x)
         new_h = max(72, max_y - min_y)
         
-        for l in layout_rows:
-            l.x = min_x
-            l.y = min_y
-            l.width = new_w
-            l.height = new_h
+        for row in layout_rows:
+            row.x = min_x
+            row.y = min_y
+            row.width = new_w
+            row.height = new_h
 
     try:
         db.flush()
         report = validate_project_graph(db, project_id)
-        if not report.ok:
+        if _blocking_issues(report):
             db.rollback()
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=[issue.model_dump(mode="json") for issue in report.issues])
         db.commit()
@@ -547,7 +634,7 @@ def split_layer(
         group_rels = db.query(models.LayerRelation).filter(
             models.LayerRelation.project_id == project_id,
             (models.LayerRelation.parent_layer_id == layer_id) | (models.LayerRelation.child_layer_id == layer_id),
-            models.LayerRelation.same_group != None,
+            models.LayerRelation.same_group.is_not(None),
             models.LayerRelation.same_group != ""
         ).all()
         if not group_rels:
@@ -560,6 +647,11 @@ def split_layer(
         ).all()
         for r in all_group_rels:
             db.delete(r)
+        db.flush()
+        report = validate_project_graph(db, project_id)
+        if _blocking_issues(report):
+            db.rollback()
+            raise HTTPException(status_code=422, detail=[issue.model_dump(mode="json") for issue in report.issues])
         db.commit()
         return crud.read_graph(db, project_id)
 
@@ -685,7 +777,7 @@ def split_layer(
     db.flush()
 
     existing_layer_ids = {row.id for row in db.query(models.Layer).filter(models.Layer.project_id == project_id).all()}
-    relation_style_ids = {row.id for row in db.query(models.RelationStyle).filter(models.RelationStyle.project_id == project_id).all()}
+    relation_style_ids = {row.id for row in db.query(models.RelationStyle).all()}
     existing_keys = {
         (relation.parent_layer_id, relation.child_layer_id)
         for relation in db.query(models.LayerRelation).filter(models.LayerRelation.project_id == project_id).all()
@@ -745,7 +837,7 @@ def split_layer(
     try:
         db.flush()
         report = validate_project_graph(db, project_id)
-        if not report.ok:
+        if _blocking_issues(report):
             db.rollback()
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=[issue.model_dump(mode="json") for issue in report.issues])
         db.commit()
@@ -762,7 +854,9 @@ def update_layout(
     payload: schemas.LayoutUpdate,
     db: Session = Depends(get_db),
 ) -> models.GraphLayout:
-    layout = upsert_layout(db, project_id, layer_id, payload)
+    _label, member_ids = _group_members(db, project_id, layer_id)
+    rows = [upsert_layout(db, project_id, member_id, payload) for member_id in member_ids]
+    layout = next(row for row in rows if row.layer_id == layer_id)
     db.commit()
     db.refresh(layout)
     return layout
@@ -775,7 +869,9 @@ def update_style(
     payload: schemas.StyleUpdate,
     db: Session = Depends(get_db),
 ) -> models.ShapeStyle:
-    style_row = upsert_style(db, project_id, layer_id, payload)
+    _label, member_ids = _group_members(db, project_id, layer_id)
+    rows = [upsert_style(db, project_id, member_id, payload) for member_id in member_ids]
+    style_row = next(row for row in rows if row.layer_id == layer_id)
     db.commit()
     db.refresh(style_row)
     return style_row
@@ -789,19 +885,23 @@ def batch_update_graph(
 ) -> schemas.GraphRead:
     crud.get_project_or_404(db, project_id)
     for layout_update in payload.layouts:
-        upsert_layout(
-            db,
-            project_id,
-            layout_update.layer_id,
-            schemas.LayoutUpdate(**layout_update.model_dump(exclude={"layer_id"}, exclude_unset=True)),
-        )
+        _label, member_ids = _group_members(db, project_id, layout_update.layer_id)
+        for member_id in member_ids:
+            upsert_layout(
+                db,
+                project_id,
+                member_id,
+                schemas.LayoutUpdate(**layout_update.model_dump(exclude={"layer_id"}, exclude_unset=True)),
+            )
     for style_update in payload.styles:
-        upsert_style(
-            db,
-            project_id,
-            style_update.layer_id,
-            schemas.StyleUpdate(**style_update.model_dump(exclude={"layer_id"}, exclude_unset=True)),
-        )
+        _label, member_ids = _group_members(db, project_id, style_update.layer_id)
+        for member_id in member_ids:
+            upsert_style(
+                db,
+                project_id,
+                member_id,
+                schemas.StyleUpdate(**style_update.model_dump(exclude={"layer_id"}, exclude_unset=True)),
+            )
     for text_box_update in payload.text_boxes:
         text_box = crud.get_text_box_or_404(db, project_id, text_box_update.id)
         for field, value in text_box_update.model_dump(exclude={"id"}, exclude_unset=True).items():
@@ -818,8 +918,8 @@ def create_box_preset(
 ) -> models.BoxPreset:
     crud.get_project_or_404(db, project_id)
     if payload.is_default:
-        db.query(models.BoxPreset).filter(models.BoxPreset.project_id == project_id).update({"is_default": False})
-    preset = models.BoxPreset(project_id=project_id, **payload.model_dump())
+        db.query(models.BoxPreset).update({"is_default": False})
+    preset = models.BoxPreset(**payload.model_dump())
     db.add(preset)
     try:
         db.commit()
@@ -840,10 +940,7 @@ def update_box_preset(
     preset = crud.get_box_preset_or_404(db, project_id, preset_id)
     data = payload.model_dump(exclude_unset=True)
     if data.get("is_default") is True:
-        db.query(models.BoxPreset).filter(
-            models.BoxPreset.project_id == project_id,
-            models.BoxPreset.id != preset_id,
-        ).update({"is_default": False})
+        db.query(models.BoxPreset).filter(models.BoxPreset.id != preset_id).update({"is_default": False})
     for field, value in data.items():
         setattr(preset, field, value)
     try:
@@ -864,8 +961,7 @@ def delete_box_preset(project_id: uuid.UUID, preset_id: uuid.UUID, db: Session =
     if was_default:
         next_preset = (
             db.query(models.BoxPreset)
-            .filter(models.BoxPreset.project_id == project_id)
-            .order_by(models.BoxPreset.sort_order, models.BoxPreset.created_at)
+            .order_by(models.BoxPreset.sort_order, models.BoxPreset.name)
             .first()
         )
         if next_preset is not None:
@@ -903,7 +999,7 @@ def create_relation_style(
     db: Session = Depends(get_db),
 ) -> models.RelationStyle:
     crud.get_project_or_404(db, project_id)
-    relation_style = models.RelationStyle(project_id=project_id, **payload.model_dump())
+    relation_style = models.RelationStyle(**payload.model_dump())
     db.add(relation_style)
     try:
         db.commit()
@@ -952,27 +1048,58 @@ def create_relation(
     db: Session = Depends(get_db),
 ) -> models.LayerRelation:
     crud.get_project_or_404(db, project_id)
-    crud.get_layer_or_404(db, project_id, payload.parent_layer_id)
-    crud.get_layer_or_404(db, project_id, payload.child_layer_id)
+    if payload.parent_layer_id is not None:
+        crud.get_layer_or_404(db, project_id, payload.parent_layer_id)
+    if payload.child_layer_id is not None:
+        crud.get_layer_or_404(db, project_id, payload.child_layer_id)
     data = payload.model_dump()
     if data.get("relation_style_id") is None:
         data["relation_style_id"] = default_relation_style_id(db, project_id)
     else:
         crud.get_relation_style_or_404(db, project_id, data["relation_style_id"])
-    relation = models.LayerRelation(project_id=project_id, **data)
-    db.add(relation)
+    parent_ids = {payload.parent_layer_id} if payload.parent_layer_id else {None}
+    child_ids = {payload.child_layer_id} if payload.child_layer_id else {None}
+    if payload.parent_layer_id and payload.child_layer_id and not payload.same_group:
+        parent_label, parent_members = _group_members(db, project_id, payload.parent_layer_id)
+        child_label, child_members = _group_members(db, project_id, payload.child_layer_id)
+        if parent_label and child_label:
+            raise HTTPException(status_code=422, detail="Group-to-group relation is not allowed")
+        parent_ids = parent_members if parent_label else parent_ids
+        child_ids = child_members if child_label else child_ids
+
+    created: list[models.LayerRelation] = []
+    for parent_id in parent_ids:
+        for child_id in child_ids:
+            if parent_id is not None and parent_id == child_id:
+                continue
+            exists = db.query(models.LayerRelation).filter(
+                models.LayerRelation.project_id == project_id,
+                models.LayerRelation.parent_layer_id == parent_id,
+                models.LayerRelation.child_layer_id == child_id,
+                models.LayerRelation.instance == payload.instance,
+            ).first()
+            if exists:
+                continue
+            relation = models.LayerRelation(
+                project_id=project_id,
+                **{**data, "parent_layer_id": parent_id, "child_layer_id": child_id},
+            )
+            db.add(relation)
+            created.append(relation)
+    if not created:
+        raise HTTPException(status_code=409, detail="Relation already exists")
     try:
         db.flush()
         report = validate_project_graph(db, project_id)
-        if not report.ok:
+        if payload.parent_layer_id is not None and payload.child_layer_id is not None and _blocking_issues(report):
             db.rollback()
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=[issue.model_dump(mode="json") for issue in report.issues])
         db.commit()
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Relation already exists") from exc
-    db.refresh(relation)
-    return relation
+    db.refresh(created[0])
+    return created[0]
 
 
 @router.put("/relations/{relation_id}", response_model=schemas.RelationRead)
@@ -993,7 +1120,7 @@ def update_relation(
     try:
         db.flush()
         report = validate_project_graph(db, project_id)
-        if not report.ok:
+        if relation.parent_layer_id is not None and relation.child_layer_id is not None and _blocking_issues(report):
             db.rollback()
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=[issue.model_dump(mode="json") for issue in report.issues])
         db.commit()
@@ -1048,7 +1175,7 @@ def delete_text_box(project_id: uuid.UUID, text_box_id: uuid.UUID, db: Session =
 @router.post("/auto-layout", response_model=schemas.GraphRead)
 def auto_layout(project_id: uuid.UUID, db: Session = Depends(get_db)) -> schemas.GraphRead:
     crud.get_project_or_404(db, project_id)
-    ensure_default_relation_styles(db, project_id)
+    ensure_default_relation_styles(db)
     apply_auto_layout(db, project_id)
     db.commit()
     return crud.read_graph(db, project_id)

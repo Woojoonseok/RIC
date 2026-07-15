@@ -1,106 +1,83 @@
-# Align Tree Editor
+# RIC Align Tree Editor
 
-DB-centered Align Tree Editor MVP. The current app is now split into a real frontend, backend, and database structure.
+반도체 공정의 Align Tree를 설계·편집·검증하고 Excel, SVG, PPTX로 내보내는 웹 애플리케이션이다. 최신 UI는 Vue 3로 구현하며, 초기 React UI는 비교와 회귀 참고를 위해 `frontend/`에 유지한다.
 
-## Structure
-
-- `frontend/`: React + Vite editor UI
-- `backend/`: FastAPI API server
-- `docker-compose.yml`: optional local PostgreSQL database
-- `index.html`, `styles.css`, `app.js`: legacy static prototype kept for reference
-
-## Run
-
-Default no-Docker mode uses SQLite. Start the backend first:
-
-```powershell
-cd D:\SW\RND_SW\RI
-backend\.venv\Scripts\Activate.ps1
-uvicorn app.main:app --app-dir backend --reload
-```
-
-If the virtual environment does not exist yet:
-
-```powershell
-cd D:\SW\RND_SW\RI
-python -m venv backend\.venv
-backend\.venv\Scripts\python.exe -m pip install -e backend
-```
-
-Start the frontend in another PowerShell window:
-
-```powershell
-cd D:\SW\RND_SW\RI\frontend
-npm.cmd install
-npm.cmd run dev
-```
-
-Open:
+## 구조
 
 ```text
-http://127.0.0.1:5173
+backend/        FastAPI + SQLAlchemy 2.0 + Pydantic v2
+frontend/       초기 React + Vite 참고 구현
+frontend-vue/   최종 Vue 3 + TypeScript + Pinia 구현
+docs/           초기 코드 분석, 차이표, 구현 가정
 ```
 
-The SQLite database file is created at `D:\SW\RND_SW\RI\ric-dev.db`.
+## 로컬 실행
 
-Optional PostgreSQL mode:
+Python 3.11 이상과 Node.js가 필요하다. 기본 DB는 저장소 루트의 `ric-dev.db`다.
 
 ```powershell
-cd D:\SW\RND_SW\RI
-docker compose up -d db
-backend\.venv\Scripts\python.exe -m pip install -e "backend[postgres]"
-$env:DATABASE_URL = "postgresql+psycopg://ric:ric@localhost:5432/ric"
-uvicorn app.main:app --app-dir backend --reload
+python -m venv backend\.venv
+backend\.venv\Scripts\python.exe -m pip install -e "backend[dev]"
+backend\.venv\Scripts\python.exe -m uvicorn app.main:app --app-dir backend --reload
 ```
 
-For the legacy static prototype, open `index.html` in a browser.
+다른 PowerShell에서 Vue UI를 실행한다.
 
-## No-Docker Notes
+```powershell
+cd frontend-vue
+pnpm install
+pnpm dev
+```
 
-Docker is not required for normal development. Use SQLite unless you specifically need to test PostgreSQL behavior.
+브라우저에서 `http://127.0.0.1:5173`을 연다. API 문서는 `http://127.0.0.1:8000/docs`에서 확인할 수 있다.
 
-## Included
+## 환경변수
 
-- Project creation and recent project storage through `localStorage`
-- Align Input and Layer Relation editable grids
-- Clipboard paste for Excel-style TSV/CSV rows
-- CSV/TSV/TXT/HTML `.xls` upload for each table
-- Validation with errors and warnings
-- Auto-generated Align Tree SVG canvas
-- PowerPoint/Visio-like Select and Connect modes
-- Layer-only node rendering with details in the Property panel
-- Visio-like connection points on each side of a selected Layer
-- Port-based arrow creation, selection, editing, deletion, and validation
-- Node click, property editing, confirmed delete, drag layout, resize handles, and save
-- Shape formatting for fill, line, text color, line width, and font size
-- Insert tools for new Layer shapes and free text boxes
-- Zoom, pan, fit view, mini map, search, snap to grid, align/distribute, undo/redo, and auto layout
-- Excel-readable `.xls` template and export
-- SVG PPT image export and PowerPoint-readable outline export
+루트의 `.env.example`을 `.env`로 복사하거나 실행 셸에 설정한다.
 
-## Data Model
+```text
+DATABASE_URL=sqlite:///./ric-dev.db
+CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+VITE_API_BASE_URL=http://localhost:8000/api
+```
 
-The full-stack app stores the requested model in PostgreSQL:
+PostgreSQL 사용 시:
 
-- Project
-- Layer
-- AlignKey fields embedded with each Layer row
-- LayerRelation
-- GraphLayout
-- ShapeStyle
-- TextBox
+```powershell
+docker compose up -d db
+python -m pip install -e "backend[postgres]"
+$env:DATABASE_URL = "postgresql+psycopg://ric:ric@localhost:5432/ric"
+python -m uvicorn app.main:app --app-dir backend --reload
+```
 
-The backend validates self-loop relations, duplicate relations, missing Layer references, and cycles before saving relation changes.
+## 구현된 주요 기능
 
-## API Shape
+- 프로젝트 CRUD와 전체 Graph restore/batch update
+- 전역 Key Layout Type, Key Drawing Type, Key Shape, Relation Style, Box Preset CRUD
+- 동적 우선순위가 있는 Layer Master CRUD와 프로젝트 Layer snapshot 생성
+- Layer, Relation, Text Box CRUD와 nullable draft relation
+- `instance`, `waypoints`, `attached_relation_id`, `pending_group`, `same_group`
+- 비파괴 그룹 표시, 1:N/N:1 관계 확장, merge/split, 그룹 layout/style 확장 저장
+- 서버 Validation과 DAG 자동 배치
+- Pinia 기반 raw/display graph 분리와 서버 restore 기반 Undo/Redo
+- SVG Canvas 선택·marquee·pan·zoom·이동·리사이즈·port 연결·waypoint·관계선 attachment·minimap
+- Excel식 TSV grid와 commit 단위 저장
+- Excel template/export, SVG export, 실제 PPTX export
 
-- `GET /api/projects`
-- `POST /api/projects`
-- `GET /api/projects/{project_id}/graph`
-- `POST /api/projects/{project_id}/graph/layers`
-- `PATCH /api/projects/{project_id}/graph/layers/{layer_id}/layout`
-- `PATCH /api/projects/{project_id}/graph/layers/{layer_id}/style`
-- `POST /api/projects/{project_id}/graph/relations`
-- `PUT /api/projects/{project_id}/graph/relations/{relation_id}`
-- `POST /api/projects/{project_id}/graph/text-boxes`
-- `POST /api/projects/{project_id}/validate`
+## 검증
+
+```powershell
+$env:PYTHONPATH = "backend"
+python -m pytest backend/tests -q
+ruff check backend/app backend/tests
+
+cd frontend-vue
+pnpm test
+pnpm build
+```
+
+초기 코드와 최신 명세의 차이는 [docs/INITIAL_ANALYSIS.md](docs/INITIAL_ANALYSIS.md), 명세 밖 구현 판단은 [docs/IMPLEMENTATION_ASSUMPTIONS.md](docs/IMPLEMENTATION_ASSUMPTIONS.md)에 기록돼 있다.
+
+## 배포
+
+Vue의 `dist/`를 정적 호스팅하고 `/api` 요청을 FastAPI로 프록시한다. FastAPI는 PostgreSQL `DATABASE_URL`을 사용해 실행하며, CORS는 실제 프론트 도메인만 `CORS_ORIGINS`에 지정한다. 운영 DB 스키마 변경은 실제 배포 데이터 확인 후 Alembic migration으로 관리해야 한다.

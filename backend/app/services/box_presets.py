@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import uuid
-
 from sqlalchemy.orm import Session
 
 from .. import models
@@ -55,28 +53,26 @@ DEFAULT_BOX_PRESETS = [
 ]
 
 
-def ensure_default_box_presets(db: Session, project_id: uuid.UUID) -> list[models.BoxPreset]:
+def ensure_default_box_presets(db: Session) -> list[models.BoxPreset]:
     existing = (
         db.query(models.BoxPreset)
-        .filter(models.BoxPreset.project_id == project_id)
-        .order_by(models.BoxPreset.sort_order, models.BoxPreset.created_at)
+        .order_by(models.BoxPreset.sort_order, models.BoxPreset.name)
         .all()
     )
     if existing:
         return existing
 
     for index, preset_data in enumerate(DEFAULT_BOX_PRESETS):
-        db.add(models.BoxPreset(project_id=project_id, sort_order=index, **preset_data))
+        db.add(models.BoxPreset(sort_order=index, **preset_data))
     db.flush()
     return (
         db.query(models.BoxPreset)
-        .filter(models.BoxPreset.project_id == project_id)
-        .order_by(models.BoxPreset.sort_order, models.BoxPreset.created_at)
+        .order_by(models.BoxPreset.sort_order, models.BoxPreset.name)
         .all()
     )
 
 
-def default_box_preset_id(db: Session, project_id: uuid.UUID) -> uuid.UUID | None:
-    presets = ensure_default_box_presets(db, project_id)
+def default_box_preset_id(db: Session, _project_id=None):
+    presets = ensure_default_box_presets(db)
     default = next((preset for preset in presets if preset.is_default), None)
     return (default or presets[0]).id if presets else None
