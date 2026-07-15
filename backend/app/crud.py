@@ -6,8 +6,6 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from . import models, schemas
-from .services.box_presets import ensure_default_box_presets
-from .services.relation_styles import ensure_default_relation_styles
 from .services.validation import validate_project_graph
 
 
@@ -21,9 +19,6 @@ def get_project_or_404(db: Session, project_id: uuid.UUID) -> models.Project:
 def create_project(db: Session, payload: schemas.ProjectCreate) -> models.Project:
     project = models.Project(name=payload.name, description=payload.description)
     db.add(project)
-    db.flush()
-    ensure_default_relation_styles(db)
-    ensure_default_box_presets(db)
     db.commit()
     db.refresh(project)
     return project
@@ -31,7 +26,7 @@ def create_project(db: Session, payload: schemas.ProjectCreate) -> models.Projec
 
 def create_layer(db: Session, project_id: uuid.UUID, payload: schemas.LayerCreate) -> models.Layer:
     get_project_or_404(db, project_id)
-    preset = get_box_preset_or_404(db, project_id, payload.box_preset_id) if payload.box_preset_id else None
+    preset = get_box_preset_or_404(db, payload.box_preset_id) if payload.box_preset_id else None
     layer = models.Layer(
         project_id=project_id,
         name=payload.name,
@@ -42,7 +37,6 @@ def create_layer(db: Session, project_id: uuid.UUID, payload: schemas.LayerCreat
         description=payload.description,
         metadata_json=payload.metadata_json,
         box_preset_id=preset.id if preset else None,
-        pending_group=payload.pending_group,
     )
     db.add(layer)
     db.flush()
@@ -86,14 +80,14 @@ def get_relation_or_404(db: Session, project_id: uuid.UUID, relation_id: uuid.UU
     return relation
 
 
-def get_relation_style_or_404(db: Session, project_id: uuid.UUID, style_id: uuid.UUID) -> models.RelationStyle:
+def get_relation_style_or_404(db: Session, style_id: uuid.UUID) -> models.RelationStyle:
     relation_style = db.get(models.RelationStyle, style_id)
     if relation_style is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Relation style not found")
     return relation_style
 
 
-def get_box_preset_or_404(db: Session, project_id: uuid.UUID, preset_id: uuid.UUID) -> models.BoxPreset:
+def get_box_preset_or_404(db: Session, preset_id: uuid.UUID) -> models.BoxPreset:
     preset = db.get(models.BoxPreset, preset_id)
     if preset is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Box preset not found")
@@ -111,7 +105,7 @@ def read_graph(db: Session, project_id: uuid.UUID) -> schemas.GraphRead:
     project = get_project_or_404(db, project_id)
     relation_styles = (
         db.query(models.RelationStyle)
-        .order_by(models.RelationStyle.sort_order, models.RelationStyle.name)
+        .order_by(models.RelationStyle.sort_order, models.RelationStyle.created_at)
         .all()
     )
     layers = db.query(models.Layer).filter(models.Layer.project_id == project_id).order_by(models.Layer.created_at).all()
@@ -119,11 +113,11 @@ def read_graph(db: Session, project_id: uuid.UUID) -> schemas.GraphRead:
     styles = db.query(models.ShapeStyle).filter(models.ShapeStyle.project_id == project_id).all()
     box_presets = (
         db.query(models.BoxPreset)
-        .order_by(models.BoxPreset.sort_order, models.BoxPreset.name)
+        .order_by(models.BoxPreset.sort_order, models.BoxPreset.created_at)
         .all()
     )
     relations = db.query(models.LayerRelation).filter(models.LayerRelation.project_id == project_id).all()
-    text_boxes = db.query(models.TextBox).filter(models.TextBox.project_id == project_id).order_by(models.TextBox.id).all()
+    text_boxes = db.query(models.TextBox).filter(models.TextBox.project_id == project_id).order_by(models.TextBox.created_at).all()
     return schemas.GraphRead(
         project=project,
         layers=layers,

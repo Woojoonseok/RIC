@@ -149,6 +149,8 @@ export function graphRestoreFromGraph(graph: Graph) {
     layers: graph.layers,
     layouts: graph.layouts,
     styles: graph.styles,
+    box_presets: graph.box_presets,
+    relation_styles: graph.relation_styles,
     relations: graph.relations,
     text_boxes: graph.text_boxes,
   };

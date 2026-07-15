@@ -21,6 +21,14 @@ function shortcuts(event: KeyboardEvent) {
   if (target?.matches("input, textarea, select, [contenteditable=true]")) return;
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") { event.preventDefault(); event.shiftKey ? void graph.redo() : void graph.undo() }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") { event.preventDefault(); void graph.redo() }
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a" && app.view === "editor") {
+    event.preventDefault();
+    app.selection = graph.displayGraph?.layers.map((layer) => ({ kind: "layer", id: layer.id })) ?? [];
+  }
+  if ((event.key === "Delete" || event.key === "Backspace") && app.view === "editor" && app.selection.length) {
+    event.preventDefault();
+    void graph.deleteSelection();
+  }
 }
 onMounted(async () => { window.addEventListener("keydown", shortcuts); await project.loadProjects() });
 onBeforeUnmount(() => window.removeEventListener("keydown", shortcuts));

@@ -77,3 +77,12 @@ export const api = {
   updateLayerMaster: (id: string, body: LayerMasterUpdate) => request<LayerMaster>(`/layer-master/${id}`, json("PUT", body)),
   deleteLayerMaster: (id: string) => request<void>(`/layer-master/${id}`, json("DELETE")),
 };
+
+export const referenceApi = {
+  listBoxPresets: api.boxPresets,
+  listRelationStyles: api.relationStyles,
+  listKeyLayoutTypes: api.keyLayoutTypes,
+  listKeyDrawingTypes: api.keyDrawingTypes,
+  listKeyShapes: api.keyShapes,
+  listLayerMasters: api.layerMasters,
+};

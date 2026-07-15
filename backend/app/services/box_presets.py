@@ -56,7 +56,7 @@ DEFAULT_BOX_PRESETS = [
 def ensure_default_box_presets(db: Session) -> list[models.BoxPreset]:
     existing = (
         db.query(models.BoxPreset)
-        .order_by(models.BoxPreset.sort_order, models.BoxPreset.name)
+        .order_by(models.BoxPreset.sort_order, models.BoxPreset.created_at)
         .all()
     )
     if existing:
@@ -67,12 +67,12 @@ def ensure_default_box_presets(db: Session) -> list[models.BoxPreset]:
     db.flush()
     return (
         db.query(models.BoxPreset)
-        .order_by(models.BoxPreset.sort_order, models.BoxPreset.name)
+        .order_by(models.BoxPreset.sort_order, models.BoxPreset.created_at)
         .all()
     )
 
 
-def default_box_preset_id(db: Session, _project_id=None):
+def default_box_preset_id(db: Session):
     presets = ensure_default_box_presets(db)
     default = next((preset for preset in presets if preset.is_default), None)
     return (default or presets[0]).id if presets else None

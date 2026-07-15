@@ -10,16 +10,16 @@ export interface ProjectCreate { name: string; description?: string | null }
 export interface Layer {
   id: string; project_id: string; name: string; step: string | null; layer_property: string | null;
   align: string | null; align_side: string | null; description: string | null; metadata_json: Record<string, unknown>;
-  box_preset_id: string | null; pending_group: string | null; created_at: string; updated_at: string;
+  box_preset_id: string | null; pending_group: string | null; created_at?: string; updated_at?: string;
 }
 export interface LayerCreate {
   name: string; step?: string | null; layer_property?: string | null; align?: string | null; align_side?: string | null;
-  description?: string | null; metadata_json?: Record<string, unknown>; box_preset_id?: string | null; pending_group?: string | null;
+  description?: string | null; metadata_json?: Record<string, unknown>; box_preset_id?: string | null;
   x?: number; y?: number; width?: number; height?: number;
 }
 export interface LayerUpdate {
   name?: string; step?: string | null; layer_property?: string | null; align?: string | null; align_side?: string | null;
-  description?: string | null; metadata_json?: Record<string, unknown>; box_preset_id?: string | null; pending_group?: string | null;
+  description?: string | null; metadata_json?: Record<string, unknown>; box_preset_id?: string | null;
 }
 
 export interface Layout { id: string; project_id: string; layer_id: string; x: number; y: number; width: number; height: number; z_index: number }
@@ -33,7 +33,7 @@ export interface StyleBatchUpdate extends StyleUpdate { layer_id: string }
 export interface Relation {
   id: string; project_id: string; parent_layer_id: string | null; child_layer_id: string | null; relation_type: string;
   instance: string | null; relation_style_id: string | null; source_port: PortName; target_port: PortName;
-  same_group: string | null; attached_relation_id: string | null; waypoints: Point[]; created_at: string; updated_at: string;
+  same_group: string | null; attached_relation_id: string | null; waypoints: Point[] | null; created_at?: string; updated_at?: string;
 }
 export interface RelationCreate {
   parent_layer_id?: string | null; child_layer_id?: string | null; relation_type?: string; instance?: string | null;
@@ -64,7 +64,8 @@ export interface ValidationReport { ok: boolean; issues: ValidationIssue[] }
 export interface Graph { project: Project; layers: Layer[]; layouts: Layout[]; styles: ShapeStyle[]; box_presets: BoxPreset[]; relation_styles: RelationStyle[]; relations: Relation[]; text_boxes: TextBox[]; validation: ValidationReport }
 
 export interface GraphBatchUpdate { layouts?: LayoutBatchUpdate[]; styles?: StyleBatchUpdate[]; text_boxes?: TextBoxBatchUpdate[] }
-export interface GraphRestore { layers: Layer[]; layouts: Layout[]; styles: ShapeStyle[]; relations: Relation[]; text_boxes: TextBox[] }
+export interface GraphUpdate { layers?: Layer[]; layouts?: Layout[]; styles?: ShapeStyle[]; box_presets?: BoxPreset[]; relation_styles?: RelationStyle[]; relations?: Relation[]; text_boxes?: TextBox[] }
+export interface GraphRestore { layers: Layer[]; layouts: Layout[]; styles: ShapeStyle[]; box_presets: BoxPreset[]; relation_styles: RelationStyle[]; relations: Relation[]; text_boxes: TextBox[] }
 export interface LayerMergeRequest { layer_ids: string[]; name?: string | null }
 export interface LayerSplitRequest { orientation?: "vertical" | "horizontal" }
 

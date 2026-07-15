@@ -22,6 +22,19 @@ export function exportExcel(graph: Graph, template = false) {
   XLSX.writeFile(workbook, template ? "RIC_Align_Template.xlsx" : `${graph.project.name}_Align_Tree.xlsx`);
 }
 
+export function exportExcelTemplate() {
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([
+    ["Step", "Layer", "Layer_Property", "Align", "Align_side", "Description", "Group"],
+    ["S01", "WL", "Main", "AA01", "LEFT", "", ""],
+  ]), "Align_Input");
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([
+    ["Parent_Layer", "Child_Layer", "Relation_Type", "Instance", "Same Group"],
+    ["WL", "BL", "Align", "", ""],
+  ]), "Layer_Relation");
+  XLSX.writeFile(workbook, "RIC_Align_Template.xlsx");
+}
+
 export function graphSvg(graph: Graph) {
   const layouts = new Map(graph.layouts.map((row) => [row.layer_id, row]));
   const relations = new Map(graph.relations.map((row) => [row.id, row]));

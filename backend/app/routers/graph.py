@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from .. import crud, models, schemas
 from ..database import get_db
 from ..services.layout import apply_auto_layout
-from ..services.relation_styles import default_relation_style_id, ensure_default_relation_styles
+from ..services.relation_styles import default_relation_style_id
 from ..services.validation import validate_project_graph
 
 router = APIRouter(prefix="/api/projects/{project_id}/graph", tags=["graph"])
@@ -61,25 +61,6 @@ def _drop_merge_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
     return next_metadata
 
 
-def _group_members(db: Session, project_id: uuid.UUID, layer_id: uuid.UUID) -> tuple[str | None, set[uuid.UUID]]:
-    relations = db.query(models.LayerRelation).filter(
-        models.LayerRelation.project_id == project_id,
-        models.LayerRelation.same_group.is_not(None),
-        models.LayerRelation.same_group != "",
-    ).all()
-    label = next((row.same_group for row in relations if row.parent_layer_id == layer_id or row.child_layer_id == layer_id), None)
-    if not label:
-        return None, {layer_id}
-    members: set[uuid.UUID] = set()
-    for row in relations:
-        if row.same_group == label:
-            if row.parent_layer_id:
-                members.add(row.parent_layer_id)
-            if row.child_layer_id:
-                members.add(row.child_layer_id)
-    return label, members or {layer_id}
-
-
 def _dump_layer(layer: models.Layer, layout: models.GraphLayout | None, style: models.ShapeStyle | None) -> dict[str, Any]:
     return {
         "id": str(layer.id),
@@ -88,10 +69,7 @@ def _dump_layer(layer: models.Layer, layout: models.GraphLayout | None, style: m
         "layer_property": layer.layer_property,
         "align": layer.align,
         "align_side": layer.align_side,
-        "description": layer.description,
         "metadata_json": layer.metadata_json or {},
-        "box_preset_id": str(layer.box_preset_id) if layer.box_preset_id else None,
-        "pending_group": layer.pending_group,
         "layout": {
             "x": layout.x,
             "y": layout.y,
@@ -115,13 +93,10 @@ def _dump_relation(relation: models.LayerRelation) -> dict[str, Any]:
         "parent_layer_id": str(relation.parent_layer_id) if relation.parent_layer_id else None,
         "child_layer_id": str(relation.child_layer_id) if relation.child_layer_id else None,
         "relation_type": relation.relation_type,
-        "instance": relation.instance,
         "relation_style_id": str(relation.relation_style_id) if relation.relation_style_id else None,
         "source_port": relation.source_port,
         "target_port": relation.target_port,
-        "same_group": relation.same_group,
-        "attached_relation_id": str(relation.attached_relation_id) if relation.attached_relation_id else None,
-        "waypoints": relation.waypoints or [],
+        "instance": relation.instance,
     }
 
 
@@ -132,6 +107,12 @@ def restore_graph(
     db: Session = Depends(get_db),
 ) -> schemas.GraphRead:
     crud.get_project_or_404(db, project_id)
+
+    # RelationStyle/BoxPreset are global presets, not project-owned data, so
+    # undo/redo restore never deletes/recreates them — only membership checks
+    # against whatever currently exists globally.
+    preset_ids = {row.id for row in db.query(models.BoxPreset).all()}
+    relation_style_ids = {row.id for row in db.query(models.RelationStyle).all()}
 
     db.query(models.LayerRelation).filter(models.LayerRelation.project_id == project_id).delete(synchronize_session=False)
     db.query(models.GraphLayout).filter(models.GraphLayout.project_id == project_id).delete(synchronize_session=False)
@@ -152,17 +133,12 @@ def restore_graph(
             align_side=layer.align_side,
             description=layer.description,
             metadata_json=layer.metadata_json,
-            box_preset_id=(
-                layer.box_preset_id
-                if layer.box_preset_id is not None and db.get(models.BoxPreset, layer.box_preset_id)
-                else None
-            ),
+            box_preset_id=layer.box_preset_id if layer.box_preset_id in preset_ids else None,
             pending_group=layer.pending_group,
         ))
     db.flush()
 
     layer_ids = {layer.id for layer in payload.layers}
-    relation_style_ids = {style.id for style in db.query(models.RelationStyle).all()}
     for layout in payload.layouts:
         if layout.layer_id in layer_ids:
             db.add(models.GraphLayout(
@@ -204,9 +180,11 @@ def restore_graph(
         ))
     db.flush()
 
-    relation_keys: set[tuple[uuid.UUID | None, uuid.UUID | None, str | None]] = set()
-    restored_relations: dict[uuid.UUID, models.LayerRelation] = {}
-    requested_attachments: dict[uuid.UUID, uuid.UUID] = {}
+    relation_keys: set[tuple[uuid.UUID | None, uuid.UUID | None, str]] = set()
+    inserted_relation_ids: set[uuid.UUID] = set()
+    # Remember each relation's attachment so it can be wired up after every
+    # relation row exists (attached_relation_id is a self-referencing FK).
+    attachments: list[tuple[uuid.UUID, uuid.UUID]] = []
     for relation in payload.relations:
         if relation.parent_layer_id is not None and relation.parent_layer_id not in layer_ids:
             continue
@@ -214,33 +192,37 @@ def restore_graph(
             continue
         if relation.parent_layer_id is not None and relation.parent_layer_id == relation.child_layer_id:
             continue
-        key = (relation.parent_layer_id, relation.child_layer_id, relation.instance)
+        key = (relation.parent_layer_id, relation.child_layer_id, (relation.instance or "").strip().lower())
         if key in relation_keys:
             continue
         relation_keys.add(key)
-        row = models.LayerRelation(
+        inserted_relation_ids.add(relation.id)
+        db.add(models.LayerRelation(
             id=relation.id,
             project_id=project_id,
             parent_layer_id=relation.parent_layer_id,
             child_layer_id=relation.child_layer_id,
             relation_type=relation.relation_type,
-            instance=relation.instance,
             relation_style_id=relation.relation_style_id if relation.relation_style_id in relation_style_ids else None,
             source_port=relation.source_port,
             target_port=relation.target_port,
             same_group=relation.same_group,
-            attached_relation_id=None,
             waypoints=relation.waypoints,
-        )
-        db.add(row)
-        restored_relations[row.id] = row
-        if relation.attached_relation_id:
-            requested_attachments[row.id] = relation.attached_relation_id
+            instance=relation.instance,
+        ))
+        if relation.attached_relation_id is not None:
+            attachments.append((relation.id, relation.attached_relation_id))
 
     db.flush()
-    for relation_id, attached_id in requested_attachments.items():
-        if attached_id in restored_relations and attached_id != relation_id:
-            restored_relations[relation_id].attached_relation_id = attached_id
+
+    # Restore attachments only when the target relation also survived restore,
+    # so a dropped relation never leaves a dangling self-reference.
+    for relation_id, attached_id in attachments:
+        if attached_id in inserted_relation_ids:
+            relation_row = db.get(models.LayerRelation, relation_id)
+            if relation_row is not None:
+                relation_row.attached_relation_id = attached_id
+
     db.flush()
     report = validate_project_graph(db, project_id)
     if _blocking_issues(report):
@@ -306,64 +288,6 @@ def update_layer(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Layer name already exists") from exc
     db.refresh(layer)
     return layer
-
-
-@router.patch("/layers/{layer_id}/group", response_model=schemas.GraphRead)
-def update_layer_group(
-    project_id: uuid.UUID,
-    layer_id: uuid.UUID,
-    payload: schemas.LayerGroupUpdate,
-    db: Session = Depends(get_db),
-) -> schemas.GraphRead:
-    layer = crud.get_layer_or_404(db, project_id, layer_id)
-    current_label, _members = _group_members(db, project_id, layer_id)
-    if current_label:
-        db.query(models.LayerRelation).filter(
-            models.LayerRelation.project_id == project_id,
-            models.LayerRelation.same_group == current_label,
-        ).delete(synchronize_session=False)
-
-    label = (payload.group or "").strip() or None
-    layer.pending_group = None
-    if label:
-        group_relation = db.query(models.LayerRelation).filter(
-            models.LayerRelation.project_id == project_id,
-            models.LayerRelation.same_group == label,
-        ).first()
-        pending = db.query(models.Layer).filter(
-            models.Layer.project_id == project_id,
-            models.Layer.pending_group == label,
-            models.Layer.id != layer_id,
-        ).order_by(models.Layer.created_at).first()
-        anchor_id = None
-        if group_relation:
-            anchor_id = group_relation.parent_layer_id or group_relation.child_layer_id
-        elif pending:
-            anchor_id = pending.id
-            pending.pending_group = None
-
-        if anchor_id:
-            db.add(models.LayerRelation(
-                project_id=project_id,
-                parent_layer_id=anchor_id,
-                child_layer_id=layer_id,
-                relation_type="same_group",
-                instance=f"same_group:{label}:{layer_id}",
-                same_group=label,
-                source_port="right",
-                target_port="left",
-            ))
-        else:
-            layer.pending_group = label
-
-    db.flush()
-    report = validate_project_graph(db, project_id)
-    blocking = _blocking_issues(report)
-    if blocking:
-        db.rollback()
-        raise HTTPException(status_code=422, detail=[issue.model_dump(mode="json") for issue in blocking])
-    db.commit()
-    return crud.read_graph(db, project_id)
 
 
 def _merge_layer_name(layers: list[models.Layer], override: str | None) -> str:
@@ -467,7 +391,7 @@ def _merge_layers_in_db(
         for layout in db.query(models.GraphLayout).filter(models.GraphLayout.project_id == project_id).all()
     }
     all_layouts[anchor.id] = anchor_layout
-    kept_keys: set[tuple[uuid.UUID, uuid.UUID]] = set()
+    kept_keys: set[tuple[uuid.UUID, uuid.UUID, str]] = set()
     relation_specs: list[dict[str, object]] = []
     relations_to_delete: list[models.LayerRelation] = []
 
@@ -476,7 +400,7 @@ def _merge_layers_in_db(
         child_selected = relation.child_layer_id in selected_ids
         next_parent = anchor.id if parent_selected else relation.parent_layer_id
         next_child = anchor.id if child_selected else relation.child_layer_id
-        key = (next_parent, next_child)
+        key = (next_parent, next_child, (relation.instance or "").strip().lower())
 
         if next_parent == next_child:
             relations_to_delete.append(relation)
@@ -498,6 +422,7 @@ def _merge_layers_in_db(
                     "source_port": _port_towards(source_layout, target_layout) if source_layout and target_layout else relation.source_port,
                     "target_port": _port_towards(target_layout, source_layout) if source_layout and target_layout else relation.target_port,
                     "same_group": relation.same_group,
+                    "instance": relation.instance,
                 }
             )
             kept_keys.add(key)
@@ -528,13 +453,13 @@ def merge_layers(
     payload: schemas.LayerMergeRequest,
     db: Session = Depends(get_db),
 ) -> schemas.GraphRead:
+    import sys
+    print(f"[MERGE] Starting merge_layers with payload: {payload}", file=sys.stderr)
     crud.get_project_or_404(db, project_id)
     layer_ids = list(dict.fromkeys(payload.layer_ids))
-    if len(layer_ids) != 2:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Merge accepts two individual layers or one existing group and one individual layer",
-        )
+    print(f"[MERGE] layer_ids: {layer_ids}", file=sys.stderr)
+    if len(layer_ids) < 2:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Select at least two layers to merge")
 
     layer_rows = (
         db.query(models.Layer)
@@ -546,60 +471,110 @@ def merge_layers(
     if missing_ids:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Layer not found: {', '.join(missing_ids)}")
 
-    first_label, first_members = _group_members(db, project_id, layer_ids[0])
-    second_label, second_members = _group_members(db, project_id, layer_ids[1])
-    if first_label and second_label:
-        raise HTTPException(status_code=422, detail="Group-to-group merge is not allowed")
-
-    existing_groups = db.query(models.LayerRelation.same_group).filter(
+    # Check which groups the selected layers belong to
+    group_membership = {}
+    all_group_rels = db.query(models.LayerRelation).filter(
         models.LayerRelation.project_id == project_id,
         models.LayerRelation.same_group.is_not(None),
-        models.LayerRelation.same_group != ""
+        models.LayerRelation.same_group != "",
     ).all()
-    group_numbers = []
-    for g in existing_groups:
-        try:
-            group_numbers.append(int(g[0]))
-        except ValueError:
-            pass
-    group_label = first_label or second_label or (str(max(group_numbers) + 1) if group_numbers else "1")
-    existing_members = first_members if first_label else second_members if second_label else {layer_ids[0]}
-    new_member = layer_ids[1] if first_label or not second_label else layer_ids[0]
-    anchor_id = next(iter(existing_members))
-    db.add(models.LayerRelation(
-        project_id=project_id,
-        parent_layer_id=anchor_id,
-        child_layer_id=new_member,
-        relation_type="same_group",
-        instance=f"same_group:{group_label}",
-        same_group=group_label,
-        source_port="right",
-        target_port="left",
-    ))
-    all_member_ids = existing_members | {new_member}
-    db.query(models.Layer).filter(models.Layer.id.in_(all_member_ids)).update(
-        {"pending_group": None}, synchronize_session=False
-    )
+
+    print(f"[MERGE] all_group_rels count: {len(all_group_rels)}", file=sys.stderr)
+    for rel in all_group_rels:
+        if rel.parent_layer_id in layer_ids:
+            group_membership[rel.parent_layer_id] = rel.same_group
+        if rel.child_layer_id in layer_ids:
+            group_membership[rel.child_layer_id] = rel.same_group
+
+    unique_groups = set(group_membership.values())
+    print(f"[MERGE] group_membership: {group_membership}", file=sys.stderr)
+    print(f"[MERGE] unique_groups: {unique_groups}", file=sys.stderr)
+    print(f"[MERGE] layer_ids count: {len(layer_ids)}, grouped count: {len(group_membership)}", file=sys.stderr)
+
+    # Validation: Only allow:
+    # 1. Individual (ungrouped) + Individual = OK (create new group)
+    # 2. Group (N) + Individual (1) = OK (add to existing group)
+    # NOT allowed:
+    # 1. Group (N) + Group (N) = ERROR (N:N merge)
+    # 2. Group (N) + Multiple Individuals (N) = ERROR
+
+    ungrouped_count = len(layer_ids) - len(group_membership)
+
+    print(f"[MERGE] unique_groups count: {len(unique_groups)}, ungrouped_count: {ungrouped_count}", file=sys.stderr)
+
+    # Check for N:N merge (multiple groups)
+    if len(unique_groups) > 1:
+        print(f"[MERGE] ERROR: Cannot merge {len(unique_groups)} different groups", file=sys.stderr)
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                          detail="두 개 이상의 그룹끼리는 병합할 수 없습니다. 그룹과 개별 레이어 한 개씩만 병합해주세요.")
+
+    # Check for group + multiple individuals
+    if unique_groups and ungrouped_count > 1:
+        print(f"[MERGE] ERROR: Cannot merge group with {ungrouped_count} individual layers", file=sys.stderr)
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                          detail="그룹과 여러 개의 개별 레이어는 동시에 병합할 수 없습니다. 한 번에 하나씩 추가해주세요.")
+
+    # Determine which group to use
+    if group_membership:
+        # Use the existing group (only one group at this point due to validations above)
+        next_group = next(iter(unique_groups))
+        print(f"[MERGE] Using existing group: {next_group}", file=sys.stderr)
+    else:
+        # Find next available group number
+        all_groups = db.query(models.LayerRelation.same_group).filter(
+            models.LayerRelation.project_id == project_id,
+            models.LayerRelation.same_group.is_not(None),
+            models.LayerRelation.same_group != ""
+        ).all()
+        group_numbers = []
+        for g in all_groups:
+            try:
+                group_numbers.append(int(g[0]))
+            except ValueError:
+                pass
+        next_group = str(max(group_numbers) + 1) if group_numbers else "1"
+        print(f"[MERGE] Creating new group: {next_group}", file=sys.stderr)
+
+    anchor_id = layer_ids[0]
+    for other_id in layer_ids[1:]:
+        existing = db.query(models.LayerRelation).filter(
+            models.LayerRelation.project_id == project_id,
+            ((models.LayerRelation.parent_layer_id == anchor_id) & (models.LayerRelation.child_layer_id == other_id)) |
+            ((models.LayerRelation.parent_layer_id == other_id) & (models.LayerRelation.child_layer_id == anchor_id))
+        ).first()
+        if existing:
+            existing.same_group = next_group
+        else:
+            new_rel = models.LayerRelation(
+                project_id=project_id,
+                parent_layer_id=anchor_id,
+                child_layer_id=other_id,
+                relation_type="Same Group",
+                same_group=next_group,
+                source_port="right",
+                target_port="left"
+            )
+            db.add(new_rel)
 
     # Align layouts of all group members to the group bounding box
     layout_rows = (
         db.query(models.GraphLayout)
-        .filter(models.GraphLayout.project_id == project_id, models.GraphLayout.layer_id.in_(all_member_ids))
+        .filter(models.GraphLayout.project_id == project_id, models.GraphLayout.layer_id.in_(layer_ids))
         .all()
     )
     if layout_rows:
-        min_x = min(row.x for row in layout_rows)
-        min_y = min(row.y for row in layout_rows)
-        max_x = max(row.x + row.width for row in layout_rows)
-        max_y = max(row.y + row.height for row in layout_rows)
+        min_x = min(layout.x for layout in layout_rows)
+        min_y = min(layout.y for layout in layout_rows)
+        max_x = max(layout.x + layout.width for layout in layout_rows)
+        max_y = max(layout.y + layout.height for layout in layout_rows)
         new_w = max(180, max_x - min_x)
         new_h = max(72, max_y - min_y)
         
-        for row in layout_rows:
-            row.x = min_x
-            row.y = min_y
-            row.width = new_w
-            row.height = new_h
+        for layout in layout_rows:
+            layout.x = min_x
+            layout.y = min_y
+            layout.width = new_w
+            layout.height = new_h
 
     try:
         db.flush()
@@ -611,6 +586,168 @@ def merge_layers(
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Layer merge created duplicate data") from exc
+    return crud.read_graph(db, project_id)
+
+def _sync_layer_group(db: Session, project_id: uuid.UUID, layer_id: uuid.UUID, new_group: str | None) -> None:
+    """Reconciles this layer's group membership so it ends up labeled `new_group`.
+
+    same_group lives on LayerRelation rows (hub-and-spoke: merge_layers wires
+    every other member to one anchor) and can't represent a lone, partner-less
+    label, so a layer typed into the grid with no matching sibling yet is
+    parked on Layer.pending_group until a second layer claims the same label —
+    at which point both layers' pending_group clears and a real same_group
+    relation is created between them.
+    """
+    layer = db.get(models.Layer, layer_id)
+    new_group = (new_group or "").strip() or None
+
+    old_group_rels = db.query(models.LayerRelation).filter(
+        models.LayerRelation.project_id == project_id,
+        models.LayerRelation.same_group.isnot(None),
+        models.LayerRelation.same_group != "",
+        (models.LayerRelation.parent_layer_id == layer_id) | (models.LayerRelation.child_layer_id == layer_id),
+    ).all()
+    old_labels = {rel.same_group for rel in old_group_rels if rel.same_group != new_group}
+
+    if layer is not None and layer.pending_group and layer.pending_group != new_group:
+        layer.pending_group = None
+
+    for old_label in old_labels:
+        group_rels = db.query(models.LayerRelation).filter(
+            models.LayerRelation.project_id == project_id,
+            models.LayerRelation.same_group == old_label,
+        ).all()
+        member_ids = set()
+        for rel in group_rels:
+            member_ids.add(rel.parent_layer_id)
+            member_ids.add(rel.child_layer_id)
+        member_ids.discard(layer_id)
+
+        for rel in group_rels:
+            if rel.parent_layer_id == layer_id or rel.child_layer_id == layer_id:
+                db.delete(rel)
+        db.flush()
+
+        if len(member_ids) >= 2:
+            # This layer was the hub holding the other members together —
+            # reconnect them so the group survives without it.
+            remaining_rels = db.query(models.LayerRelation).filter(
+                models.LayerRelation.project_id == project_id,
+                models.LayerRelation.same_group == old_label,
+            ).all()
+            connected = set()
+            for rel in remaining_rels:
+                connected.add(rel.parent_layer_id)
+                connected.add(rel.child_layer_id)
+            disconnected = member_ids - connected
+            hub_pool = connected or disconnected
+            if disconnected and hub_pool:
+                hub = next(iter(hub_pool))
+                for other_id in disconnected:
+                    if other_id == hub:
+                        continue
+                    db.add(models.LayerRelation(
+                        project_id=project_id,
+                        parent_layer_id=hub,
+                        child_layer_id=other_id,
+                        relation_type="Same Group",
+                        same_group=old_label,
+                        source_port="right",
+                        target_port="left",
+                    ))
+        elif len(member_ids) == 1:
+            # Only one layer is left in this group — same_group can't express
+            # a lone member, so park the label on that layer instead of
+            # silently dropping it.
+            last_member = db.get(models.Layer, next(iter(member_ids)))
+            if last_member is not None:
+                last_member.pending_group = old_label
+
+    db.flush()
+
+    if new_group:
+        existing_member_rels = db.query(models.LayerRelation).filter(
+            models.LayerRelation.project_id == project_id,
+            models.LayerRelation.same_group == new_group,
+        ).all()
+        member_ids = set()
+        for rel in existing_member_rels:
+            member_ids.add(rel.parent_layer_id)
+            member_ids.add(rel.child_layer_id)
+        member_ids.discard(layer_id)
+
+        pending_partner = None
+        if not member_ids:
+            pending_partner = db.query(models.Layer).filter(
+                models.Layer.project_id == project_id,
+                models.Layer.pending_group == new_group,
+                models.Layer.id != layer_id,
+            ).first()
+
+        if member_ids:
+            anchor_id = next(iter(member_ids))
+            existing_rel = db.query(models.LayerRelation).filter(
+                models.LayerRelation.project_id == project_id,
+                ((models.LayerRelation.parent_layer_id == anchor_id) & (models.LayerRelation.child_layer_id == layer_id))
+                | ((models.LayerRelation.parent_layer_id == layer_id) & (models.LayerRelation.child_layer_id == anchor_id)),
+            ).first()
+            if existing_rel:
+                existing_rel.same_group = new_group
+            else:
+                db.add(models.LayerRelation(
+                    project_id=project_id,
+                    parent_layer_id=anchor_id,
+                    child_layer_id=layer_id,
+                    relation_type="Same Group",
+                    same_group=new_group,
+                    source_port="right",
+                    target_port="left",
+                ))
+            if layer is not None:
+                layer.pending_group = None
+        elif pending_partner is not None:
+            # A second layer just claimed this label — promote both from
+            # pending_group into a real same_group relation.
+            pending_partner.pending_group = None
+            if layer is not None:
+                layer.pending_group = None
+            db.add(models.LayerRelation(
+                project_id=project_id,
+                parent_layer_id=pending_partner.id,
+                child_layer_id=layer_id,
+                relation_type="Same Group",
+                same_group=new_group,
+                source_port="right",
+                target_port="left",
+            ))
+        else:
+            # No other layer has this label yet — park it so it isn't lost,
+            # and it'll link up once a second layer gets the same label.
+            if layer is not None:
+                layer.pending_group = new_group
+
+    db.flush()
+
+
+@router.patch("/layers/{layer_id}/group", response_model=schemas.GraphRead)
+def update_layer_group(
+    project_id: uuid.UUID,
+    layer_id: uuid.UUID,
+    payload: schemas.LayerGroupUpdate,
+    db: Session = Depends(get_db),
+) -> schemas.GraphRead:
+    crud.get_layer_or_404(db, project_id, layer_id)
+    _sync_layer_group(db, project_id, layer_id, payload.group)
+    try:
+        db.flush()
+        report = validate_project_graph(db, project_id)
+        if _blocking_issues(report):
+            db.rollback()
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=[issue.model_dump(mode="json") for issue in report.issues])
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Group update created duplicate data") from exc
     return crud.read_graph(db, project_id)
 
 
@@ -647,11 +784,6 @@ def split_layer(
         ).all()
         for r in all_group_rels:
             db.delete(r)
-        db.flush()
-        report = validate_project_graph(db, project_id)
-        if _blocking_issues(report):
-            db.rollback()
-            raise HTTPException(status_code=422, detail=[issue.model_dump(mode="json") for issue in report.issues])
         db.commit()
         return crud.read_graph(db, project_id)
 
@@ -741,6 +873,7 @@ def split_layer(
             align=item.get("align"),
             align_side=item.get("align_side"),
             metadata_json=item_metadata,
+            box_preset_id=layer.box_preset_id,
         )
         db.add(new_layer)
         db.flush()
@@ -779,7 +912,7 @@ def split_layer(
     existing_layer_ids = {row.id for row in db.query(models.Layer).filter(models.Layer.project_id == project_id).all()}
     relation_style_ids = {row.id for row in db.query(models.RelationStyle).all()}
     existing_keys = {
-        (relation.parent_layer_id, relation.child_layer_id)
+        (relation.parent_layer_id, relation.child_layer_id, (relation.instance or "").strip().lower())
         for relation in db.query(models.LayerRelation).filter(models.LayerRelation.project_id == project_id).all()
     }
 
@@ -791,7 +924,7 @@ def split_layer(
                 "parent_layer_id": str(new_layer_ids[index]),
                 "child_layer_id": str(new_layer_ids[index + 1]),
                 "relation_type": "parent_child",
-                "relation_style_id": default_relation_style_id(db, project_id),
+                "relation_style_id": default_relation_style_id(db),
                 "source_port": "bottom" if payload.orientation == "vertical" else "right",
                 "target_port": "top" if payload.orientation == "vertical" else "left",
             })
@@ -815,7 +948,8 @@ def split_layer(
             continue
         if parent_id not in existing_layer_ids or child_id not in existing_layer_ids:
             continue
-        key = (parent_id, child_id)
+        instance = raw_relation.get("instance")
+        key = (parent_id, child_id, (str(instance).strip().lower() if instance else ""))
         if key in existing_keys:
             continue
         relation_id = _uuid_or_none(raw_relation.get("id")) or uuid.uuid4()
@@ -831,6 +965,7 @@ def split_layer(
             relation_style_id=relation_style_id if relation_style_id in relation_style_ids else None,
             source_port=str(raw_relation.get("source_port") or "right"),
             target_port=str(raw_relation.get("target_port") or "left"),
+            instance=str(instance) if instance else None,
         ))
         existing_keys.add(key)
 
@@ -854,9 +989,7 @@ def update_layout(
     payload: schemas.LayoutUpdate,
     db: Session = Depends(get_db),
 ) -> models.GraphLayout:
-    _label, member_ids = _group_members(db, project_id, layer_id)
-    rows = [upsert_layout(db, project_id, member_id, payload) for member_id in member_ids]
-    layout = next(row for row in rows if row.layer_id == layer_id)
+    layout = upsert_layout(db, project_id, layer_id, payload)
     db.commit()
     db.refresh(layout)
     return layout
@@ -869,9 +1002,7 @@ def update_style(
     payload: schemas.StyleUpdate,
     db: Session = Depends(get_db),
 ) -> models.ShapeStyle:
-    _label, member_ids = _group_members(db, project_id, layer_id)
-    rows = [upsert_style(db, project_id, member_id, payload) for member_id in member_ids]
-    style_row = next(row for row in rows if row.layer_id == layer_id)
+    style_row = upsert_style(db, project_id, layer_id, payload)
     db.commit()
     db.refresh(style_row)
     return style_row
@@ -885,89 +1016,25 @@ def batch_update_graph(
 ) -> schemas.GraphRead:
     crud.get_project_or_404(db, project_id)
     for layout_update in payload.layouts:
-        _label, member_ids = _group_members(db, project_id, layout_update.layer_id)
-        for member_id in member_ids:
-            upsert_layout(
-                db,
-                project_id,
-                member_id,
-                schemas.LayoutUpdate(**layout_update.model_dump(exclude={"layer_id"}, exclude_unset=True)),
-            )
+        upsert_layout(
+            db,
+            project_id,
+            layout_update.layer_id,
+            schemas.LayoutUpdate(**layout_update.model_dump(exclude={"layer_id"}, exclude_unset=True)),
+        )
     for style_update in payload.styles:
-        _label, member_ids = _group_members(db, project_id, style_update.layer_id)
-        for member_id in member_ids:
-            upsert_style(
-                db,
-                project_id,
-                member_id,
-                schemas.StyleUpdate(**style_update.model_dump(exclude={"layer_id"}, exclude_unset=True)),
-            )
+        upsert_style(
+            db,
+            project_id,
+            style_update.layer_id,
+            schemas.StyleUpdate(**style_update.model_dump(exclude={"layer_id"}, exclude_unset=True)),
+        )
     for text_box_update in payload.text_boxes:
         text_box = crud.get_text_box_or_404(db, project_id, text_box_update.id)
         for field, value in text_box_update.model_dump(exclude={"id"}, exclude_unset=True).items():
             setattr(text_box, field, value)
     db.commit()
     return crud.read_graph(db, project_id)
-
-
-@router.post("/box-presets", response_model=schemas.BoxPresetRead, status_code=status.HTTP_201_CREATED)
-def create_box_preset(
-    project_id: uuid.UUID,
-    payload: schemas.BoxPresetCreate,
-    db: Session = Depends(get_db),
-) -> models.BoxPreset:
-    crud.get_project_or_404(db, project_id)
-    if payload.is_default:
-        db.query(models.BoxPreset).update({"is_default": False})
-    preset = models.BoxPreset(**payload.model_dump())
-    db.add(preset)
-    try:
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Box preset name already exists") from exc
-    db.refresh(preset)
-    return preset
-
-
-@router.put("/box-presets/{preset_id}", response_model=schemas.BoxPresetRead)
-def update_box_preset(
-    project_id: uuid.UUID,
-    preset_id: uuid.UUID,
-    payload: schemas.BoxPresetUpdate,
-    db: Session = Depends(get_db),
-) -> models.BoxPreset:
-    preset = crud.get_box_preset_or_404(db, project_id, preset_id)
-    data = payload.model_dump(exclude_unset=True)
-    if data.get("is_default") is True:
-        db.query(models.BoxPreset).filter(models.BoxPreset.id != preset_id).update({"is_default": False})
-    for field, value in data.items():
-        setattr(preset, field, value)
-    try:
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Box preset name already exists") from exc
-    db.refresh(preset)
-    return preset
-
-
-@router.delete("/box-presets/{preset_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_box_preset(project_id: uuid.UUID, preset_id: uuid.UUID, db: Session = Depends(get_db)) -> Response:
-    preset = crud.get_box_preset_or_404(db, project_id, preset_id)
-    was_default = preset.is_default
-    db.delete(preset)
-    db.flush()
-    if was_default:
-        next_preset = (
-            db.query(models.BoxPreset)
-            .order_by(models.BoxPreset.sort_order, models.BoxPreset.name)
-            .first()
-        )
-        if next_preset is not None:
-            next_preset.is_default = True
-    db.commit()
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/layers/{layer_id}/delete-preview", response_model=dict[str, list[schemas.RelationRead]])
@@ -992,55 +1059,6 @@ def delete_layer(project_id: uuid.UUID, layer_id: uuid.UUID, db: Session = Depen
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.post("/relation-styles", response_model=schemas.RelationStyleRead, status_code=status.HTTP_201_CREATED)
-def create_relation_style(
-    project_id: uuid.UUID,
-    payload: schemas.RelationStyleCreate,
-    db: Session = Depends(get_db),
-) -> models.RelationStyle:
-    crud.get_project_or_404(db, project_id)
-    relation_style = models.RelationStyle(**payload.model_dump())
-    db.add(relation_style)
-    try:
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Relation style name already exists") from exc
-    db.refresh(relation_style)
-    return relation_style
-
-
-@router.put("/relation-styles/{style_id}", response_model=schemas.RelationStyleRead)
-def update_relation_style(
-    project_id: uuid.UUID,
-    style_id: uuid.UUID,
-    payload: schemas.RelationStyleUpdate,
-    db: Session = Depends(get_db),
-) -> models.RelationStyle:
-    relation_style = crud.get_relation_style_or_404(db, project_id, style_id)
-    for field, value in payload.model_dump(exclude_unset=True).items():
-        setattr(relation_style, field, value)
-    try:
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Relation style name already exists") from exc
-    db.refresh(relation_style)
-    return relation_style
-
-
-@router.delete("/relation-styles/{style_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_relation_style(project_id: uuid.UUID, style_id: uuid.UUID, db: Session = Depends(get_db)) -> Response:
-    relation_style = crud.get_relation_style_or_404(db, project_id, style_id)
-    db.query(models.LayerRelation).filter(
-        models.LayerRelation.project_id == project_id,
-        models.LayerRelation.relation_style_id == style_id,
-    ).update({"relation_style_id": None})
-    db.delete(relation_style)
-    db.commit()
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
 @router.post("/relations", response_model=schemas.RelationRead, status_code=status.HTTP_201_CREATED)
 def create_relation(
     project_id: uuid.UUID,
@@ -1054,52 +1072,23 @@ def create_relation(
         crud.get_layer_or_404(db, project_id, payload.child_layer_id)
     data = payload.model_dump()
     if data.get("relation_style_id") is None:
-        data["relation_style_id"] = default_relation_style_id(db, project_id)
+        data["relation_style_id"] = default_relation_style_id(db)
     else:
-        crud.get_relation_style_or_404(db, project_id, data["relation_style_id"])
-    parent_ids = {payload.parent_layer_id} if payload.parent_layer_id else {None}
-    child_ids = {payload.child_layer_id} if payload.child_layer_id else {None}
-    if payload.parent_layer_id and payload.child_layer_id and not payload.same_group:
-        parent_label, parent_members = _group_members(db, project_id, payload.parent_layer_id)
-        child_label, child_members = _group_members(db, project_id, payload.child_layer_id)
-        if parent_label and child_label:
-            raise HTTPException(status_code=422, detail="Group-to-group relation is not allowed")
-        parent_ids = parent_members if parent_label else parent_ids
-        child_ids = child_members if child_label else child_ids
-
-    created: list[models.LayerRelation] = []
-    for parent_id in parent_ids:
-        for child_id in child_ids:
-            if parent_id is not None and parent_id == child_id:
-                continue
-            exists = db.query(models.LayerRelation).filter(
-                models.LayerRelation.project_id == project_id,
-                models.LayerRelation.parent_layer_id == parent_id,
-                models.LayerRelation.child_layer_id == child_id,
-                models.LayerRelation.instance == payload.instance,
-            ).first()
-            if exists:
-                continue
-            relation = models.LayerRelation(
-                project_id=project_id,
-                **{**data, "parent_layer_id": parent_id, "child_layer_id": child_id},
-            )
-            db.add(relation)
-            created.append(relation)
-    if not created:
-        raise HTTPException(status_code=409, detail="Relation already exists")
+        crud.get_relation_style_or_404(db, data["relation_style_id"])
+    relation = models.LayerRelation(project_id=project_id, **data)
+    db.add(relation)
     try:
         db.flush()
         report = validate_project_graph(db, project_id)
-        if payload.parent_layer_id is not None and payload.child_layer_id is not None and _blocking_issues(report):
+        if _blocking_issues(report):
             db.rollback()
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=[issue.model_dump(mode="json") for issue in report.issues])
         db.commit()
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Relation already exists") from exc
-    db.refresh(created[0])
-    return created[0]
+    db.refresh(relation)
+    return relation
 
 
 @router.put("/relations/{relation_id}", response_model=schemas.RelationRead)
@@ -1114,13 +1103,13 @@ def update_relation(
         if layer_id is not None:
             crud.get_layer_or_404(db, project_id, layer_id)
     if payload.relation_style_id is not None:
-        crud.get_relation_style_or_404(db, project_id, payload.relation_style_id)
+        crud.get_relation_style_or_404(db, payload.relation_style_id)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(relation, field, value)
     try:
         db.flush()
         report = validate_project_graph(db, project_id)
-        if relation.parent_layer_id is not None and relation.child_layer_id is not None and _blocking_issues(report):
+        if _blocking_issues(report):
             db.rollback()
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=[issue.model_dump(mode="json") for issue in report.issues])
         db.commit()
@@ -1175,7 +1164,6 @@ def delete_text_box(project_id: uuid.UUID, text_box_id: uuid.UUID, db: Session =
 @router.post("/auto-layout", response_model=schemas.GraphRead)
 def auto_layout(project_id: uuid.UUID, db: Session = Depends(get_db)) -> schemas.GraphRead:
     crud.get_project_or_404(db, project_id)
-    ensure_default_relation_styles(db)
     apply_auto_layout(db, project_id)
     db.commit()
     return crud.read_graph(db, project_id)

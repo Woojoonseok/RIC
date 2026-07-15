@@ -42,7 +42,7 @@ describe("geometry", () => {
   });
   it("calculates relation stroke attributes", () => {
     expect(relationStroke({ id: "s", name: "ref", stroke_color: "#123456", stroke_width: 3, line_pattern: "reference", marker_type: "none", sort_order: 0 })).toEqual({
-      stroke: "#123456", strokeWidth: 3, strokeDasharray: "12 6 2 6", markerEnd: undefined,
+      stroke: "#123456", strokeWidth: 3, strokeDasharray: "10 4 2 4", markerEnd: undefined,
     });
   });
   it("snaps to a grid and detects AABB intersection", () => {

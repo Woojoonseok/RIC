@@ -17,14 +17,22 @@ export function portHandlePoint(layout: Layout, port: PortName, distance = 18): 
   return { x: point.x - distance, y: point.y };
 }
 
-export function relationStroke(style?: RelationStyle) {
-  const pattern = style?.line_pattern ?? "solid";
-  return {
-    stroke: style?.stroke_color ?? "#475467",
-    strokeWidth: style?.stroke_width ?? 2,
-    strokeDasharray: pattern === "dashed" ? "10 7" : pattern === "dotted" ? "2 6" : pattern === "reference" ? "12 6 2 6" : undefined,
-    markerEnd: style?.marker_type === "none" ? undefined : "url(#arrow)",
-  };
+export function relationStroke(style?: RelationStyle, type = "", sameGroup?: string | null) {
+  if (sameGroup) return { stroke: "#16a34a", strokeWidth: 3, strokeDasharray: "4 4", markerEnd: undefined };
+  if (style) {
+    const pattern = style.line_pattern;
+    return {
+      stroke: style.stroke_color,
+      strokeWidth: style.stroke_width,
+      strokeDasharray: pattern === "dashed" ? "8 6" : pattern === "dotted" ? "2 6" : pattern === "reference" ? "10 4 2 4" : undefined,
+      markerEnd: style.marker_type === "none" ? undefined : "url(#arrow)",
+    };
+  }
+  const normalized = type.toLowerCase();
+  if (normalized === "reference") return { stroke: "#7c3aed", strokeWidth: 2, strokeDasharray: "10 4 2 4", markerEnd: "url(#arrow)" };
+  if (normalized === "optional" || normalized === "warning") return { stroke: "#0891b2", strokeWidth: 2, strokeDasharray: "2 5", markerEnd: "url(#arrow)" };
+  if (normalized === "overlay") return { stroke: "#f97316", strokeWidth: 2, strokeDasharray: undefined, markerEnd: "url(#arrow)" };
+  return { stroke: "#334155", strokeWidth: 2, strokeDasharray: undefined, markerEnd: "url(#arrow)" };
 }
 
 export function snap(value: number, gridSize = 20): number {
@@ -33,7 +41,7 @@ export function snap(value: number, gridSize = 20): number {
 }
 
 export function intersects(a: Aabb, b: Aabb): boolean {
-  return a.x <= b.x + b.width && a.x + a.width >= b.x && a.y <= b.y + b.height && a.y + a.height >= b.y;
+  return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
 }
 
 export function getClosestPointOnSegment(point: Point, start: Point, end: Point): Point & { t: number; distance: number } {

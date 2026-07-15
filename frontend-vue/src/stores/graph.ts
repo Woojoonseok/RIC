@@ -103,8 +103,27 @@ export const useGraphStore = defineStore("graph", () => {
     setGraph(await app.run("다시 실행", () => api.restoreGraph(project.projectId, graphRestoreFromGraph(target))));
   }
 
+  async function deleteSelection() {
+    if (!project.projectId || !app.selection.length) return;
+    const selected = [...app.selection];
+    for (const item of selected) {
+      if (item.kind === "layer") {
+        const preview = await api.deletePreview(project.projectId, item.id);
+        const relationCount = preview.incoming.length + preview.outgoing.length;
+        if (relationCount && !confirm(`연결 관계 ${relationCount}개와 함께 삭제할까요?`)) continue;
+        await api.deleteLayer(project.projectId, item.id);
+      } else if (item.kind === "relation") {
+        await api.deleteRelation(project.projectId, item.id);
+      } else {
+        await api.deleteText(project.projectId, item.id);
+      }
+    }
+    app.clearSelection();
+    await reloadGraph();
+  }
+
   return {
     rawGraph, displayGraph, undoStack, redoStack, anchorByLayerId, groupToLayerIds, groupSizeByLayerId,
-    setGraph, loadGraph, reloadGraph, mutateGraph, createRelationExpanded, undo, redo,
+    setGraph, loadGraph, reloadGraph, mutateGraph, createRelationExpanded, undo, redo, deleteSelection,
   };
 });
