@@ -15,17 +15,20 @@ const selected = ref<string[]>([]);
 const grid = ref<InstanceType<typeof SpreadsheetGrid> | null>(null);
 const busy = ref(false);
 const status = ref("준비");
+const defaultBoxPreset = computed(() => reference.boxPresets.find((preset) => preset.is_default) ?? reference.boxPresets[0]);
 const columns = computed(() => [
   { key: "name", label: "Layer 명", width: 180 }, { key: "layer_number", label: "Layer 번호", width: 120 },
   { key: "mask_main_fld", label: "Mask MAIN FLD", width: 140 }, { key: "mask_sl_fld", label: "Mask SL FLD", width: 130 },
   { key: "pr_wf", label: "Mask PR", width: 110 }, { key: "dev_wf", label: "WF Dev", width: 110 },
-  { key: "pr_type", label: "WF PR종류", width: 120 }, { key: "light_source", label: "광원", width: 100 },
+  { key: "pr_type", label: "WF PR종류", width: 120 },
+  { key: "light_source", label: "광원", width: 150, options: reference.boxPresets.map((preset) => ({ value: preset.name, label: preset.is_default ? `${preset.name} (기본)` : preset.name })), defaultValue: defaultBoxPreset.value?.name ?? "" },
   { key: "pr_open_close", label: "PR Open/Close", width: 130 },
   ...reference.keyLayoutTypes.map((layout) => ({ key: `priority:${layout.id}`, label: `우선순위 ${layout.name}`, width: 145 })),
   { key: "validation_rule", label: "검증 Rule", width: 180 }, { key: "comment", label: "Comment", width: 220 },
 ]);
 const rows = computed<Row[]>(() => reference.layerMasters.map((master) => ({
   ...master,
+  light_source: master.light_source || defaultBoxPreset.value?.name || "",
   ...Object.fromEntries(reference.keyLayoutTypes.map((layout) => [`priority:${layout.id}`, master.priorities[layout.id] ?? ""])),
 })));
 
@@ -34,6 +37,7 @@ function selectRow(id: string, additive: boolean) {
   if (!additive) selected.value = [id];
   else selected.value = selected.value.includes(id) ? selected.value.filter((item) => item !== id) : [...selected.value, id];
 }
+function setSelectedRows(ids: string[]) { selected.value = ids }
 async function commit(nextRows: Row[]) {
   busy.value = true;
   let completed = 0;
@@ -88,6 +92,6 @@ onMounted(load);
       <div class="button-strip"><button :disabled="busy" @click="grid?.addDraftRow()">새 Layer 정보</button><button class="primary" :disabled="selected.length !== 1 || !project.projectId || busy" :title="project.projectId ? '선택한 기준으로 현재 프로젝트에 Layer를 만듭니다' : '먼저 프로젝트를 선택하세요'" @click="createLayer">현재 프로젝트에 Layer 생성</button><button class="danger" :disabled="!selected.length || busy" @click="removeSelected">선택 삭제</button></div>
     </div>
     <div class="sheet-help">셀 더블클릭 또는 F2로 편집 · Ctrl+C / Ctrl+V로 Excel 범위 복사·붙여넣기 · 행 번호를 클릭해 선택</div>
-    <div class="panel data-panel"><SpreadsheetGrid ref="grid" :columns="columns" :rows="rows" :selected-rows="selected" empty-hint="새 Layer 정보를 추가하세요." @row-select="selectRow" @commit="commit"/></div>
+    <div class="panel data-panel"><SpreadsheetGrid ref="grid" :columns="columns" :rows="rows" :selected-rows="selected" empty-hint="새 Layer 정보를 추가하세요." @row-select="selectRow" @row-selection="setSelectedRows" @commit="commit"/></div>
   </section>
 </template>

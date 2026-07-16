@@ -48,6 +48,8 @@ const relationRows = computed<Row[]>(() => {
 
 function selectLayer(id: string, additive: boolean) { app.select({ kind: "layer", id }, additive) }
 function selectRelation(id: string, additive: boolean) { app.select({ kind: "relation", id }, additive) }
+function setLayerSelection(ids: string[]) { app.selection = ids.map((id) => ({ kind: "layer" as const, id })) }
+function setRelationSelection(ids: string[]) { app.selection = ids.map((id) => ({ kind: "relation" as const, id })) }
 async function addLayer() {
   const index = (graph.rawGraph?.layers.length ?? 0) + 1;
   await graph.mutateGraph("Layer 행 추가", () => api.createLayer(project.projectId, { name: `Layer ${index}`, x: 100 + index * 20, y: 100 + index * 20 }));
@@ -151,8 +153,8 @@ async function uploadFile(event: Event) {
       </div>
       <div v-if="tab === 'align' && selectedLayerIds.length" class="bulk-connect"><span>Connect {{ selectedLayerIds.length }} selected →</span><select v-model="connectTargetId"><option value="">Target Layer</option><option v-for="layer in graph.rawGraph.layers" :key="layer.id" :value="layer.id">{{ layer.name }}</option></select><button :disabled="!connectTargetId" @click="connectSelected">Connect</button></div>
       <input ref="upload" hidden type="file" accept=".xlsx,.xls,.csv,.tsv" @change="uploadFile">
-      <SpreadsheetGrid v-if="tab === 'align'" :columns="layerColumns" :rows="layerRows" :selected-rows="selectedLayerIds" empty-hint="Layer 행을 추가하거나 붙여넣으세요." @row-select="selectLayer" @commit="commitLayers"/>
-      <SpreadsheetGrid v-else :columns="relationColumns" :rows="relationRows" :selected-rows="selectedRelationIds" empty-hint="관계 행을 추가하거나 붙여넣으세요." @row-select="selectRelation" @commit="commitRelations"/>
+      <SpreadsheetGrid v-if="tab === 'align'" :columns="layerColumns" :rows="layerRows" :selected-rows="selectedLayerIds" empty-hint="Layer 행을 추가하거나 붙여넣으세요." @row-select="selectLayer" @row-selection="setLayerSelection" @commit="commitLayers"/>
+      <SpreadsheetGrid v-else :columns="relationColumns" :rows="relationRows" :selected-rows="selectedRelationIds" empty-hint="관계 행을 추가하거나 붙여넣으세요." @row-select="selectRelation" @row-selection="setRelationSelection" @commit="commitRelations"/>
     </div>
     <div v-else class="empty-page">프로젝트를 선택하세요.</div>
     <div v-if="pasteTarget" class="paste-overlay" @click="pasteTarget = null">
