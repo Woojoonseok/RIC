@@ -8,9 +8,49 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 
 
-def validate_project_graph(db: Session, project_id: uuid.UUID) -> schemas.ValidationReport:
-    layers = db.query(models.Layer).filter(models.Layer.project_id == project_id).all()
-    relations = db.query(models.LayerRelation).filter(models.LayerRelation.project_id == project_id).all()
+def validate_project_graph(
+    db: Session,
+    project_id: uuid.UUID,
+    align_tree_id: uuid.UUID | None = None,
+) -> schemas.ValidationReport:
+    """Validate one Align Tree without observing sibling-tree rows.
+
+    The optional id exists only for v1 bundle compatibility; new API routes
+    always pass an explicit tree id.
+    """
+    if align_tree_id is None:
+        tree = (
+            db.query(models.AlignTree)
+            .filter(
+                models.AlignTree.project_id == project_id,
+                models.AlignTree.deleted_at.is_(None),
+            )
+            .order_by(models.AlignTree.is_default.desc(), models.AlignTree.created_at, models.AlignTree.id)
+            .first()
+        )
+        if tree is None:
+            return schemas.ValidationReport(ok=True, issues=[])
+        align_tree_id = tree.id
+    else:
+        tree = db.get(models.AlignTree, align_tree_id)
+        if tree is None or tree.project_id != project_id or tree.deleted_at is not None:
+            return schemas.ValidationReport(
+                ok=False,
+                issues=[schemas.ValidationIssue(
+                    code="align_tree_missing",
+                    severity="error",
+                    message="Align Tree does not belong to the project.",
+                )],
+            )
+
+    layers = db.query(models.Layer).filter(
+        models.Layer.project_id == project_id,
+        models.Layer.align_tree_id == align_tree_id,
+    ).all()
+    relations = db.query(models.LayerRelation).filter(
+        models.LayerRelation.project_id == project_id,
+        models.LayerRelation.align_tree_id == align_tree_id,
+    ).all()
     layer_ids = {layer.id for layer in layers}
     issues: list[schemas.ValidationIssue] = []
 

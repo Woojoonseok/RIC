@@ -1,17 +1,20 @@
 <script setup lang="ts">
-import { useAppStore } from "../../stores/app";
-import { useGraphStore } from "../../stores/graph";
+import { useRoute } from "vue-router";
+import { useProjectStore } from "../../stores/project";
 
-const app = useAppStore();
-const graph = useGraphStore();
-const tabs = ["data", "editor", "validation", "export"] as const;
+const route = useRoute();
+const project = useProjectStore();
+const tabs = [
+  { name: "tree-data", label: "Data" },
+  { name: "tree-editor", label: "Editor" },
+  { name: "tree-validation", label: "Validation" },
+  { name: "tree-export", label: "Export" },
+] as const;
 </script>
 
 <template>
-  <nav class="workspace-tabs" aria-label="Project workspace">
-    <button v-for="tab in tabs" :key="tab" :class="{ active: app.view === tab }" @click="app.view = tab">
-      {{ tab === "data" ? "Data" : tab === "editor" ? "Editor" : tab === "validation" ? "Validation" : "Export" }}
-    </button>
-    <span>{{ graph.rawGraph?.project.name || "프로젝트를 선택하세요" }}</span>
+  <nav class="workspace-tabs" aria-label="Align Tree workspace">
+    <RouterLink v-for="tab in tabs" :key="tab.name" :to="{ name: tab.name, params: { projectId: route.params.projectId, treeId: route.params.treeId } }">{{ tab.label }}</RouterLink>
+    <span><b v-if="project.readOnly" class="workspace-access-readonly">보기 전용</b>{{ project.currentTree?.name || "Align Tree" }}<em :class="`autosave-${project.autosaveState}`">{{ project.autosaveLabel }}</em></span>
   </nav>
 </template>

@@ -4,9 +4,9 @@ import { cloneJson } from "../../domain/clone";
 import { parseTsv, toTsv } from "../../domain/tsv";
 
 export interface GridOption { value: string; label: string }
-export interface GridColumn { key: string; label: string; width?: number; readonly?: boolean; options?: GridOption[]; defaultValue?: unknown }
-const props = defineProps<{ columns: GridColumn[]; rows: Array<Record<string, unknown>>; rowKey?: string; selectedRows?: string[]; emptyHint?: string }>();
-const emit = defineEmits<{ commit: [rows: Array<Record<string, unknown>>]; rowSelect: [id: string, additive: boolean]; rowSelection: [ids: string[]]; addRow: [] }>();
+export interface GridColumn { key: string; label: string; width?: number; readonly?: boolean; options?: GridOption[]; defaultValue?: unknown; action?: boolean }
+const props = defineProps<{ columns: GridColumn[]; rows: Array<Record<string, unknown>>; rowKey?: string; selectedRows?: string[]; emptyHint?: string; autoCommit?: boolean; readonly?: boolean }>();
+const emit = defineEmits<{ commit: [rows: Array<Record<string, unknown>>]; rowSelect: [id: string, additive: boolean]; rowSelection: [ids: string[]]; cellAction: [row: Record<string, unknown>, key: string]; addRow: [] }>();
 const draft = ref<Array<Record<string, unknown>>>(cloneJson(props.rows));
 const active = ref({ row: 0, col: 0 });
 const anchor = ref({ row: 0, col: 0 });
@@ -53,16 +53,20 @@ async function copy(cut = false) {
   if (cut) clearSelection();
 }
 function clearSelection() {
+  if (props.readonly) return;
   const s = selected.value;
   for (let row = s.r1; row <= s.r2; row += 1) for (let col = s.c1; col <= s.c2; col += 1) if (!props.columns[col].readonly) draft.value[row][props.columns[col].key] = props.columns[col].defaultValue ?? "";
+  if (props.autoCommit) commit();
 }
 async function paste() {
+  if (props.readonly) return;
   const cells = parseTsv(await navigator.clipboard.readText());
   while (draft.value.length < active.value.row + cells.length) draft.value.push(Object.fromEntries(props.columns.map((column) => [column.key, ""])));
   cells.forEach((row, rowOffset) => row.forEach((value, colOffset) => {
     const column = props.columns[active.value.col + colOffset];
     if (column && !column.readonly && (!column.options || column.options.some((option) => option.value === value))) draft.value[active.value.row + rowOffset][column.key] = value;
   }));
+  if (props.autoCommit) commit();
 }
 function onKey(event: KeyboardEvent) {
   if (editing.value) {
@@ -92,9 +96,13 @@ function autoFit(column: GridColumn) {
   const longest = Math.max(column.label.length, ...draft.value.map((row) => String(row[column.key] ?? "").length));
   widths.value[column.key] = Math.min(360, Math.max(72, longest * 9 + 28));
 }
-function editCell(row: number, col: number) { activate(row, col); editing.value = true; void nextTick(() => (document.querySelector(".sheet-cell.editing input, .sheet-cell.editing select") as HTMLInputElement | HTMLSelectElement | null)?.focus()) }
+function editCell(row: number, col: number) { if (props.readonly) return; activate(row, col); editing.value = true; void nextTick(() => (document.querySelector(".sheet-cell.editing input, .sheet-cell.editing select") as HTMLInputElement | HTMLSelectElement | null)?.focus()) }
 function commit() { emit("commit", cloneJson(draft.value)) }
+function commitRow(row: number) { if (props.autoCommit && draft.value[row]) emit("commit", [cloneJson(draft.value[row])]) }
+function finishEditing(row: number) { if (!editing.value) return; editing.value = false; commitRow(row) }
+function commitSelect(row: number) { editing.value = false; commitRow(row) }
 function addDraftRow() {
+  if (props.readonly) return;
   draft.value.push(Object.fromEntries(props.columns.map((column) => [column.key, column.defaultValue ?? ""])));
   active.value = { row: draft.value.length - 1, col: 0 };
   anchor.value = { ...active.value };
@@ -114,14 +122,15 @@ defineExpose({ addDraftRow });
     <div v-for="(row, rowIndex) in draft" :key="String(row[rowKey ?? 'id'] ?? rowIndex)" class="sheet-row" :class="{ 'row-selected': selectedRows?.includes(String(row[rowKey ?? 'id'])) }" :style="{ gridTemplateColumns: gridColumns }">
       <button type="button" class="sheet-row-number" @click="selectRow(rowIndex, $event)"><span class="row-check" :class="{ checked: selectedRows?.includes(String(row[rowKey ?? 'id'])) }" role="checkbox" :aria-checked="selectedRows?.includes(String(row[rowKey ?? 'id']))" @click.stop="toggleRow(rowIndex)">✓</span><span>{{ rowIndex + 1 }}</span></button>
       <div v-for="(column, colIndex) in columns" :key="column.key" class="sheet-cell" :class="{ selected: isSelected(rowIndex, colIndex), active: active.row === rowIndex && active.col === colIndex, editing: editing && active.row === rowIndex && active.col === colIndex }" @mousedown="activate(rowIndex, colIndex, $event.shiftKey)" @dblclick="editCell(rowIndex, colIndex)">
-        <select v-if="column.options && !column.readonly" v-model="row[column.key] as string" class="sheet-inline-select" @mousedown.stop @click.stop @change="editing = false"><option v-for="option in column.options" :key="option.value" :value="option.value">{{ option.label }}</option></select>
-        <input v-else-if="editing && active.row === rowIndex && active.col === colIndex && !column.readonly" v-model="row[column.key] as string" @blur="editing = false" @keydown.enter.stop.prevent="editing = false; move(1, 0)" />
+        <button v-if="column.action" type="button" class="sheet-cell-action" :disabled="readonly" @mousedown.stop @click.stop="emit('cellAction', cloneJson(row), column.key)"><span>{{ row[column.key] || '선택' }}</span><b>›</b></button>
+        <select v-else-if="column.options && !column.readonly" v-model="row[column.key] as string" class="sheet-inline-select" :disabled="readonly" @mousedown.stop @click.stop @change="commitSelect(rowIndex)"><option v-for="option in column.options" :key="option.value" :value="option.value">{{ option.label }}</option></select>
+        <input v-else-if="editing && active.row === rowIndex && active.col === colIndex && !column.readonly" v-model="row[column.key] as string" :disabled="readonly" @blur="finishEditing(rowIndex)" @keydown.enter.stop.prevent="finishEditing(rowIndex); move(1, 0)" />
         <span v-else>{{ row[column.key] }}</span>
       </div>
     </div>
     <div v-if="!draft.length" class="sheet-empty">{{ emptyHint || '행이 없습니다.' }}</div>
   </div>
-  <div class="sheet-actions">
+  <div v-if="!autoCommit" class="sheet-actions">
     <button type="button" @click="addDraftRow">행 추가</button>
     <button type="button" class="primary" @click="commit">변경사항 저장</button>
   </div>

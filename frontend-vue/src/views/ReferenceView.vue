@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { api } from "../api/client";
 import { cloneJson } from "../domain/clone";
+import { useProjectStore } from "../stores/project";
 import { useReferenceStore } from "../stores/reference";
 import type { ReferenceResource } from "../types";
 
@@ -63,6 +64,7 @@ const linePatterns = [
 const lineWidths = [1, 2, 3, 4, 6, 8];
 
 const reference = useReferenceStore();
+const project = useProjectStore();
 const active = ref<ReferenceResource>("key-layout-types");
 const drafts = ref<Record<ReferenceResource, Row[]>>({
   "key-layout-types": [], "key-drawing-types": [], "key-shapes": [], "relation-styles": [], "box-presets": [],
@@ -103,6 +105,7 @@ function nextUniqueName(prefix: string) {
   return name;
 }
 async function add() {
+  if (!project.canEdit) return;
   const resource = active.value;
   const row = Object.fromEntries(activeConfig.value.fields.filter((field) => field.type !== "box-preview").map((field) => [field.key, field.type === "boolean" ? false : field.type === "number" ? 0 : ""]));
   row.sort_order = drafts.value[resource].length;
@@ -113,12 +116,14 @@ async function add() {
   query.value = "";
   busy.value = true;
   status.value = "새 항목 추가 중…";
+  project.markSaving();
   try {
     const saved = await api.createReference(resource, normalize(row, resource) as never);
     drafts.value[resource].unshift(cloneJson(saved) as unknown as Row);
     await reference.loadAll();
     status.value = "새 항목이 추가되었습니다";
-  } catch (error) { status.value = error instanceof Error ? error.message : String(error) }
+    project.markSaved();
+  } catch (error) { status.value = error instanceof Error ? error.message : String(error); project.handleMutationError(error) }
   finally { busy.value = false }
 }
 function normalize(row: Row, resource: ReferenceResource) {
@@ -130,23 +135,26 @@ function normalize(row: Row, resource: ReferenceResource) {
   return data;
 }
 async function save(row: Row, resource: ReferenceResource) {
-  if (!row.id) return;
+  if (!row.id || !project.canEdit) return;
   if (savingRows.has(row)) { queuedRows.add(row); return }
   savingRows.add(row);
   status.value = "변경사항 저장 중…";
+  project.markSaving();
   try {
     const data = normalize(row, resource);
     const saved = await api.updateReference(resource, row.id, data as never);
     Object.assign(row, cloneJson(saved));
     await reference.loadAll();
     status.value = "모든 변경사항 저장됨";
-  } catch (error) { status.value = error instanceof Error ? error.message : String(error) }
+    project.markSaved();
+  } catch (error) { status.value = error instanceof Error ? error.message : String(error); project.handleMutationError(error) }
   finally {
     savingRows.delete(row);
     if (queuedRows.delete(row)) void save(row, resource);
   }
 }
 function scheduleSave(row: Row) {
+  if (!project.canEdit) return;
   const resource = active.value;
   const timer = saveTimers.get(row);
   if (timer) clearTimeout(timer);
@@ -154,6 +162,7 @@ function scheduleSave(row: Row) {
   saveTimers.set(row, setTimeout(() => { saveTimers.delete(row); void save(row, resource) }, 500));
 }
 function saveNow(row: Row) {
+  if (!project.canEdit) return;
   const resource = active.value;
   const timer = saveTimers.get(row);
   if (timer) clearTimeout(timer);
@@ -161,6 +170,7 @@ function saveNow(row: Row) {
   void save(row, resource);
 }
 function choose(row: Row, key: string, value: string | number | boolean, event?: Event) {
+  if (!project.canEdit) return;
   row[key] = value;
   (event?.currentTarget as HTMLElement | null)?.closest("details")?.removeAttribute("open");
   saveNow(row);
@@ -168,25 +178,27 @@ function choose(row: Row, key: string, value: string | number | boolean, event?:
 function colorLabel(value: unknown) { return String(value || "#000000").toUpperCase() }
 function dashFor(value: unknown) { return linePatterns.find((option) => option.value === value)?.dash || "" }
 async function remove(row: Row) {
-  if (!row.id) return;
+  if (!row.id || !project.canEdit) return;
   if (!confirm("이 기준정보를 삭제할까요?")) return;
   busy.value = true;
+  project.markSaving();
   try {
     await api.deleteReference(active.value, row.id);
     drafts.value[active.value] = drafts.value[active.value].filter((item) => item !== row);
     await reference.loadAll();
     status.value = "삭제 완료";
-  } catch (error) { status.value = error instanceof Error ? error.message : String(error) }
+    project.markSaved();
+  } catch (error) { status.value = error instanceof Error ? error.message : String(error); project.handleMutationError(error) }
   finally { busy.value = false }
 }
 onMounted(load);
 </script>
 
 <template>
-  <section class="page wide-page reference-page">
+  <section class="page wide-page reference-page" :class="{ 'is-read-only': !project.canEdit }">
     <div class="page-title">
-      <div><p class="eyebrow">GLOBAL REFERENCE DATA</p><h1>기준정보</h1><p>모든 프로젝트가 함께 사용하는 공정 기준과 Editor 스타일입니다.</p></div>
-      <span class="status-pill" :class="{ busy: busy || savingRows.size }"><i></i>{{ busy ? '처리 중…' : status }}</span>
+      <div><p class="eyebrow">PROJECT REFERENCE DATA</p><h1>기준정보</h1><p>{{ project.currentProject?.name }} 프로젝트의 공정 기준과 Editor 스타일입니다.</p></div>
+      <span class="status-pill" :class="{ busy: busy || savingRows.size }"><i></i>{{ !project.canEdit ? '보기 전용' : busy ? '처리 중…' : status }}</span>
     </div>
     <nav class="resource-tabs" aria-label="기준정보 종류">
       <button v-for="(config, key) in resources" :key="key" :class="{ active: active === key }" @click="active = key; query = ''">
@@ -196,7 +208,7 @@ onMounted(load);
     <div class="panel data-panel reference-workbench">
       <div class="panel-heading reference-heading">
         <div><h2>{{ activeConfig.label }}</h2><small>{{ activeConfig.description }} · 변경사항은 자동으로 저장됩니다.</small></div>
-        <div class="button-strip"><input v-model="query" class="reference-search" placeholder="항목 검색…"><button class="secondary-icon" :disabled="busy" title="다시 불러오기" @click="load">↻</button><button class="primary" :disabled="busy" @click="add">＋ 새 항목</button></div>
+        <div class="button-strip"><input v-model="query" class="reference-search" placeholder="항목 검색…"><button class="secondary-icon" :disabled="busy" title="다시 불러오기" @click="load">↻</button><button class="primary" :disabled="busy || !project.canEdit" @click="add">＋ 새 항목</button></div>
       </div>
       <div class="reference-table">
         <div class="reference-row reference-head" :style="{ gridTemplateColumns: gridColumns }"><span v-for="field in activeConfig.fields" :key="field.key">{{ field.label }}</span><span>작업</span></div>
@@ -205,7 +217,7 @@ onMounted(load);
             <div v-if="field.type === 'box-preview'" class="box-preset-preview" :style="{ background: String(row.fill_color), borderColor: String(row.stroke_color), borderWidth: `${row.stroke_width}px`, color: String(row.text_color), fontSize: `${Math.min(Number(row.font_size), 18)}px`, aspectRatio: `${row.width} / ${row.height}` }"><span>{{ row.name || 'Layer Box' }}</span></div>
             <details v-else-if="field.type === 'color'" class="visual-picker color-picker">
               <summary><i :style="{ background: String(row[field.key]) }"></i><span>{{ colorLabel(row[field.key]) }}</span><b>⌄</b></summary>
-              <div class="picker-popover color-popover"><p>테마 색상</p><div class="swatch-grid"><button v-for="color in themeColors" :key="color" :class="{ selected: row[field.key] === color }" :style="{ background: color }" :title="color" @click.prevent="choose(row, field.key, color, $event)"></button></div><label>직접 입력<input v-model="row[field.key] as string" type="color" @change="saveNow(row)"><input v-model="row[field.key] as string" type="text" @input="scheduleSave(row)" @blur="saveNow(row)"></label></div>
+              <div class="picker-popover color-popover"><p>테마 색상</p><div class="swatch-grid"><button v-for="color in themeColors" :key="color" :disabled="!project.canEdit" :class="{ selected: row[field.key] === color }" :style="{ background: color }" :title="color" @click.prevent="choose(row, field.key, color, $event)"></button></div><label>직접 입력<input v-model="row[field.key] as string" :disabled="!project.canEdit" type="color" @change="saveNow(row)"><input v-model="row[field.key] as string" :disabled="!project.canEdit" type="text" @input="scheduleSave(row)" @blur="saveNow(row)"></label></div>
             </details>
             <details v-else-if="field.type === 'line-pattern'" class="visual-picker line-picker">
               <summary><svg viewBox="0 0 120 24"><line x1="6" y1="12" x2="114" y2="12" :stroke="String(row.stroke_color)" stroke-width="3" :stroke-dasharray="dashFor(row[field.key])" stroke-linecap="round"/></svg><b>⌄</b></summary>
@@ -219,11 +231,11 @@ onMounted(load);
               <summary><svg viewBox="0 0 120 24"><defs><marker :id="`summary-arrow-${index}`" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" :fill="String(row.stroke_color)"/></marker></defs><line x1="6" y1="12" x2="108" y2="12" :stroke="String(row.stroke_color)" stroke-width="3" :marker-end="row[field.key] === 'arrow' ? `url(#summary-arrow-${index})` : undefined"/></svg><b>⌄</b></summary>
               <div class="picker-popover option-popover marker-options"><button :class="{ selected: row[field.key] === 'none' }" @click.prevent="choose(row, field.key, 'none', $event)"><svg viewBox="0 0 130 24"><line x1="5" y1="12" x2="125" y2="12" :stroke="String(row.stroke_color)" stroke-width="3"/></svg><span>끝 모양 없음</span></button><button :class="{ selected: row[field.key] === 'arrow' }" @click.prevent="choose(row, field.key, 'arrow', $event)"><svg viewBox="0 0 130 24"><path d="M5 12 H118 M110 5 L120 12 L110 19" fill="none" :stroke="String(row.stroke_color)" stroke-width="3" stroke-linejoin="round"/></svg><span>화살표</span></button></div>
             </details>
-            <label v-else-if="field.type === 'boolean'" class="boolean-cell"><input v-model="row[field.key] as boolean" type="checkbox" @change="saveNow(row)"><span>{{ row[field.key] ? '사용' : '미사용' }}</span></label>
-            <select v-else-if="field.type === 'select'" v-model="row[field.key] as string" @change="saveNow(row)"><option v-for="option in field.options" :key="option" :value="option">{{ option }}</option></select>
-            <input v-else v-model="row[field.key] as string | number" :type="field.type === 'number' ? 'number' : 'text'" @input="scheduleSave(row)" @blur="saveNow(row)">
+            <label v-else-if="field.type === 'boolean'" class="boolean-cell"><input v-model="row[field.key] as boolean" :disabled="!project.canEdit" type="checkbox" @change="saveNow(row)"><span>{{ row[field.key] ? '사용' : '미사용' }}</span></label>
+            <select v-else-if="field.type === 'select'" v-model="row[field.key] as string" :disabled="!project.canEdit" @change="saveNow(row)"><option v-for="option in field.options" :key="option" :value="option">{{ option }}</option></select>
+            <input v-else v-model="row[field.key] as string | number" :disabled="!project.canEdit" :type="field.type === 'number' ? 'number' : 'text'" @input="scheduleSave(row)" @blur="saveNow(row)">
           </template>
-          <div class="row-actions"><button class="danger ghost delete-icon" :disabled="busy" title="삭제" aria-label="삭제" @click="remove(row)">×</button></div>
+          <div class="row-actions"><button class="danger ghost delete-icon" :disabled="busy || !project.canEdit" title="삭제" aria-label="삭제" @click="remove(row)">×</button></div>
         </div>
         <div v-if="!visibleRows.length" class="reference-empty">{{ query ? '검색 결과가 없습니다.' : '등록된 기준정보가 없습니다. 새 행을 추가해 주세요.' }}</div>
       </div>

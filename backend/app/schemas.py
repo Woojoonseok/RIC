@@ -16,12 +16,164 @@ class ProjectCreate(BaseModel):
     description: str | None = None
 
 
+class ProjectUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    description: str | None = None
+
+
 class ProjectRead(OrmModel):
     id: uuid.UUID
     name: str
     description: str | None
     created_at: datetime
     updated_at: datetime
+    revision: int = 0
+    access_role: Literal["owner", "admin", "editor", "viewer"] | None = None
+    is_locked: bool = False
+    locked_by_me: bool = False
+    lock_expires_at: datetime | None = None
+
+
+class ActorSummary(BaseModel):
+    id: uuid.UUID
+    display_name: str
+
+
+class ProjectPublicRead(ProjectRead):
+    creator: ActorSummary | None = None
+    creator_display_name: str
+    my_role: Literal["owner", "admin", "editor", "viewer"] | None = None
+    access_request_status: Literal["pending", "approved", "rejected", "cancelled"] | None = None
+    align_tree_count: int = 0
+    member_count: int = 0
+    is_public: bool = True
+    is_legacy_unclaimed: bool = False
+
+
+class ActorUpdate(BaseModel):
+    display_name: str = Field(min_length=1, max_length=120)
+
+
+class ProjectMemberCreate(BaseModel):
+    actor_id: uuid.UUID
+    role: Literal["admin", "editor", "viewer"]
+
+
+class ProjectMemberUpdate(BaseModel):
+    role: Literal["admin", "editor", "viewer"]
+
+
+class ProjectMemberRead(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    actor: ActorSummary
+    role: Literal["owner", "admin", "editor", "viewer"]
+    added_by_actor_id: uuid.UUID | None = None
+    created_at: datetime
+
+
+class AccessRequestCreate(BaseModel):
+    requested_role: Literal["viewer", "editor"] = "viewer"
+    message: str | None = Field(default=None, max_length=1000)
+
+
+class AccessRequestDecision(BaseModel):
+    status: Literal["approved", "rejected"]
+    role: Literal["admin", "editor", "viewer"] | None = None
+    decision_note: str | None = Field(default=None, max_length=1000)
+
+
+class AccessRequestRead(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    requester: ActorSummary
+    requested_role: Literal["viewer", "editor"]
+    message: str | None
+    status: Literal["pending", "approved", "rejected", "cancelled"]
+    reviewed_by: ActorSummary | None = None
+    reviewed_at: datetime | None = None
+    decision_note: str | None = None
+    created_at: datetime
+
+
+class AuditEventRead(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    align_tree_id: uuid.UUID | None = None
+    actor: ActorSummary | None = None
+    actor_label_snapshot: str
+    event_type: str
+    target_type: str
+    target_id: uuid.UUID | None = None
+    summary: str
+    details_json: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+
+
+class AlignTreeCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    description: str | None = None
+
+
+class AlignTreeUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    description: str | None = None
+
+
+class AlignTreeRead(OrmModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    name: str
+    description: str | None
+    revision: int
+    is_default: bool
+    created_by_actor_id: uuid.UUID | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ActorRead(OrmModel):
+    id: uuid.UUID
+    display_name: str
+    identity_provider: Literal["anonymous"] = "anonymous"
+
+
+class ShareLinkCreate(BaseModel):
+    permission: Literal["viewer", "editor"]
+    expires_at: datetime | None = None
+
+
+class ShareLinkRead(OrmModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    permission: Literal["viewer", "editor"]
+    created_at: datetime
+    expires_at: datetime | None = None
+    revoked_at: datetime | None = None
+
+
+class ShareLinkCreated(ShareLinkRead):
+    token: str
+    share_path: str
+
+
+class ShareClaim(BaseModel):
+    token: str = Field(min_length=20, max_length=512)
+
+
+class LeaseAcquire(BaseModel):
+    client_instance_id: str = Field(min_length=1, max_length=120)
+    force: bool = False
+
+
+class LeaseHeartbeat(BaseModel):
+    client_instance_id: str = Field(min_length=1, max_length=120)
+
+
+class LeaseRead(BaseModel):
+    lease_token: str
+    expires_at: datetime
+    revision: int
 
 
 class LayerBase(BaseModel):
@@ -70,6 +222,7 @@ class LayerGroupUpdate(BaseModel):
 class LayerRead(OrmModel, LayerBase):
     id: uuid.UUID
     project_id: uuid.UUID
+    align_tree_id: uuid.UUID | None = None
     # Only ever set/cleared via PATCH .../layers/{id}/group — see _sync_layer_group.
     pending_group: str | None = None
 
@@ -89,6 +242,7 @@ class LayoutBatchUpdate(LayoutUpdate):
 class LayoutRead(OrmModel):
     id: uuid.UUID
     project_id: uuid.UUID
+    align_tree_id: uuid.UUID | None = None
     layer_id: uuid.UUID
     x: float
     y: float
@@ -112,6 +266,7 @@ class StyleBatchUpdate(StyleUpdate):
 class StyleRead(OrmModel):
     id: uuid.UUID
     project_id: uuid.UUID
+    align_tree_id: uuid.UUID | None = None
     layer_id: uuid.UUID
     fill_color: str
     stroke_color: str
@@ -152,6 +307,7 @@ class BoxPresetUpdate(BaseModel):
 
 class BoxPresetRead(OrmModel, BoxPresetBase):
     id: uuid.UUID
+    project_id: uuid.UUID | None = None
 
 
 class RelationStyleBase(BaseModel):
@@ -178,6 +334,7 @@ class RelationStyleUpdate(BaseModel):
 
 class RelationStyleRead(OrmModel, RelationStyleBase):
     id: uuid.UUID
+    project_id: uuid.UUID | None = None
 
 
 class KeyLayoutTypeBase(BaseModel):
@@ -198,6 +355,7 @@ class KeyLayoutTypeUpdate(BaseModel):
 
 class KeyLayoutTypeRead(OrmModel, KeyLayoutTypeBase):
     id: uuid.UUID
+    project_id: uuid.UUID | None = None
 
 
 class KeyDrawingTypeBase(BaseModel):
@@ -226,6 +384,7 @@ class KeyDrawingTypeUpdate(BaseModel):
 
 class KeyDrawingTypeRead(OrmModel, KeyDrawingTypeBase):
     id: uuid.UUID
+    project_id: uuid.UUID | None = None
 
 
 class KeyShapeBase(BaseModel):
@@ -246,6 +405,7 @@ class KeyShapeUpdate(BaseModel):
 
 class KeyShapeRead(OrmModel, KeyShapeBase):
     id: uuid.UUID
+    project_id: uuid.UUID | None = None
 
 
 class LayerMasterBase(BaseModel):
@@ -285,6 +445,7 @@ class LayerMasterUpdate(BaseModel):
 
 class LayerMasterRead(OrmModel, LayerMasterBase):
     id: uuid.UUID
+    project_id: uuid.UUID | None = None
     priorities: dict[uuid.UUID, str | None] = Field(default_factory=dict)
 
 
@@ -323,6 +484,7 @@ class RelationUpdate(BaseModel):
 class RelationRead(OrmModel, RelationBase):
     id: uuid.UUID
     project_id: uuid.UUID
+    align_tree_id: uuid.UUID | None = None
 
 
 class TextBoxBase(BaseModel):
@@ -362,10 +524,12 @@ class TextBoxBatchUpdate(TextBoxUpdate):
 class TextBoxRead(OrmModel, TextBoxBase):
     id: uuid.UUID
     project_id: uuid.UUID
+    align_tree_id: uuid.UUID | None = None
 
 
 class GraphRead(BaseModel):
     project: ProjectRead
+    align_tree: AlignTreeRead | None = None
     layers: list[LayerRead]
     layouts: list[LayoutRead]
     styles: list[StyleRead]
@@ -400,6 +564,19 @@ class GraphRestore(BaseModel):
     relation_styles: list[RelationStyleRead] = Field(default_factory=list)
     relations: list[RelationRead] = Field(default_factory=list)
     text_boxes: list[TextBoxRead] = Field(default_factory=list)
+
+
+class ProjectBundleMetadata(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    description: str | None = None
+
+
+class ProjectBundle(BaseModel):
+    format: Literal["ric-align-tree"] = "ric-align-tree"
+    schema_version: Literal[1] = 1
+    exported_at: datetime
+    project: ProjectBundleMetadata
+    graph: GraphRestore
 
 
 class ValidationIssue(BaseModel):

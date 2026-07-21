@@ -1,6 +1,7 @@
 import { computed, ref, watch } from "vue";
 import { api } from "../api/client";
-import { findRelationSnap, intersects, portHandlePoint, portPoint, relationGeometry, relationStroke, snap } from "../domain/geometry";
+import { facingPorts, findRelationSnap, intersects, portHandlePoint, portPoint, relationGeometry, relationStroke, snap } from "../domain/geometry";
+import { relationTargetLayerId } from "../domain/graph";
 import { useAppStore } from "../stores/app";
 import { useGraphStore } from "../stores/graph";
 import { useProjectStore } from "../stores/project";
@@ -93,12 +94,35 @@ export function useCanvasEditor() {
   }
 
   function nodePointerDown(event: PointerEvent, id: string, resize = false) {
-    if (app.mode === "connect") return;
+    if (app.mode === "connect") {
+      event.preventDefault(); event.stopPropagation();
+      if (!project.canEdit) { app.mode = "select"; return }
+      const source = connect.value;
+      const layout = layouts.value.get(id);
+      if (!layout) return;
+      if (!source) {
+        const port: PortName = "right";
+        connect.value = { layerId: id, port, start: portHandlePoint(layout, port), pointerId: event.pointerId, originClient: { x: event.clientX, y: event.clientY }, pressed: false, moved: false };
+        app.select({ kind: "layer", id });
+        app.status = "Target Layer 박스를 클릭하세요.";
+      } else if (source.layerId !== id) {
+        const sourceLayout = layouts.value.get(source.layerId);
+        if (!sourceLayout) return;
+        const ports = facingPorts(sourceLayout, layout);
+        connect.value = null; portSnap.value = null; relationSnap.value = null; app.mode = "select";
+        void graphStore.createRelationExpanded({
+          parent_layer_id: source.layerId, child_layer_id: id, source_port: ports.source, target_port: ports.target,
+          relation_style_id: reference.selectedRelationStyleId || null,
+        });
+      }
+      return;
+    }
     event.preventDefault();
     event.stopPropagation();
     const additive = event.ctrlKey || event.metaKey || event.shiftKey;
     const alreadySelected = app.selection.some((item) => item.kind === "layer" && item.id === id);
     if (!alreadySelected || additive) app.select({ kind: "layer", id }, additive);
+    if (!project.canEdit) return;
     const layout = layouts.value.get(id);
     if (!layout) return;
     const start = clientPoint(event);
@@ -127,6 +151,7 @@ export function useCanvasEditor() {
     const additive = event.ctrlKey || event.metaKey || event.shiftKey;
     const alreadySelected = app.selection.some((item) => item.kind === "text" && item.id === row.id);
     if (!alreadySelected || additive) app.select({ kind: "text", id: row.id }, additive);
+    if (!project.canEdit) return;
     const start = clientPoint(event);
     if (resize) drag.value = { type: "resize-text", id: row.id, start, text: { ...row } };
     else {
@@ -159,6 +184,10 @@ export function useCanvasEditor() {
     if (event.altKey || event.button === 1) {
       drag.value = { type: "pan", startClient: { x: event.clientX, y: event.clientY }, origin: { x: viewBox.value.x, y: viewBox.value.y } };
     } else if (app.mode === "text") {
+      // Text placement is a one-shot tool. Leave text mode before starting the
+      // request so additional clicks cannot enqueue duplicate text boxes.
+      app.mode = "select";
+      if (!project.canEdit) return;
       void graphStore.mutateGraph("텍스트 추가", () => api.createText(project.projectId, { text: "Text", x: point.x, y: point.y }));
     } else {
       const additive = event.ctrlKey || event.metaKey || event.shiftKey;
@@ -313,6 +342,7 @@ export function useCanvasEditor() {
   async function startConnect(event: PointerEvent, layerId: string, port: PortName) {
     event.preventDefault();
     event.stopPropagation();
+    if (!project.canEdit) { app.mode = "select"; return }
     const layout = layouts.value.get(layerId);
     if (!layout) return;
     if (connect.value) {
@@ -355,10 +385,16 @@ export function useCanvasEditor() {
         source_port: source.port, target_port: targetPort.port,
         relation_style_id: reference.selectedRelationStyleId || null,
       });
-    } else if (source && target) await graphStore.mutateGraph("관계선 연결", () => api.createRelation(project.projectId, {
-      parent_layer_id: source.layerId, child_layer_id: null, source_port: source.port,
-      attached_relation_id: target.relationId, relation_style_id: reference.selectedRelationStyleId || null,
-    }));
+    } else if (source && target && raw.value) {
+      const targetLayerId = relationTargetLayerId(raw.value, target.relationId);
+      if (!targetLayerId) { app.status = "관계선의 Target Layer를 찾을 수 없습니다."; return }
+      const targetRelation = raw.value.relations.find((row) => row.id === target.relationId);
+      await graphStore.createRelationExpanded({
+        parent_layer_id: source.layerId, child_layer_id: targetLayerId, source_port: source.port,
+        target_port: targetRelation?.target_port ?? "top", attached_relation_id: target.relationId,
+        waypoints: [target.point], relation_style_id: reference.selectedRelationStyleId || null,
+      });
+    }
   }
   async function relationPointerDown(event: PointerEvent, relation: Relation) {
     event.preventDefault();
@@ -373,14 +409,19 @@ export function useCanvasEditor() {
     relationSnap.value = null;
     app.mode = "select";
     if (source.layerId === relation.parent_layer_id || source.layerId === relation.child_layer_id) return;
-    await graphStore.mutateGraph("관계선 중간 연결", () => api.createRelation(project.projectId, {
+    if (!raw.value) return;
+    const targetLayerId = relationTargetLayerId(raw.value, relation.id);
+    if (!targetLayerId) { app.status = "관계선의 Target Layer를 찾을 수 없습니다."; return }
+    const attachPoint = clientPoint(event);
+    await graphStore.createRelationExpanded({
       parent_layer_id: source.layerId,
-      child_layer_id: null,
+      child_layer_id: targetLayerId,
       source_port: source.port,
       target_port: relation.target_port,
       attached_relation_id: relation.id,
+      waypoints: [attachPoint],
       relation_style_id: reference.selectedRelationStyleId || null,
-    }));
+    });
   }
   function layerLabel(layer: { name: string; step: string | null }) {
     return app.labelField === "step" ? layer.step?.trim() || layer.name : layer.name;
@@ -390,12 +431,14 @@ export function useCanvasEditor() {
   }
   async function addWaypoint(event: MouseEvent, relation: Relation) {
     event.stopPropagation();
+    if (!project.canEdit) return;
     const point = clientPoint(event as unknown as PointerEvent);
     const waypoint = snapEnabled.value ? { x: snap(point.x), y: snap(point.y) } : point;
     await graphStore.mutateGraph("Waypoint 추가", () => api.updateRelation(project.projectId, relation.id, { waypoints: [...(relation.waypoints ?? []), waypoint] }));
   }
   function waypointDown(event: PointerEvent, relation: Relation, index: number) {
     event.stopPropagation();
+    if (!project.canEdit) return;
     drag.value = { type: "drag-waypoint", id: relation.id, index };
     app.select({ kind: "relation", id: relation.id });
     capture(event);
@@ -403,6 +446,7 @@ export function useCanvasEditor() {
   async function deleteWaypoint(event: MouseEvent, relation: Relation, index: number) {
     event.preventDefault();
     event.stopPropagation();
+    if (!project.canEdit) return;
     await graphStore.mutateGraph("Waypoint 삭제", () => api.updateRelation(project.projectId, relation.id, {
       waypoints: (relation.waypoints ?? []).filter((_point, pointIndex) => pointIndex !== index),
     }));
@@ -415,6 +459,7 @@ export function useCanvasEditor() {
     app.select({ kind: "layer", id: layer.id });
   }
   async function editLayer(id: string) {
+    if (!project.canEdit) return;
     const layer = raw.value?.layers.find((row) => row.id === id);
     if (!layer) return;
     const field = app.labelField;

@@ -1,34 +1,219 @@
 from __future__ import annotations
 
+import hmac
 import uuid
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from .. import crud, models, schemas
-from ..database import get_db
+from .. import models, schemas
+from ..database import get_db, settings
+from ..services.audit import record_project_event
+from ..services.identity import get_current_actor
+from ..services.project_access import (
+    ProjectContext,
+    as_utc,
+    require_project_admin_mutation,
+    require_project_mutation,
+)
+from ..services.project_catalog import project_public_read
+from ..services.project_reference import ensure_project_reference_data
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
 
-@router.get("", response_model=list[schemas.ProjectRead])
-def list_projects(db: Session = Depends(get_db)) -> list[models.Project]:
-    return db.query(models.Project).order_by(models.Project.updated_at.desc()).all()
+def _public_project_or_404(db: Session, project_id: uuid.UUID) -> models.Project:
+    project = db.get(models.Project, project_id)
+    if project is None or project.deleted_at is not None or not project.is_public:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+    return project
 
 
-@router.post("", response_model=schemas.ProjectRead, status_code=status.HTTP_201_CREATED)
-def create_project(payload: schemas.ProjectCreate, db: Session = Depends(get_db)) -> models.Project:
-    return crud.create_project(db, payload)
+@router.get("", response_model=list[schemas.ProjectPublicRead])
+def list_projects(
+    actor: models.Actor = Depends(get_current_actor),
+    db: Session = Depends(get_db),
+) -> list[schemas.ProjectPublicRead]:
+    projects = (
+        db.query(models.Project)
+        .filter(models.Project.is_public.is_(True), models.Project.deleted_at.is_(None))
+        .order_by(models.Project.updated_at.desc(), models.Project.created_at.desc())
+        .all()
+    )
+    return [project_public_read(db, project, actor) for project in projects]
 
 
-@router.get("/{project_id}", response_model=schemas.ProjectRead)
-def read_project(project_id: uuid.UUID, db: Session = Depends(get_db)) -> models.Project:
-    return crud.get_project_or_404(db, project_id)
+@router.post("", response_model=schemas.ProjectPublicRead, status_code=status.HTTP_201_CREATED)
+def create_project(
+    payload: schemas.ProjectCreate,
+    actor: models.Actor = Depends(get_current_actor),
+    db: Session = Depends(get_db),
+) -> schemas.ProjectPublicRead:
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Project name is required")
+    project = models.Project(
+        name=name,
+        description=payload.description,
+        owner_actor_id=actor.id,
+        created_by_actor_id=actor.id,
+        creator_display_name=actor.display_name,
+        is_public=True,
+        is_legacy_unclaimed=False,
+    )
+    db.add(project)
+    db.flush()
+    db.add(models.ProjectMember(project_id=project.id, actor_id=actor.id, role="owner", added_by_actor_id=actor.id))
+    tree = models.AlignTree(
+        project_id=project.id,
+        name="Main",
+        description="Default Align Tree",
+        created_by_actor_id=actor.id,
+        is_default=True,
+    )
+    db.add(tree)
+    ensure_project_reference_data(db, project.id)
+    record_project_event(
+        db,
+        project_id=project.id,
+        actor=actor,
+        event_type="project.created",
+        target_type="project",
+        target_id=project.id,
+        summary=f"Created project {project.name}",
+        details={"name": project.name},
+    )
+    db.commit()
+    db.refresh(project)
+    return project_public_read(db, project, actor)
+
+
+@router.post("/{project_id}/claim-legacy", response_model=schemas.ProjectPublicRead)
+def claim_legacy_project(
+    project_id: uuid.UUID,
+    actor: models.Actor = Depends(get_current_actor),
+    db: Session = Depends(get_db),
+) -> schemas.ProjectPublicRead:
+    if not settings.allow_legacy_project_claims:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Legacy project claims are disabled")
+    # A claim requires this exact signed-cookie Actor to predate the project's
+    # migration and to arrive from the same HMACed network observed then. A
+    # newly-created Actor can never claim a legacy project. Raw IPs are never
+    # read from or written to the database here.
+    migration_cutoff = (
+        db.query(models.ProjectAuditEvent.created_at)
+        .filter(
+            models.ProjectAuditEvent.project_id == project_id,
+            models.ProjectAuditEvent.event_type == "project.migrated_v2",
+        )
+        .order_by(models.ProjectAuditEvent.created_at)
+        .scalar()
+    )
+    eligible = (
+        migration_cutoff is not None
+        and as_utc(actor.created_at) <= as_utc(migration_cutoff)
+        and actor.last_ip_hash is not None
+        and actor.legacy_claim_ip_hash is not None
+        and hmac.compare_digest(actor.last_ip_hash, actor.legacy_claim_ip_hash)
+    )
+    if not eligible:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This network identity is not eligible to claim the legacy project",
+        )
+    updated = (
+        db.query(models.Project)
+        .filter(
+            models.Project.id == project_id,
+            models.Project.deleted_at.is_(None),
+            models.Project.is_legacy_unclaimed.is_(True),
+            models.Project.owner_actor_id.is_(None),
+        )
+        .update(
+            {
+                models.Project.owner_actor_id: actor.id,
+                models.Project.created_by_actor_id: actor.id,
+                models.Project.creator_display_name: actor.display_name,
+                models.Project.is_legacy_unclaimed: False,
+            },
+            synchronize_session=False,
+        )
+    )
+    if updated != 1:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Project is not available for legacy claim")
+    project = db.get(models.Project, project_id)
+    assert project is not None
+    db.add(models.ProjectMember(project_id=project.id, actor_id=actor.id, role="owner", added_by_actor_id=actor.id))
+    record_project_event(
+        db,
+        project_id=project.id,
+        actor=actor,
+        event_type="project.legacy_claimed",
+        target_type="project",
+        target_id=project.id,
+        summary=f"Claimed legacy project {project.name}",
+    )
+    db.commit()
+    db.refresh(project)
+    return project_public_read(db, project, actor)
+
+
+@router.get("/{project_id}", response_model=schemas.ProjectPublicRead)
+def read_project(
+    project_id: uuid.UUID,
+    actor: models.Actor = Depends(get_current_actor),
+    db: Session = Depends(get_db),
+) -> schemas.ProjectPublicRead:
+    return project_public_read(db, _public_project_or_404(db, project_id), actor)
+
+
+@router.patch("/{project_id}", response_model=schemas.ProjectPublicRead)
+def update_project(
+    project_id: uuid.UUID,
+    payload: schemas.ProjectUpdate,
+    context: ProjectContext = Depends(require_project_admin_mutation),
+    db: Session = Depends(get_db),
+) -> schemas.ProjectPublicRead:
+    before = {"name": context.project.name, "description": context.project.description}
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        if field == "name" and value is not None:
+            value = value.strip()
+            if not value:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Project name is required")
+        setattr(context.project, field, value)
+    record_project_event(
+        db,
+        project_id=context.project.id,
+        actor=context.actor,
+        event_type="project.updated",
+        target_type="project",
+        target_id=context.project.id,
+        summary=f"Updated project {context.project.name}",
+        details={"before": before, "after": payload.model_dump(exclude_unset=True)},
+    )
+    db.commit()
+    db.refresh(context.project)
+    return project_public_read(db, context.project, context.actor)
 
 
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_project(project_id: uuid.UUID, db: Session = Depends(get_db)) -> Response:
-    project = crud.get_project_or_404(db, project_id)
-    db.delete(project)
+def delete_project(
+    project_id: uuid.UUID,
+    context: ProjectContext = Depends(require_project_mutation),
+    db: Session = Depends(get_db),
+) -> None:
+    if context.role != "owner":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the owner can delete a project")
+    context.project.deleted_at = datetime.now(timezone.utc)
+    record_project_event(
+        db,
+        project_id=context.project.id,
+        actor=context.actor,
+        event_type="project.deleted",
+        target_type="project",
+        target_id=context.project.id,
+        summary=f"Deleted project {context.project.name}",
+    )
     db.commit()
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
