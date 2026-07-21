@@ -72,28 +72,28 @@ async function splitSelected() {
   <div class="editor-toolbar">
     <select v-model="reference.selectedRelationStyleId" aria-label="Arrow style"><option v-for="style in reference.relationStyles" :key="style.id" :value="style.id">{{ style.name }}</option></select>
     <span class="divider"/>
-    <button :disabled="!graph.undoStack.length" @click="graph.undo">Undo</button><button :disabled="!graph.redoStack.length" @click="graph.redo">Redo</button>
+    <button :disabled="!project.canEdit || !graph.undoStack.length" @click="graph.undo">Undo</button><button :disabled="!project.canEdit || !graph.redoStack.length" @click="graph.redo">Redo</button>
     <span class="divider"/>
     <select v-model="reference.selectedBoxPresetId" aria-label="Box preset"><option v-for="preset in reference.boxPresets" :key="preset.id" :value="preset.id">{{ preset.name }}</option></select>
     <label class="toolbar-field">Label<select v-model="app.labelField"><option value="name">Layer</option><option value="step">Step</option></select></label>
-    <button v-for="item in (['select','connect','text'] as const)" :key="item" :class="{ active: app.mode === item }" @click="app.mode = item">{{ item[0].toUpperCase() + item.slice(1) }}</button>
+    <button v-for="item in (['select','connect','text'] as const)" :key="item" :class="{ active: app.mode === item }" :disabled="item !== 'select' && !project.canEdit" @click="app.mode = item">{{ item[0].toUpperCase() + item.slice(1) }}</button>
     <span class="divider"/>
     <div class="add-layer-split">
-      <button @click="addLayer">Add Layer</button><button ref="addMenuButton" class="add-layer-caret" aria-label="Add layer options" :aria-expanded="addMenuOpen" @click="toggleAddMenu">▾</button>
+      <button :disabled="!project.canEdit" @click="addLayer">Add Layer</button><button ref="addMenuButton" class="add-layer-caret" :disabled="!project.canEdit" aria-label="Add layer options" :aria-expanded="addMenuOpen" @click="toggleAddMenu">▾</button>
     </div>
-    <button @click="addText">Add Text</button>
+    <button :disabled="!project.canEdit" @click="addText">Add Text</button>
     <button :disabled="!graph.displayGraph?.layers.length" @click="selectAll">Select All</button>
-    <button :disabled="app.selectedLayerIds.length < 2" title="선택한 Layer를 첫 번째 Layer 크기로 묶습니다" @click="mergeSelected">Merge</button>
-    <button :disabled="!app.selectedSplitLayerId" title="병합 그룹을 원래 Layer로 분리합니다" @click="splitSelected">Split</button>
-    <button :disabled="!project.projectId" @click="graph.mutateGraph('자동 배치', () => api.autoLayout(project.projectId))">Auto Layout</button>
-    <button class="danger" :disabled="!app.selection.length" @click="graph.deleteSelection">Delete</button>
+    <button :disabled="!project.canEdit || app.selectedLayerIds.length < 2" title="선택한 Layer를 첫 번째 Layer 크기로 묶습니다" @click="mergeSelected">Merge</button>
+    <button :disabled="!project.canEdit || !app.selectedSplitLayerId" title="병합 그룹을 원래 Layer로 분리합니다" @click="splitSelected">Split</button>
+    <button :disabled="!project.canEdit" @click="graph.mutateGraph('자동 배치', () => api.autoLayout(project.projectId))">Auto Layout</button>
+    <button class="danger" :disabled="!project.canEdit || !app.selection.length" @click="graph.deleteSelection">Delete</button>
     <button @click="graph.reloadGraph">Refresh</button>
   </div>
   <Teleport to="body">
     <div v-if="addMenuOpen" class="dropdown-backdrop" @pointerdown="closeAddMenu"/>
     <div v-if="addMenuOpen" class="add-layer-menu add-layer-menu-floating" :style="addMenuPosition" role="menu">
-      <button role="menuitem" @click="addLayer(); closeAddMenu()">빈 Layer 추가</button>
-      <button role="menuitem" @click="app.layerMasterPickerOpen = true; closeAddMenu()">Layer 정보에서 가져오기</button>
+      <button role="menuitem" :disabled="!project.canEdit" @click="addLayer(); closeAddMenu()">빈 Layer 추가</button>
+      <button role="menuitem" :disabled="!project.canEdit" @click="app.layerMasterPickerOpen = true; closeAddMenu()">Layer 정보에서 가져오기</button>
     </div>
   </Teleport>
   <LayerMasterPickerModal :open="app.layerMasterPickerOpen" @close="app.layerMasterPickerOpen = false" @confirm="addLayerFromMaster"/>

@@ -51,9 +51,13 @@ DEFAULT_RELATION_STYLES = [
 ]
 
 
-def ensure_default_relation_styles(db: Session) -> list[models.RelationStyle]:
+def ensure_default_relation_styles(
+    db: Session,
+    project_id=None,
+) -> list[models.RelationStyle]:
     existing = (
         db.query(models.RelationStyle)
+        .filter(models.RelationStyle.project_id == project_id)
         .order_by(models.RelationStyle.sort_order, models.RelationStyle.created_at)
         .all()
     )
@@ -62,7 +66,7 @@ def ensure_default_relation_styles(db: Session) -> list[models.RelationStyle]:
 
     created = []
     for index, style_data in enumerate(DEFAULT_RELATION_STYLES):
-        style = models.RelationStyle(sort_order=index, **style_data)
+        style = models.RelationStyle(project_id=project_id, sort_order=index, **style_data)
         db.add(style)
         created.append(style)
     if created:
@@ -70,11 +74,12 @@ def ensure_default_relation_styles(db: Session) -> list[models.RelationStyle]:
         existing.extend(created)
     return (
         db.query(models.RelationStyle)
+        .filter(models.RelationStyle.project_id == project_id)
         .order_by(models.RelationStyle.sort_order, models.RelationStyle.created_at)
         .all()
     )
 
 
-def default_relation_style_id(db: Session):
-    styles = ensure_default_relation_styles(db)
+def default_relation_style_id(db: Session, project_id=None):
+    styles = ensure_default_relation_styles(db, project_id)
     return styles[0].id if styles else None

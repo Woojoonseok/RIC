@@ -30,8 +30,9 @@ async function updateSelectedLayouts(body: LayoutUpdate) {
   await graph.mutateGraph("다중 배치 저장", () => api.batchGraph(project.projectId, { layouts: selectedLayers.value.map((row) => ({ layer_id: row.id, ...body })) }));
 }
 async function updateSelectedLayers(body: LayerUpdate) {
-  for (const row of selectedLayers.value) await api.updateLayer(project.projectId, row.id, body);
-  await graph.reloadGraph();
+  await graph.mutateGraph("다중 Layer 저장", async () => {
+    for (const row of selectedLayers.value) await api.updateLayer(project.projectId, row.id, body);
+  });
 }
 function selectedPort(event: Event): PortName {
   const value = (event.target as HTMLSelectElement).value;
@@ -44,6 +45,7 @@ function numberValue(event: Event) { return Number((event.target as HTMLInputEle
 <template>
   <aside class="property-panel">
     <div class="side-heading"><span>PROPERTIES</span><button v-if="app.selection.length" @click="app.clearSelection()">×</button></div>
+    <fieldset class="property-fieldset" :disabled="!project.canEdit">
     <div v-if="selectedLayers.length > 1" class="property-form multi-property">
       <div class="property-title"><div><strong>{{ selectedLayers.length }} Layers</strong><small>다중 편집</small></div></div>
       <label>Fill<input type="color" value="#dbeafe" @change="updateSelectedStyles({ fill_color: value($event) })"></label>
@@ -93,5 +95,6 @@ function numberValue(event: Event) { return Number((event.target as HTMLInputEle
       <label>Locked<input type="checkbox" :checked="text.locked" @change="updateText({ locked: ($event.target as HTMLInputElement).checked })"></label>
     </div>
     <div v-else class="property-empty"><div class="empty-icon">◇</div><b>선택된 객체가 없습니다.</b><p>Canvas에서 Layer, 관계선 또는 Text Box를 선택하세요.</p></div>
+    </fieldset>
   </aside>
 </template>

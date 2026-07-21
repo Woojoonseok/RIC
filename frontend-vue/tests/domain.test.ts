@@ -3,9 +3,9 @@ import { isReactive, reactive } from "vue";
 import { describeErrorDetail } from "../src/api/client";
 import { cloneJson } from "../src/domain/clone";
 import {
-  getClosestPointOnSegment, intersects, portHandlePoint, portPoint, relationGeometry, relationStroke, snap,
+  facingPorts, getClosestPointOnSegment, intersects, portHandlePoint, portPoint, relationGeometry, relationStroke, snap,
 } from "../src/domain/geometry";
-import { computeDisplayGraph, expandRelationCandidates } from "../src/domain/graph";
+import { computeDisplayGraph, expandRelationCandidates, relationTargetLayerId } from "../src/domain/graph";
 import { parseTsv } from "../src/domain/tsv";
 import type { Graph, Layout, Relation } from "../src/types";
 
@@ -59,6 +59,12 @@ describe("geometry", () => {
     expect(portPoint(box, "right")).toEqual({ x: 120, y: 65 });
     expect(portHandlePoint(box, "right", 12)).toEqual({ x: 132, y: 65 });
   });
+  it("selects facing ports from relative box positions", () => {
+    const source = { x: 100, y: 100, width: 100, height: 50 };
+    expect(facingPorts(source, { x: 400, y: 110, width: 100, height: 50 })).toEqual({ source: "right", target: "left" });
+    expect(facingPorts(source, { x: 100, y: 400, width: 100, height: 50 })).toEqual({ source: "bottom", target: "top" });
+    expect(facingPorts(source, { x: -200, y: 100, width: 100, height: 50 })).toEqual({ source: "left", target: "right" });
+  });
   it("calculates relation stroke attributes", () => {
     expect(relationStroke({ id: "s", name: "ref", stroke_color: "#123456", stroke_width: 3, line_pattern: "reference", marker_type: "none", sort_order: 0 })).toEqual({
       stroke: "#123456", strokeWidth: 3, strokeDasharray: "10 4 2 4", markerEnd: undefined,
@@ -97,11 +103,20 @@ describe("group relation expansion", () => {
   });
   it("expands group to individual and blocks group to group", () => {
     const raw = graph();
-    expect(expandRelationCandidates(raw, { parent_layer_id: "a", child_layer_id: "d", instance: "new" }).map((row) => row.parent_layer_id)).toEqual(["a", "b"]);
+    expect(expandRelationCandidates(raw, { parent_layer_id: "a", child_layer_id: "d", instance: "new" }).map((row) => [row.parent_layer_id, row.child_layer_id])).toEqual([["a", "d"], ["b", "d"]]);
     raw.relations.push(relation("g2", "c", "d", "H"));
     expect(() => expandRelationCandidates(raw, { parent_layer_id: "a", child_layer_id: "c" })).toThrow("그룹 간 관계");
   });
   it("removes self relations", () => expect(expandRelationCandidates(graph(), { parent_layer_id: "c", child_layer_id: "c" })).toEqual([]));
+  it("resolves a relation-line connection to its final target before expanding the merged source", () => {
+    const raw = graph();
+    raw.relations.push({ ...relation("branch", "d", null), attached_relation_id: "r1" });
+    expect(relationTargetLayerId(raw, "r1")).toBe("c");
+    expect(relationTargetLayerId(raw, "branch")).toBe("c");
+    const expanded = expandRelationCandidates(raw, { parent_layer_id: "a", child_layer_id: relationTargetLayerId(raw, "r1"), attached_relation_id: "r1", waypoints: [{ x: 250, y: 25 }], instance: "insert" });
+    expect(expanded.map((row) => [row.parent_layer_id, row.child_layer_id])).toEqual([["a", "c"], ["b", "c"]]);
+    expect(expanded.every((row) => row.attached_relation_id === "r1" && row.waypoints?.[0]?.x === 250)).toBe(true);
+  });
 });
 
 describe("API errors and TSV", () => {

@@ -2,6 +2,13 @@ import type { Layout, Point, PortName, Relation, RelationStyle } from "../types"
 
 export interface Aabb { x: number; y: number; width: number; height: number }
 
+export function facingPorts(source: Aabb, target: Aabb): { source: PortName; target: PortName } {
+  const dx = target.x + target.width / 2 - (source.x + source.width / 2);
+  const dy = target.y + target.height / 2 - (source.y + source.height / 2);
+  if (Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? { source: "right", target: "left" } : { source: "left", target: "right" };
+  return dy >= 0 ? { source: "bottom", target: "top" } : { source: "top", target: "bottom" };
+}
+
 export function portPoint(layout: Layout, port: PortName): Point {
   if (port === "top") return { x: layout.x + layout.width / 2, y: layout.y };
   if (port === "right") return { x: layout.x + layout.width, y: layout.y + layout.height / 2 };

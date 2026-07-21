@@ -2,15 +2,13 @@
 import { computed, onMounted, ref } from "vue";
 import { api } from "../api/client";
 import SpreadsheetGrid from "../components/grid/SpreadsheetGrid.vue";
-import { cloneJson } from "../domain/clone";
 import { useAppStore } from "../stores/app";
-import { useGraphStore } from "../stores/graph";
 import { useProjectStore } from "../stores/project";
 import { useReferenceStore } from "../stores/reference";
 import type { LayerMasterCreate } from "../types";
 
 type Row = Record<string, unknown>;
-const app = useAppStore(); const graph = useGraphStore(); const project = useProjectStore(); const reference = useReferenceStore();
+const app = useAppStore(); const project = useProjectStore(); const reference = useReferenceStore();
 const selected = ref<string[]>([]);
 const grid = ref<InstanceType<typeof SpreadsheetGrid> | null>(null);
 const busy = ref(false);
@@ -39,7 +37,9 @@ function selectRow(id: string, additive: boolean) {
 }
 function setSelectedRows(ids: string[]) { selected.value = ids }
 async function commit(nextRows: Row[]) {
+  if (!project.canEdit) return;
   busy.value = true;
+  project.markSaving();
   let completed = 0;
   const targets = nextRows.filter((row) => String(row.name || "").trim());
   try {
@@ -57,41 +57,37 @@ async function commit(nextRows: Row[]) {
       completed += 1;
     }
     status.value = `${completed}개 Layer 정보 저장 완료`;
+    project.markSaved();
   } catch (error) {
     status.value = `${completed}/${targets.length}개 저장 후 실패: ${error instanceof Error ? error.message : String(error)}`;
+    project.handleMutationError(error);
   } finally {
     await load(); busy.value = false; app.status = status.value;
   }
 }
 async function removeSelected() {
-  if (!selected.value.length || !confirm(`${selected.value.length}개 Layer 정보를 삭제할까요?`)) return;
+  if (!project.canEdit || !selected.value.length || !confirm(`${selected.value.length}개 Layer 정보를 삭제할까요?`)) return;
   busy.value = true;
+  project.markSaving();
   try {
     for (const id of selected.value) await api.deleteLayerMaster(id);
     status.value = `${selected.value.length}개 삭제 완료`;
     selected.value = []; await load();
-  } catch (error) { status.value = error instanceof Error ? error.message : String(error) }
+    project.markSaved();
+  } catch (error) { status.value = error instanceof Error ? error.message : String(error); project.handleMutationError(error) }
   finally { busy.value = false }
-}
-async function createLayer() {
-  const master = reference.layerMasters.find((row) => row.id === selected.value[0]);
-  if (!master || !project.projectId) return;
-  await graph.mutateGraph("Master에서 Layer 생성", () => api.createLayer(project.projectId, {
-    name: master.name, step: master.layer_number, metadata_json: { layer_master: cloneJson(master) },
-  }));
-  app.view = "editor";
 }
 onMounted(load);
 </script>
 
 <template>
-  <section class="page wide-page">
-    <div class="page-title"><div><p class="eyebrow">PROCESS SOURCE OF TRUTH</p><h1>Layer 정보</h1><p>Key 배치 Type 기준정보에 따라 우선순위 컬럼이 자동으로 증감합니다.</p></div><span class="status-pill" :class="{ busy }">{{ busy ? '처리 중…' : status }}</span></div>
+  <section class="page wide-page layer-master-page">
+    <div class="page-title"><div><p class="eyebrow">PROJECT LAYER DATA</p><h1>Layer 정보</h1><p>{{ project.currentProject?.name }} 프로젝트의 Layer 기준입니다. 셀 변경은 즉시 저장됩니다.</p></div><span class="status-pill" :class="{ busy }">{{ !project.canEdit ? '보기 전용' : busy ? '처리 중…' : status }}</span></div>
     <div class="layer-master-summary panel">
       <div><b>{{ reference.layerMasters.length }}</b><span>등록 Layer</span></div><div><b>{{ reference.keyLayoutTypes.length }}</b><span>우선순위 기준</span></div><div><b>{{ selected.length }}</b><span>선택 행</span></div>
-      <div class="button-strip"><button :disabled="busy" @click="grid?.addDraftRow()">새 Layer 정보</button><button class="primary" :disabled="selected.length !== 1 || !project.projectId || busy" :title="project.projectId ? '선택한 기준으로 현재 프로젝트에 Layer를 만듭니다' : '먼저 프로젝트를 선택하세요'" @click="createLayer">현재 프로젝트에 Layer 생성</button><button class="danger" :disabled="!selected.length || busy" @click="removeSelected">선택 삭제</button></div>
+      <div class="button-strip"><button class="primary" :disabled="busy || !project.canEdit" @click="grid?.addDraftRow()">새 Layer 정보</button><button class="danger" :disabled="!selected.length || busy || !project.canEdit" @click="removeSelected">선택 삭제</button></div>
     </div>
     <div class="sheet-help">셀 더블클릭 또는 F2로 편집 · Ctrl+C / Ctrl+V로 Excel 범위 복사·붙여넣기 · 행 번호를 클릭해 선택</div>
-    <div class="panel data-panel"><SpreadsheetGrid ref="grid" :columns="columns" :rows="rows" :selected-rows="selected" empty-hint="새 Layer 정보를 추가하세요." @row-select="selectRow" @row-selection="setSelectedRows" @commit="commit"/></div>
+    <div class="panel data-panel"><SpreadsheetGrid ref="grid" :columns="columns" :rows="rows" :selected-rows="selected" :readonly="!project.canEdit" :auto-commit="true" empty-hint="새 Layer 정보를 추가하세요." @row-select="selectRow" @row-selection="setSelectedRows" @commit="commit"/></div>
   </section>
 </template>

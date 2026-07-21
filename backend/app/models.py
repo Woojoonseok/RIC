@@ -21,13 +21,78 @@ class TimestampMixin:
     )
 
 
+class Actor(Base, TimestampMixin):
+    """Stable internal user record.
+
+    Authentication is anonymous for now: a signed HttpOnly cookie points at
+    this row and the server-derived client IP is retained only as an HMAC.
+    Keeping identities separate lets a future AD subject be attached without
+    moving project ownership.
+    """
+
+    __tablename__ = "actors"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    display_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    last_ip_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    # Frozen HMAC captured for Actors that existed when legacy projects were
+    # migrated. It gates the one-time legacy-claim flow without storing an IP.
+    legacy_claim_ip_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    identities: Mapped[list[ActorIdentity]] = relationship(back_populates="actor", cascade="all, delete-orphan")
+    owned_projects: Mapped[list[Project]] = relationship(back_populates="owner", foreign_keys="Project.owner_actor_id")
+
+
+class ActorIdentity(Base, TimestampMixin):
+    __tablename__ = "actor_identities"
+    __table_args__ = (UniqueConstraint("provider", "subject_hash", name="uq_actor_identity_provider_subject"),)
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    actor_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("actors.id", ondelete="CASCADE"), index=True)
+    # Reserved for authenticated providers. A future AD SSO integration can
+    # add an ``ad`` identity whose subject is the immutable AD object id/SID.
+    # IP hashes must never be stored here or accepted as authentication.
+    provider: Mapped[str] = mapped_column(String(40), nullable=False)
+    subject_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+
+    actor: Mapped[Actor] = relationship(back_populates="identities")
+
+
 class Project(Base, TimestampMixin):
     __tablename__ = "projects"
 
     id: Mapped[uuid.UUID] = uuid_pk()
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
+    created_by_actor_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("actors.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    creator_display_name: Mapped[str] = mapped_column(String(120), nullable=False, default="Legacy Import")
+    is_public: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="1")
+    is_legacy_unclaimed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    # Nullable only for safe migration of pre-identity local databases. The
+    # first-ever Actor claims those legacy rows; all newly-created rows have an
+    # owner.
+    owner_actor_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("actors.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 
+    owner: Mapped[Actor | None] = relationship(back_populates="owned_projects", foreign_keys=[owner_actor_id])
+    creator: Mapped[Actor | None] = relationship(foreign_keys=[created_by_actor_id])
+    members: Mapped[list[ProjectMember]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    access_requests: Mapped[list[ProjectAccessRequest]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+    audit_events: Mapped[list[ProjectAuditEvent]] = relationship(back_populates="project")
+    align_trees: Mapped[list[AlignTree]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    access_grants: Mapped[list[ProjectAccess]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    share_links: Mapped[list[ProjectShareLink]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    edit_lease: Mapped[ProjectEditLease | None] = relationship(
+        back_populates="project", cascade="all, delete-orphan", uselist=False
+    )
     layers: Mapped[list[Layer]] = relationship(back_populates="project", cascade="all, delete-orphan")
     relations: Mapped[list[LayerRelation]] = relationship(back_populates="project", cascade="all, delete-orphan")
     layouts: Mapped[list[GraphLayout]] = relationship(back_populates="project", cascade="all, delete-orphan")
@@ -35,12 +100,147 @@ class Project(Base, TimestampMixin):
     text_boxes: Mapped[list[TextBox]] = relationship(back_populates="project", cascade="all, delete-orphan")
 
 
-class Layer(Base, TimestampMixin):
-    __tablename__ = "layers"
-    __table_args__ = (UniqueConstraint("project_id", "name", name="uq_layers_project_name"),)
+class ProjectMember(Base, TimestampMixin):
+    __tablename__ = "project_members"
+    __table_args__ = (UniqueConstraint("project_id", "actor_id", name="uq_project_members_project_actor"),)
 
     id: Mapped[uuid.UUID] = uuid_pk()
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    actor_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("actors.id", ondelete="CASCADE"), index=True)
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
+    added_by_actor_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("actors.id", ondelete="SET NULL"), nullable=True
+    )
+
+    project: Mapped[Project] = relationship(back_populates="members")
+    actor: Mapped[Actor] = relationship(foreign_keys=[actor_id])
+    added_by: Mapped[Actor | None] = relationship(foreign_keys=[added_by_actor_id])
+
+
+class ProjectAccessRequest(Base, TimestampMixin):
+    __tablename__ = "project_access_requests"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    requester_actor_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("actors.id", ondelete="CASCADE"), index=True)
+    requested_role: Mapped[str] = mapped_column(String(20), nullable=False, default="viewer")
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", index=True)
+    reviewed_by_actor_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("actors.id", ondelete="SET NULL"), nullable=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decision_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    project: Mapped[Project] = relationship(back_populates="access_requests")
+    requester: Mapped[Actor] = relationship(foreign_keys=[requester_actor_id])
+    reviewed_by: Mapped[Actor | None] = relationship(foreign_keys=[reviewed_by_actor_id])
+
+
+class ProjectAuditEvent(Base):
+    __tablename__ = "project_audit_events"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="RESTRICT"), index=True)
+    align_tree_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("align_trees.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    actor_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("actors.id", ondelete="SET NULL"), nullable=True)
+    actor_label_snapshot: Mapped[str] = mapped_column(String(120), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    target_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    target_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    summary: Mapped[str] = mapped_column(String(500), nullable=False)
+    details_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    request_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    project: Mapped[Project] = relationship(back_populates="audit_events")
+    align_tree: Mapped[AlignTree | None] = relationship()
+    actor: Mapped[Actor | None] = relationship()
+
+
+class AlignTree(Base, TimestampMixin):
+    __tablename__ = "align_trees"
+    __table_args__ = (UniqueConstraint("project_id", "name", name="uq_align_trees_project_name"),)
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_actor_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("actors.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+
+    project: Mapped[Project] = relationship(back_populates="align_trees")
+    created_by: Mapped[Actor | None] = relationship()
+
+
+class ProjectAccess(Base, TimestampMixin):
+    __tablename__ = "project_access"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id", "actor_id", "source_share_id", name="uq_project_access_project_actor_source"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    actor_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("actors.id", ondelete="CASCADE"), index=True)
+    permission: Mapped[str] = mapped_column(String(20), nullable=False)
+    source_share_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("project_share_links.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
+    project: Mapped[Project] = relationship(back_populates="access_grants")
+    actor: Mapped[Actor] = relationship()
+    source_share: Mapped[ProjectShareLink | None] = relationship(back_populates="access_grants")
+
+
+class ProjectShareLink(Base, TimestampMixin):
+    __tablename__ = "project_share_links"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    created_by_actor_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("actors.id", ondelete="CASCADE"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    permission: Mapped[str] = mapped_column(String(20), nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    project: Mapped[Project] = relationship(back_populates="share_links")
+    created_by: Mapped[Actor] = relationship()
+    access_grants: Mapped[list[ProjectAccess]] = relationship(back_populates="source_share")
+
+
+class ProjectEditLease(Base, TimestampMixin):
+    __tablename__ = "project_edit_leases"
+    __table_args__ = (UniqueConstraint("project_id", name="uq_project_edit_lease_project"),)
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    actor_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("actors.id", ondelete="CASCADE"), index=True)
+    client_instance_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    heartbeat_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+
+    project: Mapped[Project] = relationship(back_populates="edit_lease")
+    actor: Mapped[Actor] = relationship()
+
+
+class Layer(Base, TimestampMixin):
+    __tablename__ = "layers"
+    __table_args__ = (UniqueConstraint("align_tree_id", "name", name="uq_layers_align_tree_name"),)
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    align_tree_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("align_trees.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     step: Mapped[str | None] = mapped_column(String(120))
     layer_property: Mapped[str | None] = mapped_column(String(160))
@@ -68,12 +268,19 @@ class LayerRelation(Base, TimestampMixin):
         # instance is part of the identity so the same parent->child pair can
         # repeat as long as each occurrence names a distinct instance.
         UniqueConstraint(
-            "project_id", "parent_layer_id", "child_layer_id", "instance", name="uq_relations_parent_child_instance"
+            "align_tree_id",
+            "parent_layer_id",
+            "child_layer_id",
+            "instance",
+            name="uq_relations_tree_parent_child_instance",
         ),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    align_tree_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("align_trees.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     # Nullable so "Add Row" can create a blank relation the user fills in by
     # typing layer names, instead of requiring a valid pair up front.
     parent_layer_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("layers.id", ondelete="CASCADE"), nullable=True, index=True)
@@ -97,9 +304,12 @@ class LayerRelation(Base, TimestampMixin):
 
 class RelationStyle(Base, TimestampMixin):
     __tablename__ = "relation_styles"
-    __table_args__ = (UniqueConstraint("name", name="uq_relation_styles_name"),)
+    __table_args__ = (UniqueConstraint("project_id", "name", name="uq_relation_styles_project_name"),)
 
     id: Mapped[uuid.UUID] = uuid_pk()
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     stroke_color: Mapped[str] = mapped_column(String(20), default="#111827")
     stroke_width: Mapped[int] = mapped_column(Integer, default=2)
@@ -110,9 +320,12 @@ class RelationStyle(Base, TimestampMixin):
 
 class BoxPreset(Base, TimestampMixin):
     __tablename__ = "box_presets"
-    __table_args__ = (UniqueConstraint("name", name="uq_box_presets_name"),)
+    __table_args__ = (UniqueConstraint("project_id", "name", name="uq_box_presets_project_name"),)
 
     id: Mapped[uuid.UUID] = uuid_pk()
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     fill_color: Mapped[str] = mapped_column(String(20), default="#dbeafe")
     stroke_color: Mapped[str] = mapped_column(String(20), default="#2563eb")
@@ -127,9 +340,12 @@ class BoxPreset(Base, TimestampMixin):
 
 class KeyLayoutType(Base, TimestampMixin):
     __tablename__ = "key_layout_types"
-    __table_args__ = (UniqueConstraint("name", name="uq_key_layout_types_name"),)
+    __table_args__ = (UniqueConstraint("project_id", "name", name="uq_key_layout_types_project_name"),)
 
     id: Mapped[uuid.UUID] = uuid_pk()
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     scribe_lane_rows: Mapped[int | None] = mapped_column(Integer, nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
@@ -139,6 +355,9 @@ class KeyDrawingType(Base, TimestampMixin):
     __tablename__ = "key_drawing_types"
 
     id: Mapped[uuid.UUID] = uuid_pk()
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     symbol: Mapped[str | None] = mapped_column(String(80), nullable=True)
     trench_mesa: Mapped[str | None] = mapped_column(String(80), nullable=True)
     key_shape: Mapped[str | None] = mapped_column(String(120), nullable=True)
@@ -150,9 +369,12 @@ class KeyDrawingType(Base, TimestampMixin):
 
 class KeyShape(Base, TimestampMixin):
     __tablename__ = "key_shapes"
-    __table_args__ = (UniqueConstraint("key_shape", name="uq_key_shapes_key_shape"),)
+    __table_args__ = (UniqueConstraint("project_id", "key_shape", name="uq_key_shapes_project_key_shape"),)
 
     id: Mapped[uuid.UUID] = uuid_pk()
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     key_shape: Mapped[str] = mapped_column(String(120), nullable=False)
     drawing_guide: Mapped[str | None] = mapped_column(String(200), nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
@@ -160,9 +382,12 @@ class KeyShape(Base, TimestampMixin):
 
 class LayerMaster(Base, TimestampMixin):
     __tablename__ = "layer_masters"
-    __table_args__ = (UniqueConstraint("name", name="uq_layer_masters_name"),)
+    __table_args__ = (UniqueConstraint("project_id", "name", name="uq_layer_masters_project_name"),)
 
     id: Mapped[uuid.UUID] = uuid_pk()
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     layer_number: Mapped[str | None] = mapped_column(String(40), nullable=True)
     mask_main_fld: Mapped[str | None] = mapped_column(String(40), nullable=True)
@@ -190,10 +415,15 @@ class LayerMasterPriority(Base, TimestampMixin):
 
     __tablename__ = "layer_master_priorities"
     __table_args__ = (
-        UniqueConstraint("layer_master_id", "key_layout_type_id", name="uq_layer_master_priorities_pair"),
+        UniqueConstraint(
+            "project_id", "layer_master_id", "key_layout_type_id", name="uq_layer_master_priorities_project_pair"
+        ),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     layer_master_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("layer_masters.id", ondelete="CASCADE"), index=True
     )
@@ -208,10 +438,13 @@ class LayerMasterPriority(Base, TimestampMixin):
 
 class GraphLayout(Base, TimestampMixin):
     __tablename__ = "graph_layouts"
-    __table_args__ = (UniqueConstraint("project_id", "layer_id", name="uq_layouts_project_layer"),)
+    __table_args__ = (UniqueConstraint("align_tree_id", "layer_id", name="uq_layouts_align_tree_layer"),)
 
     id: Mapped[uuid.UUID] = uuid_pk()
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    align_tree_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("align_trees.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     layer_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("layers.id", ondelete="CASCADE"), index=True)
     x: Mapped[float] = mapped_column(Float, default=0)
     y: Mapped[float] = mapped_column(Float, default=0)
@@ -225,10 +458,13 @@ class GraphLayout(Base, TimestampMixin):
 
 class ShapeStyle(Base, TimestampMixin):
     __tablename__ = "shape_styles"
-    __table_args__ = (UniqueConstraint("project_id", "layer_id", name="uq_styles_project_layer"),)
+    __table_args__ = (UniqueConstraint("align_tree_id", "layer_id", name="uq_styles_align_tree_layer"),)
 
     id: Mapped[uuid.UUID] = uuid_pk()
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    align_tree_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("align_trees.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     layer_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("layers.id", ondelete="CASCADE"), index=True)
     fill_color: Mapped[str] = mapped_column(String(20), default="#ffffff")
     stroke_color: Mapped[str] = mapped_column(String(20), default="#2563eb")
@@ -245,6 +481,9 @@ class TextBox(Base, TimestampMixin):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    align_tree_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("align_trees.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     text: Mapped[str] = mapped_column(Text, default="Text")
     x: Mapped[float] = mapped_column(Float, default=0)
     y: Mapped[float] = mapped_column(Float, default=0)

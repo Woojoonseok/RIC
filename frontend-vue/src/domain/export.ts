@@ -11,6 +11,11 @@ function download(blob: Blob, name: string) {
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
+function exportBaseName(graph: Graph) {
+  const raw = `${graph.project.name}_${graph.align_tree?.name ?? "Align_Tree"}`;
+  return raw.replace(/[\\/:*?"<>|]+/g, "_").trim() || "RIC_Align_Tree";
+}
+
 export function exportExcel(graph: Graph, template = false) {
   const workbook = XLSX.utils.book_new();
   const layerRows = template ? [["Layer", "Step", "Property", "Align", "Align Side", "Group"]] : graph.layers.map((row) => [row.name, row.step, row.layer_property, row.align, row.align_side, row.pending_group]);
@@ -19,7 +24,7 @@ export function exportExcel(graph: Graph, template = false) {
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(layerRows), "Align_Input");
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(relationRows), "Layer_Relation");
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(validationRows), "Validation_Result");
-  XLSX.writeFile(workbook, template ? "RIC_Align_Template.xlsx" : `${graph.project.name}_Align_Tree.xlsx`);
+  XLSX.writeFile(workbook, template ? "RIC_Align_Template.xlsx" : `${exportBaseName(graph)}.xlsx`);
 }
 
 export function exportExcelTemplate() {
@@ -55,7 +60,7 @@ export function graphSvg(graph: Graph) {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000"><defs><marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 Z" fill="#344054"/></marker></defs><rect width="1600" height="1000" fill="white"/>${relationMarkup}${layerMarkup}</svg>`;
 }
 
-export function exportSvg(graph: Graph) { download(new Blob([graphSvg(graph)], { type: "image/svg+xml" }), `${graph.project.name}_Align_Tree.svg`) }
+export function exportSvg(graph: Graph) { download(new Blob([graphSvg(graph)], { type: "image/svg+xml" }), `${exportBaseName(graph)}.svg`) }
 
 export async function exportPptx(graph: Graph) {
   const pptx = new PptxGenJS();
@@ -89,5 +94,5 @@ export async function exportPptx(graph: Graph) {
       line: { color: (style?.stroke_color ?? "#175CD3").replace("#", ""), width: style?.stroke_width ?? 2 },
     });
   }
-  await pptx.writeFile({ fileName: `${graph.project.name}_Align_Tree.pptx` });
+  await pptx.writeFile({ fileName: `${exportBaseName(graph)}.pptx` });
 }

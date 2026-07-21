@@ -1,0 +1,4 @@
+interface:
+  display_name: "RIC Relation Rules"
+  short_description: "Apply RIC merge and layer relation invariants"
+  default_prompt: "Use $relation-rules to review or change RIC layer relation behavior."

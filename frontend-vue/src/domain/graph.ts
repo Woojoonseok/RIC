@@ -92,6 +92,15 @@ export function groupMaps(raw: Graph) {
   return { anchorByLayerId, groupToLayerIds };
 }
 
+export function relationTargetLayerId(raw: Graph, relationId: string, visited = new Set<string>()): string | null {
+  if (visited.has(relationId)) return null;
+  const relation = raw.relations.find((row) => row.id === relationId);
+  if (!relation) return null;
+  if (relation.child_layer_id) return relation.child_layer_id;
+  if (!relation.attached_relation_id) return null;
+  return relationTargetLayerId(raw, relation.attached_relation_id, new Set(visited).add(relationId));
+}
+
 function relationKey(parentId: string, childId: string, instance?: string | null) {
   return `${parentId}\u0000${childId}\u0000${instance ?? ""}`;
 }

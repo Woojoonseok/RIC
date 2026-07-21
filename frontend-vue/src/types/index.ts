@@ -4,8 +4,111 @@ export type AppView = "home" | "reference" | "layer-master" | "projects" | "data
 export type SelectionItem = { kind: "layer" | "relation" | "text"; id: string };
 export type Point = { x: number; y: number };
 
-export interface Project { id: string; name: string; description: string | null; created_at: string; updated_at: string }
+export type ProjectRole = "owner" | "admin" | "editor" | "viewer";
+export type AccessRequestStatus = "pending" | "approved" | "rejected" | "cancelled";
+export interface ProjectLockSummary {
+  locked: boolean;
+  mine?: boolean;
+  holder_label?: string | null;
+  expires_at?: string | null;
+}
+export interface Project {
+  id: string;
+  name: string;
+  description: string | null;
+  created_at: string;
+  updated_at: string;
+  access_role?: ProjectRole;
+  role?: ProjectRole;
+  is_owner?: boolean;
+  revision?: number;
+  lock?: ProjectLockSummary | null;
+  is_locked?: boolean;
+  locked?: boolean;
+  locked_by_me?: boolean;
+  lock_expires_at?: string | null;
+  creator_id?: string | null;
+  creator_display_name?: string | null;
+  creator?: { id: string; display_name: string } | null;
+  my_role?: ProjectRole | null;
+  membership_role?: ProjectRole | null;
+  access_request_status?: AccessRequestStatus | null;
+  align_tree_count?: number;
+  member_count?: number;
+  is_public?: boolean;
+  is_legacy_unclaimed?: boolean;
+}
 export interface ProjectCreate { name: string; description?: string | null }
+export interface ProjectUpdate { name?: string; description?: string | null }
+export interface AnonymousSession { id: string; display_name?: string; identity_provider?: "anonymous" | string; ip_hint?: string | null }
+export interface EditLease {
+  project_id?: string;
+  lease_token: string;
+  token?: string;
+  client_instance_id?: string;
+  expires_at: string;
+  revision?: number;
+}
+export interface AlignTree {
+  id: string;
+  project_id: string;
+  name: string;
+  description?: string | null;
+  created_at: string;
+  updated_at: string;
+  revision?: number;
+  is_locked?: boolean;
+  locked_by_me?: boolean;
+  lock_expires_at?: string | null;
+  is_default?: boolean;
+  created_by_actor_id?: string | null;
+}
+export interface AlignTreeCreate { name: string; description?: string | null }
+export interface ProjectMember {
+  id: string;
+  project_id?: string;
+  actor_id?: string;
+  display_name?: string;
+  actor?: { id: string; display_name: string } | null;
+  role: ProjectRole;
+  added_by_actor_id?: string | null;
+  created_at?: string;
+  joined_at?: string;
+}
+export interface UserSummary { id: string; display_name: string }
+export interface ProjectAccessRequest {
+  id: string;
+  project_id: string;
+  actor_id?: string;
+  display_name?: string;
+  actor?: { id: string; display_name: string } | null;
+  requester?: { id: string; display_name: string } | null;
+  requested_role?: "viewer" | "editor";
+  message?: string | null;
+  status: AccessRequestStatus;
+  requested_at?: string;
+  created_at?: string;
+  reviewed_at?: string | null;
+  reviewed_by?: { id: string; display_name: string } | null;
+  decision_note?: string | null;
+}
+export interface AuditEvent {
+  id: string;
+  project_id: string;
+  align_tree_id?: string | null;
+  actor?: { id: string; display_name: string } | null;
+  actor_label_snapshot?: string | null;
+  actor_display_name?: string | null;
+  action?: string;
+  event_type?: string;
+  target_type?: string;
+  target_id?: string | null;
+  entity_type?: string | null;
+  summary?: string | null;
+  payload?: Record<string, unknown>;
+  details_json?: Record<string, unknown>;
+  created_at: string;
+}
 
 export interface Layer {
   id: string; project_id: string; name: string; step: string | null; layer_property: string | null;
@@ -61,7 +164,7 @@ export interface TextBoxBatchUpdate extends TextBoxUpdate { id: string }
 
 export interface ValidationIssue { code: string; severity: "error" | "warning"; message: string; relation_id?: string | null; layer_id?: string | null }
 export interface ValidationReport { ok: boolean; issues: ValidationIssue[] }
-export interface Graph { project: Project; layers: Layer[]; layouts: Layout[]; styles: ShapeStyle[]; box_presets: BoxPreset[]; relation_styles: RelationStyle[]; relations: Relation[]; text_boxes: TextBox[]; validation: ValidationReport }
+export interface Graph { project: Project; align_tree?: AlignTree; layers: Layer[]; layouts: Layout[]; styles: ShapeStyle[]; box_presets: BoxPreset[]; relation_styles: RelationStyle[]; relations: Relation[]; text_boxes: TextBox[]; validation: ValidationReport }
 
 export interface GraphBatchUpdate { layouts?: LayoutBatchUpdate[]; styles?: StyleBatchUpdate[]; text_boxes?: TextBoxBatchUpdate[] }
 export interface GraphUpdate { layers?: Layer[]; layouts?: Layout[]; styles?: ShapeStyle[]; box_presets?: BoxPreset[]; relation_styles?: RelationStyle[]; relations?: Relation[]; text_boxes?: TextBox[] }

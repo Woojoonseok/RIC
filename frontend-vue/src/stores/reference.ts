@@ -16,8 +16,12 @@ export const useReferenceStore = defineStore("reference", () => {
   function syncFromGraph(graph: Graph) {
     relationStyles.value = graph.relation_styles;
     boxPresets.value = graph.box_presets;
-    selectedRelationStyleId.value ||= graph.relation_styles[0]?.id ?? "";
-    selectedBoxPresetId.value ||= graph.box_presets.find((row) => row.is_default)?.id ?? graph.box_presets[0]?.id ?? "";
+    if (!graph.relation_styles.some((row) => row.id === selectedRelationStyleId.value)) {
+      selectedRelationStyleId.value = graph.relation_styles[0]?.id ?? "";
+    }
+    if (!graph.box_presets.some((row) => row.id === selectedBoxPresetId.value)) {
+      selectedBoxPresetId.value = graph.box_presets.find((row) => row.is_default)?.id ?? graph.box_presets[0]?.id ?? "";
+    }
   }
 
   async function loadAll() {
@@ -30,6 +34,10 @@ export const useReferenceStore = defineStore("reference", () => {
     relationStyles.value = styles;
     boxPresets.value = presets;
     layerMasters.value = masters;
+    if (!styles.some((row) => row.id === selectedRelationStyleId.value)) selectedRelationStyleId.value = styles[0]?.id ?? "";
+    if (!presets.some((row) => row.id === selectedBoxPresetId.value)) {
+      selectedBoxPresetId.value = presets.find((row) => row.is_default)?.id ?? presets[0]?.id ?? "";
+    }
   }
 
   return {

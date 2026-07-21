@@ -8,16 +8,19 @@ from sqlalchemy.orm import Session
 from .. import models
 
 
-def apply_auto_layout(db: Session, project_id: uuid.UUID) -> None:
+def apply_auto_layout(db: Session, project_id: uuid.UUID, align_tree_id: uuid.UUID) -> None:
     layers = (
         db.query(models.Layer)
-        .filter(models.Layer.project_id == project_id)
+        .filter(models.Layer.project_id == project_id, models.Layer.align_tree_id == align_tree_id)
         .order_by(models.Layer.created_at)
         .all()
     )
     relations = (
         db.query(models.LayerRelation)
-        .filter(models.LayerRelation.project_id == project_id)
+        .filter(
+            models.LayerRelation.project_id == project_id,
+            models.LayerRelation.align_tree_id == align_tree_id,
+        )
         .all()
     )
 
@@ -108,7 +111,10 @@ def apply_auto_layout(db: Session, project_id: uuid.UUID) -> None:
         layout.layer_id: layout
         for layout in (
             db.query(models.GraphLayout)
-            .filter(models.GraphLayout.project_id == project_id)
+            .filter(
+                models.GraphLayout.project_id == project_id,
+                models.GraphLayout.align_tree_id == align_tree_id,
+            )
             .all()
         )
     }
@@ -174,6 +180,7 @@ def apply_auto_layout(db: Session, project_id: uuid.UUID) -> None:
                 if layout is None:
                     layout = models.GraphLayout(
                         project_id=project_id,
+                        align_tree_id=align_tree_id,
                         layer_id=layer_id,
                     )
                     db.add(layout)

@@ -3,17 +3,23 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import crud, models, schemas
 from ..database import get_db
+from ..services.audit import record_project_event
 from ..services.layout import apply_auto_layout
+from ..services.project_access import ProjectContext, get_project_context, project_request_guard, project_to_read
 from ..services.relation_styles import default_relation_style_id
 from ..services.validation import validate_project_graph
 
-router = APIRouter(prefix="/api/projects/{project_id}/graph", tags=["graph"])
+router = APIRouter(
+    prefix="/api/projects/{project_id}/align-trees/{align_tree_id}/graph",
+    tags=["graph"],
+    dependencies=[Depends(project_request_guard)],
+)
 
 
 def _blocking_issues(report: schemas.ValidationReport) -> list[schemas.ValidationIssue]:
@@ -21,9 +27,42 @@ def _blocking_issues(report: schemas.ValidationReport) -> list[schemas.Validatio
     return [issue for issue in report.issues if issue.severity == "error" and issue.code not in draft_codes]
 
 
+def _audit_graph_mutation(
+    db: Session,
+    context: ProjectContext,
+    project_id: uuid.UUID,
+    align_tree_id: uuid.UUID,
+    *,
+    event_type: str,
+    target_type: str,
+    summary: str,
+    target_id: uuid.UUID | None = None,
+    details: dict[str, Any] | None = None,
+) -> None:
+    record_project_event(
+        db,
+        project_id=project_id,
+        align_tree_id=align_tree_id,
+        actor=context.actor,
+        event_type=event_type,
+        target_type=target_type,
+        target_id=target_id,
+        summary=summary,
+        details=details,
+    )
+
+
 @router.get("", response_model=schemas.GraphRead)
-def read_graph(project_id: uuid.UUID, db: Session = Depends(get_db)) -> schemas.GraphRead:
-    return crud.read_graph(db, project_id)
+def read_graph(
+    project_id: uuid.UUID,
+    align_tree_id: uuid.UUID,
+    context: ProjectContext = Depends(get_project_context),
+    db: Session = Depends(get_db),
+) -> schemas.GraphRead:
+    crud.get_align_tree_or_404(db, project_id, align_tree_id)
+    graph = crud.read_graph(db, project_id, align_tree_id)
+    graph.project = project_to_read(db, context.project, context.actor)
+    return graph
 
 
 def _uuid_or_none(value: Any) -> uuid.UUID | None:
@@ -37,11 +76,58 @@ def _uuid_or_none(value: Any) -> uuid.UUID | None:
         return None
 
 
-def _unique_layer_name(db: Session, project_id: uuid.UUID, base_name: str, ignore_id: uuid.UUID | None = None) -> str:
+def _assert_restore_payload_scope(
+    db: Session,
+    project_id: uuid.UUID,
+    align_tree_id: uuid.UUID,
+    payload: schemas.GraphRestore,
+) -> None:
+    payload_rows = [
+        *payload.layers,
+        *payload.layouts,
+        *payload.styles,
+        *payload.relations,
+        *payload.text_boxes,
+    ]
+    if any(
+        row.project_id != project_id
+        or (row.align_tree_id is not None and row.align_tree_id != align_tree_id)
+        for row in payload_rows
+    ):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Graph item not found")
+
+    ids_by_model = (
+        (models.Layer, {row.id for row in payload.layers}),
+        (models.GraphLayout, {row.id for row in payload.layouts}),
+        (models.ShapeStyle, {row.id for row in payload.styles}),
+        (models.LayerRelation, {row.id for row in payload.relations}),
+        (models.TextBox, {row.id for row in payload.text_boxes}),
+    )
+    for model, row_ids in ids_by_model:
+        if not row_ids:
+            continue
+        existing_rows = db.query(model).filter(model.id.in_(row_ids)).all()
+        if any(
+            row.project_id != project_id or row.align_tree_id != align_tree_id
+            for row in existing_rows
+        ):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Graph item not found")
+
+
+def _unique_layer_name(
+    db: Session,
+    project_id: uuid.UUID,
+    align_tree_id: uuid.UUID,
+    base_name: str,
+    ignore_id: uuid.UUID | None = None,
+) -> str:
     base = (base_name or "Layer").strip()[:150] or "Layer"
     names = {
         layer.name.strip().lower()
-        for layer in db.query(models.Layer).filter(models.Layer.project_id == project_id).all()
+        for layer in db.query(models.Layer).filter(
+            models.Layer.project_id == project_id,
+            models.Layer.align_tree_id == align_tree_id,
+        ).all()
         if ignore_id is None or layer.id != ignore_id
     }
     if base.lower() not in names:
@@ -103,22 +189,44 @@ def _dump_relation(relation: models.LayerRelation) -> dict[str, Any]:
 @router.patch("/restore", response_model=schemas.GraphRead)
 def restore_graph(
     project_id: uuid.UUID,
+    align_tree_id: uuid.UUID,
     payload: schemas.GraphRestore,
+    context: ProjectContext = Depends(project_request_guard),
     db: Session = Depends(get_db),
 ) -> schemas.GraphRead:
-    crud.get_project_or_404(db, project_id)
+    crud.get_align_tree_or_404(db, project_id, align_tree_id)
+    _assert_restore_payload_scope(db, project_id, align_tree_id, payload)
 
-    # RelationStyle/BoxPreset are global presets, not project-owned data, so
-    # undo/redo restore never deletes/recreates them — only membership checks
-    # against whatever currently exists globally.
-    preset_ids = {row.id for row in db.query(models.BoxPreset).all()}
-    relation_style_ids = {row.id for row in db.query(models.RelationStyle).all()}
+    # Reference presets belong to the project but are not part of one tree, so
+    # undo/redo restore preserves them and only verifies referenced ids.
+    preset_ids = {
+        row.id for row in db.query(models.BoxPreset).filter(models.BoxPreset.project_id == project_id).all()
+    }
+    relation_style_ids = {
+        row.id
+        for row in db.query(models.RelationStyle).filter(models.RelationStyle.project_id == project_id).all()
+    }
 
-    db.query(models.LayerRelation).filter(models.LayerRelation.project_id == project_id).delete(synchronize_session=False)
-    db.query(models.GraphLayout).filter(models.GraphLayout.project_id == project_id).delete(synchronize_session=False)
-    db.query(models.ShapeStyle).filter(models.ShapeStyle.project_id == project_id).delete(synchronize_session=False)
-    db.query(models.TextBox).filter(models.TextBox.project_id == project_id).delete(synchronize_session=False)
-    db.query(models.Layer).filter(models.Layer.project_id == project_id).delete(synchronize_session=False)
+    db.query(models.LayerRelation).filter(
+        models.LayerRelation.project_id == project_id,
+        models.LayerRelation.align_tree_id == align_tree_id,
+    ).delete(synchronize_session=False)
+    db.query(models.GraphLayout).filter(
+        models.GraphLayout.project_id == project_id,
+        models.GraphLayout.align_tree_id == align_tree_id,
+    ).delete(synchronize_session=False)
+    db.query(models.ShapeStyle).filter(
+        models.ShapeStyle.project_id == project_id,
+        models.ShapeStyle.align_tree_id == align_tree_id,
+    ).delete(synchronize_session=False)
+    db.query(models.TextBox).filter(
+        models.TextBox.project_id == project_id,
+        models.TextBox.align_tree_id == align_tree_id,
+    ).delete(synchronize_session=False)
+    db.query(models.Layer).filter(
+        models.Layer.project_id == project_id,
+        models.Layer.align_tree_id == align_tree_id,
+    ).delete(synchronize_session=False)
     db.flush()
     db.expunge_all()
 
@@ -126,6 +234,7 @@ def restore_graph(
         db.add(models.Layer(
             id=layer.id,
             project_id=project_id,
+            align_tree_id=align_tree_id,
             name=layer.name,
             step=layer.step,
             layer_property=layer.layer_property,
@@ -144,6 +253,7 @@ def restore_graph(
             db.add(models.GraphLayout(
                 id=layout.id,
                 project_id=project_id,
+                align_tree_id=align_tree_id,
                 layer_id=layout.layer_id,
                 x=layout.x,
                 y=layout.y,
@@ -156,6 +266,7 @@ def restore_graph(
             db.add(models.ShapeStyle(
                 id=style.id,
                 project_id=project_id,
+                align_tree_id=align_tree_id,
                 layer_id=style.layer_id,
                 fill_color=style.fill_color,
                 stroke_color=style.stroke_color,
@@ -167,6 +278,7 @@ def restore_graph(
         db.add(models.TextBox(
             id=text_box.id,
             project_id=project_id,
+            align_tree_id=align_tree_id,
             text=text_box.text,
             x=text_box.x,
             y=text_box.y,
@@ -200,6 +312,7 @@ def restore_graph(
         db.add(models.LayerRelation(
             id=relation.id,
             project_id=project_id,
+            align_tree_id=align_tree_id,
             parent_layer_id=relation.parent_layer_id,
             child_layer_id=relation.child_layer_id,
             relation_type=relation.relation_type,
@@ -224,47 +337,98 @@ def restore_graph(
                 relation_row.attached_relation_id = attached_id
 
     db.flush()
-    report = validate_project_graph(db, project_id)
+    report = validate_project_graph(db, project_id, align_tree_id)
     if _blocking_issues(report):
         db.rollback()
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=[issue.model_dump(mode="json") for issue in report.issues])
+    _audit_graph_mutation(
+        db,
+        context,
+        project_id,
+        align_tree_id,
+        event_type="graph.restored",
+        target_type="align_tree",
+        target_id=align_tree_id,
+        summary="Restored Align Tree graph",
+        details={"layers": len(payload.layers), "relations": len(payload.relations), "text_boxes": len(payload.text_boxes)},
+    )
     db.commit()
-    return crud.read_graph(db, project_id)
+    return crud.read_graph(db, project_id, align_tree_id)
 
 
 @router.post("/layers", response_model=schemas.LayerRead, status_code=status.HTTP_201_CREATED)
-def create_layer(project_id: uuid.UUID, payload: schemas.LayerCreate, db: Session = Depends(get_db)) -> models.Layer:
+def create_layer(
+    project_id: uuid.UUID,
+    align_tree_id: uuid.UUID,
+    payload: schemas.LayerCreate,
+    context: ProjectContext = Depends(project_request_guard),
+    db: Session = Depends(get_db),
+) -> models.Layer:
     try:
-        return crud.create_layer(db, project_id, payload)
+        layer = crud.create_layer(db, project_id, align_tree_id, payload)
+        _audit_graph_mutation(
+            db,
+            context,
+            project_id,
+            align_tree_id,
+            event_type="layer.created",
+            target_type="layer",
+            target_id=layer.id,
+            summary=f"Created layer {layer.name}",
+            details={"name": layer.name},
+        )
+        db.commit()
+        db.refresh(layer)
+        return layer
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Layer name already exists") from exc
 
 
-def upsert_layout(db: Session, project_id: uuid.UUID, layer_id: uuid.UUID, payload: schemas.LayoutUpdate) -> models.GraphLayout:
-    crud.get_layer_or_404(db, project_id, layer_id)
+def upsert_layout(
+    db: Session,
+    project_id: uuid.UUID,
+    align_tree_id: uuid.UUID,
+    layer_id: uuid.UUID,
+    payload: schemas.LayoutUpdate,
+) -> models.GraphLayout:
+    crud.get_layer_or_404(db, project_id, align_tree_id, layer_id)
     layout = (
         db.query(models.GraphLayout)
-        .filter(models.GraphLayout.project_id == project_id, models.GraphLayout.layer_id == layer_id)
+        .filter(
+            models.GraphLayout.project_id == project_id,
+            models.GraphLayout.align_tree_id == align_tree_id,
+            models.GraphLayout.layer_id == layer_id,
+        )
         .one_or_none()
     )
     if layout is None:
-        layout = models.GraphLayout(project_id=project_id, layer_id=layer_id)
+        layout = models.GraphLayout(project_id=project_id, align_tree_id=align_tree_id, layer_id=layer_id)
         db.add(layout)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(layout, field, value)
     return layout
 
 
-def upsert_style(db: Session, project_id: uuid.UUID, layer_id: uuid.UUID, payload: schemas.StyleUpdate) -> models.ShapeStyle:
-    crud.get_layer_or_404(db, project_id, layer_id)
+def upsert_style(
+    db: Session,
+    project_id: uuid.UUID,
+    align_tree_id: uuid.UUID,
+    layer_id: uuid.UUID,
+    payload: schemas.StyleUpdate,
+) -> models.ShapeStyle:
+    crud.get_layer_or_404(db, project_id, align_tree_id, layer_id)
     style_row = (
         db.query(models.ShapeStyle)
-        .filter(models.ShapeStyle.project_id == project_id, models.ShapeStyle.layer_id == layer_id)
+        .filter(
+            models.ShapeStyle.project_id == project_id,
+            models.ShapeStyle.align_tree_id == align_tree_id,
+            models.ShapeStyle.layer_id == layer_id,
+        )
         .one_or_none()
     )
     if style_row is None:
-        style_row = models.ShapeStyle(project_id=project_id, layer_id=layer_id)
+        style_row = models.ShapeStyle(project_id=project_id, align_tree_id=align_tree_id, layer_id=layer_id)
         db.add(style_row)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(style_row, field, value)
@@ -274,14 +438,30 @@ def upsert_style(db: Session, project_id: uuid.UUID, layer_id: uuid.UUID, payloa
 @router.put("/layers/{layer_id}", response_model=schemas.LayerRead)
 def update_layer(
     project_id: uuid.UUID,
+    align_tree_id: uuid.UUID,
     layer_id: uuid.UUID,
     payload: schemas.LayerUpdate,
+    context: ProjectContext = Depends(project_request_guard),
     db: Session = Depends(get_db),
 ) -> models.Layer:
-    layer = crud.get_layer_or_404(db, project_id, layer_id)
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    layer = crud.get_layer_or_404(db, project_id, align_tree_id, layer_id)
+    updates = payload.model_dump(exclude_unset=True)
+    if updates.get("box_preset_id") is not None:
+        crud.get_box_preset_or_404(db, project_id, updates["box_preset_id"])
+    for field, value in updates.items():
         setattr(layer, field, value)
     try:
+        _audit_graph_mutation(
+            db,
+            context,
+            project_id,
+            align_tree_id,
+            event_type="layer.updated",
+            target_type="layer",
+            target_id=layer.id,
+            summary=f"Updated layer {layer.name}",
+            details={"fields": sorted(updates)},
+        )
         db.commit()
     except IntegrityError as exc:
         db.rollback()
@@ -321,12 +501,17 @@ def _compact_values(values: list[str | None], max_length: int = 160) -> str | No
 def _merge_layers_in_db(
     db: Session,
     project_id: uuid.UUID,
+    align_tree_id: uuid.UUID,
     layer_ids: list[uuid.UUID],
     override_name: str | None = None,
 ) -> models.Layer:
     layer_rows = (
         db.query(models.Layer)
-        .filter(models.Layer.project_id == project_id, models.Layer.id.in_(layer_ids))
+        .filter(
+            models.Layer.project_id == project_id,
+            models.Layer.align_tree_id == align_tree_id,
+            models.Layer.id.in_(layer_ids),
+        )
         .all()
     )
     layer_by_id = {layer.id: layer for layer in layer_rows}
@@ -341,7 +526,11 @@ def _merge_layers_in_db(
 
     layout_rows = (
         db.query(models.GraphLayout)
-        .filter(models.GraphLayout.project_id == project_id, models.GraphLayout.layer_id.in_(selected_ids))
+        .filter(
+            models.GraphLayout.project_id == project_id,
+            models.GraphLayout.align_tree_id == align_tree_id,
+            models.GraphLayout.layer_id.in_(selected_ids),
+        )
         .all()
     )
     layout_by_layer = {layout.layer_id: layout for layout in layout_rows}
@@ -350,11 +539,18 @@ def _merge_layers_in_db(
 
     style_rows = (
         db.query(models.ShapeStyle)
-        .filter(models.ShapeStyle.project_id == project_id, models.ShapeStyle.layer_id.in_(selected_ids))
+        .filter(
+            models.ShapeStyle.project_id == project_id,
+            models.ShapeStyle.align_tree_id == align_tree_id,
+            models.ShapeStyle.layer_id.in_(selected_ids),
+        )
         .all()
     )
     style_by_layer = {style.layer_id: style for style in style_rows}
-    relation_rows = db.query(models.LayerRelation).filter(models.LayerRelation.project_id == project_id).all()
+    relation_rows = db.query(models.LayerRelation).filter(
+        models.LayerRelation.project_id == project_id,
+        models.LayerRelation.align_tree_id == align_tree_id,
+    ).all()
     merged_layers = [_dump_layer(layer, layout_by_layer.get(layer.id), style_by_layer.get(layer.id)) for layer in layers]
     merged_relations = [
         _dump_relation(relation)
@@ -388,7 +584,10 @@ def _merge_layers_in_db(
 
     all_layouts = {
         layout.layer_id: layout
-        for layout in db.query(models.GraphLayout).filter(models.GraphLayout.project_id == project_id).all()
+        for layout in db.query(models.GraphLayout).filter(
+            models.GraphLayout.project_id == project_id,
+            models.GraphLayout.align_tree_id == align_tree_id,
+        ).all()
     }
     all_layouts[anchor.id] = anchor_layout
     kept_keys: set[tuple[uuid.UUID, uuid.UUID, str]] = set()
@@ -415,6 +614,7 @@ def _merge_layers_in_db(
             relation_specs.append(
                 {
                     "project_id": project_id,
+                    "align_tree_id": align_tree_id,
                     "parent_layer_id": next_parent,
                     "child_layer_id": next_child,
                     "relation_type": relation.relation_type,
@@ -450,17 +650,23 @@ def _merge_layers_in_db(
 @router.post("/layers/merge", response_model=schemas.GraphRead)
 def merge_layers(
     project_id: uuid.UUID,
+    align_tree_id: uuid.UUID,
     payload: schemas.LayerMergeRequest,
+    context: ProjectContext = Depends(project_request_guard),
     db: Session = Depends(get_db),
 ) -> schemas.GraphRead:
-    crud.get_project_or_404(db, project_id)
+    crud.get_align_tree_or_404(db, project_id, align_tree_id)
     layer_ids = list(dict.fromkeys(payload.layer_ids))
     if len(layer_ids) < 2:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Select at least two layers to merge")
 
     layer_rows = (
         db.query(models.Layer)
-        .filter(models.Layer.project_id == project_id, models.Layer.id.in_(layer_ids))
+        .filter(
+            models.Layer.project_id == project_id,
+            models.Layer.align_tree_id == align_tree_id,
+            models.Layer.id.in_(layer_ids),
+        )
         .all()
     )
     layer_by_id = {layer.id: layer for layer in layer_rows}
@@ -472,6 +678,7 @@ def merge_layers(
     group_membership = {}
     all_group_rels = db.query(models.LayerRelation).filter(
         models.LayerRelation.project_id == project_id,
+        models.LayerRelation.align_tree_id == align_tree_id,
         models.LayerRelation.same_group.is_not(None),
         models.LayerRelation.same_group != "",
     ).all()
@@ -503,6 +710,32 @@ def merge_layers(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                           detail="그룹과 여러 개의 개별 레이어는 동시에 병합할 수 없습니다. 한 번에 하나씩 추가해주세요.")
 
+    # Merge membership and directed relations are distinct. Include every
+    # current member of the selected group when checking the candidate set;
+    # otherwise a relation owned by a non-anchor group member could be
+    # silently converted or hidden by a later merge.
+    merge_candidate_ids = set(layer_ids)
+    if unique_groups:
+        for relation in all_group_rels:
+            if relation.same_group not in unique_groups:
+                continue
+            if relation.parent_layer_id is not None:
+                merge_candidate_ids.add(relation.parent_layer_id)
+            if relation.child_layer_id is not None:
+                merge_candidate_ids.add(relation.child_layer_id)
+    conflicting_relation = db.query(models.LayerRelation).filter(
+        models.LayerRelation.project_id == project_id,
+        models.LayerRelation.align_tree_id == align_tree_id,
+        (models.LayerRelation.same_group.is_(None)) | (models.LayerRelation.same_group == ""),
+        models.LayerRelation.parent_layer_id.in_(merge_candidate_ids),
+        models.LayerRelation.child_layer_id.in_(merge_candidate_ids),
+    ).first()
+    if conflicting_relation is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="관계가 있는 레이어끼리는 병합할 수 없습니다. 기존 Relation을 먼저 삭제해주세요.",
+        )
+
     # Determine which group to use
     if group_membership:
         # Use the existing group (only one group at this point due to validations above)
@@ -511,6 +744,7 @@ def merge_layers(
         # Find next available group number
         all_groups = db.query(models.LayerRelation.same_group).filter(
             models.LayerRelation.project_id == project_id,
+            models.LayerRelation.align_tree_id == align_tree_id,
             models.LayerRelation.same_group.is_not(None),
             models.LayerRelation.same_group != ""
         ).all()
@@ -535,6 +769,7 @@ def merge_layers(
     for other_id in (layer_id for layer_id in layer_ids if layer_id != anchor_id):
         existing = db.query(models.LayerRelation).filter(
             models.LayerRelation.project_id == project_id,
+            models.LayerRelation.align_tree_id == align_tree_id,
             ((models.LayerRelation.parent_layer_id == anchor_id) & (models.LayerRelation.child_layer_id == other_id)) |
             ((models.LayerRelation.parent_layer_id == other_id) & (models.LayerRelation.child_layer_id == anchor_id))
         ).first()
@@ -543,6 +778,7 @@ def merge_layers(
         else:
             new_rel = models.LayerRelation(
                 project_id=project_id,
+                align_tree_id=align_tree_id,
                 parent_layer_id=anchor_id,
                 child_layer_id=other_id,
                 relation_type="Same Group",
@@ -558,17 +794,34 @@ def merge_layers(
 
     try:
         db.flush()
-        report = validate_project_graph(db, project_id)
+        report = validate_project_graph(db, project_id, align_tree_id)
         if _blocking_issues(report):
             db.rollback()
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=[issue.model_dump(mode="json") for issue in report.issues])
+        _audit_graph_mutation(
+            db,
+            context,
+            project_id,
+            align_tree_id,
+            event_type="layers.merged",
+            target_type="layer_group",
+            target_id=anchor_id,
+            summary=f"Merged {len(layer_ids)} layers into group {next_group}",
+            details={"layer_ids": [str(value) for value in layer_ids], "group": next_group},
+        )
         db.commit()
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Layer merge created duplicate data") from exc
-    return crud.read_graph(db, project_id)
+    return crud.read_graph(db, project_id, align_tree_id)
 
-def _sync_layer_group(db: Session, project_id: uuid.UUID, layer_id: uuid.UUID, new_group: str | None) -> None:
+def _sync_layer_group(
+    db: Session,
+    project_id: uuid.UUID,
+    align_tree_id: uuid.UUID,
+    layer_id: uuid.UUID,
+    new_group: str | None,
+) -> None:
     """Reconciles this layer's group membership so it ends up labeled `new_group`.
 
     same_group lives on LayerRelation rows (hub-and-spoke: merge_layers wires
@@ -578,11 +831,12 @@ def _sync_layer_group(db: Session, project_id: uuid.UUID, layer_id: uuid.UUID, n
     at which point both layers' pending_group clears and a real same_group
     relation is created between them.
     """
-    layer = db.get(models.Layer, layer_id)
+    layer = crud.get_layer_or_404(db, project_id, align_tree_id, layer_id)
     new_group = (new_group or "").strip() or None
 
     old_group_rels = db.query(models.LayerRelation).filter(
         models.LayerRelation.project_id == project_id,
+        models.LayerRelation.align_tree_id == align_tree_id,
         models.LayerRelation.same_group.isnot(None),
         models.LayerRelation.same_group != "",
         (models.LayerRelation.parent_layer_id == layer_id) | (models.LayerRelation.child_layer_id == layer_id),
@@ -595,6 +849,7 @@ def _sync_layer_group(db: Session, project_id: uuid.UUID, layer_id: uuid.UUID, n
     for old_label in old_labels:
         group_rels = db.query(models.LayerRelation).filter(
             models.LayerRelation.project_id == project_id,
+            models.LayerRelation.align_tree_id == align_tree_id,
             models.LayerRelation.same_group == old_label,
         ).all()
         member_ids = set()
@@ -613,6 +868,7 @@ def _sync_layer_group(db: Session, project_id: uuid.UUID, layer_id: uuid.UUID, n
             # reconnect them so the group survives without it.
             remaining_rels = db.query(models.LayerRelation).filter(
                 models.LayerRelation.project_id == project_id,
+                models.LayerRelation.align_tree_id == align_tree_id,
                 models.LayerRelation.same_group == old_label,
             ).all()
             connected = set()
@@ -628,6 +884,7 @@ def _sync_layer_group(db: Session, project_id: uuid.UUID, layer_id: uuid.UUID, n
                         continue
                     db.add(models.LayerRelation(
                         project_id=project_id,
+                        align_tree_id=align_tree_id,
                         parent_layer_id=hub,
                         child_layer_id=other_id,
                         relation_type="Same Group",
@@ -648,6 +905,7 @@ def _sync_layer_group(db: Session, project_id: uuid.UUID, layer_id: uuid.UUID, n
     if new_group:
         existing_member_rels = db.query(models.LayerRelation).filter(
             models.LayerRelation.project_id == project_id,
+            models.LayerRelation.align_tree_id == align_tree_id,
             models.LayerRelation.same_group == new_group,
         ).all()
         member_ids = set()
@@ -660,6 +918,7 @@ def _sync_layer_group(db: Session, project_id: uuid.UUID, layer_id: uuid.UUID, n
         if not member_ids:
             pending_partner = db.query(models.Layer).filter(
                 models.Layer.project_id == project_id,
+                models.Layer.align_tree_id == align_tree_id,
                 models.Layer.pending_group == new_group,
                 models.Layer.id != layer_id,
             ).first()
@@ -668,6 +927,7 @@ def _sync_layer_group(db: Session, project_id: uuid.UUID, layer_id: uuid.UUID, n
             anchor_id = next(iter(member_ids))
             existing_rel = db.query(models.LayerRelation).filter(
                 models.LayerRelation.project_id == project_id,
+                models.LayerRelation.align_tree_id == align_tree_id,
                 ((models.LayerRelation.parent_layer_id == anchor_id) & (models.LayerRelation.child_layer_id == layer_id))
                 | ((models.LayerRelation.parent_layer_id == layer_id) & (models.LayerRelation.child_layer_id == anchor_id)),
             ).first()
@@ -676,6 +936,7 @@ def _sync_layer_group(db: Session, project_id: uuid.UUID, layer_id: uuid.UUID, n
             else:
                 db.add(models.LayerRelation(
                     project_id=project_id,
+                    align_tree_id=align_tree_id,
                     parent_layer_id=anchor_id,
                     child_layer_id=layer_id,
                     relation_type="Same Group",
@@ -693,6 +954,7 @@ def _sync_layer_group(db: Session, project_id: uuid.UUID, layer_id: uuid.UUID, n
                 layer.pending_group = None
             db.add(models.LayerRelation(
                 project_id=project_id,
+                align_tree_id=align_tree_id,
                 parent_layer_id=pending_partner.id,
                 child_layer_id=layer_id,
                 relation_type="Same Group",
@@ -712,33 +974,48 @@ def _sync_layer_group(db: Session, project_id: uuid.UUID, layer_id: uuid.UUID, n
 @router.patch("/layers/{layer_id}/group", response_model=schemas.GraphRead)
 def update_layer_group(
     project_id: uuid.UUID,
+    align_tree_id: uuid.UUID,
     layer_id: uuid.UUID,
     payload: schemas.LayerGroupUpdate,
+    context: ProjectContext = Depends(project_request_guard),
     db: Session = Depends(get_db),
 ) -> schemas.GraphRead:
-    crud.get_layer_or_404(db, project_id, layer_id)
-    _sync_layer_group(db, project_id, layer_id, payload.group)
+    crud.get_layer_or_404(db, project_id, align_tree_id, layer_id)
+    _sync_layer_group(db, project_id, align_tree_id, layer_id, payload.group)
     try:
         db.flush()
-        report = validate_project_graph(db, project_id)
+        report = validate_project_graph(db, project_id, align_tree_id)
         if _blocking_issues(report):
             db.rollback()
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=[issue.model_dump(mode="json") for issue in report.issues])
+        _audit_graph_mutation(
+            db,
+            context,
+            project_id,
+            align_tree_id,
+            event_type="layer.group_updated",
+            target_type="layer",
+            target_id=layer_id,
+            summary="Updated layer group",
+            details={"group": payload.group},
+        )
         db.commit()
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Group update created duplicate data") from exc
-    return crud.read_graph(db, project_id)
+    return crud.read_graph(db, project_id, align_tree_id)
 
 
 @router.post("/layers/{layer_id}/split", response_model=schemas.GraphRead)
 def split_layer(
     project_id: uuid.UUID,
+    align_tree_id: uuid.UUID,
     layer_id: uuid.UUID,
     payload: schemas.LayerSplitRequest,
+    context: ProjectContext = Depends(project_request_guard),
     db: Session = Depends(get_db),
 ) -> schemas.GraphRead:
-    layer = crud.get_layer_or_404(db, project_id, layer_id)
+    layer = crud.get_layer_or_404(db, project_id, align_tree_id, layer_id)
     metadata = dict(layer.metadata_json or {})
     stored_layers = metadata.get("merged_layers")
     stored_relations = metadata.get("merged_relations")
@@ -750,6 +1027,7 @@ def split_layer(
         # New non-destructive split logic: delete same_group relations involving this layer's group
         group_rels = db.query(models.LayerRelation).filter(
             models.LayerRelation.project_id == project_id,
+            models.LayerRelation.align_tree_id == align_tree_id,
             (models.LayerRelation.parent_layer_id == layer_id) | (models.LayerRelation.child_layer_id == layer_id),
             models.LayerRelation.same_group.is_not(None),
             models.LayerRelation.same_group != ""
@@ -760,12 +1038,24 @@ def split_layer(
         group_ids = {r.same_group for r in group_rels}
         all_group_rels = db.query(models.LayerRelation).filter(
             models.LayerRelation.project_id == project_id,
+            models.LayerRelation.align_tree_id == align_tree_id,
             models.LayerRelation.same_group.in_(group_ids)
         ).all()
         for r in all_group_rels:
             db.delete(r)
+        _audit_graph_mutation(
+            db,
+            context,
+            project_id,
+            align_tree_id,
+            event_type="layers.split",
+            target_type="layer_group",
+            target_id=layer_id,
+            summary="Split layer group",
+            details={"groups": sorted(str(value) for value in group_ids)},
+        )
         db.commit()
-        return crud.read_graph(db, project_id)
+        return crud.read_graph(db, project_id, align_tree_id)
 
     if not isinstance(stored_layers, list):
         names = stored_names if isinstance(stored_names, list) else layer.name.splitlines()
@@ -775,14 +1065,22 @@ def split_layer(
 
     anchor_layout = (
         db.query(models.GraphLayout)
-        .filter(models.GraphLayout.project_id == project_id, models.GraphLayout.layer_id == layer_id)
+        .filter(
+            models.GraphLayout.project_id == project_id,
+            models.GraphLayout.align_tree_id == align_tree_id,
+            models.GraphLayout.layer_id == layer_id,
+        )
         .one_or_none()
     )
     if anchor_layout is None:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Merged layer must have a layout")
     anchor_style = (
         db.query(models.ShapeStyle)
-        .filter(models.ShapeStyle.project_id == project_id, models.ShapeStyle.layer_id == layer_id)
+        .filter(
+            models.ShapeStyle.project_id == project_id,
+            models.ShapeStyle.align_tree_id == align_tree_id,
+            models.ShapeStyle.layer_id == layer_id,
+        )
         .one_or_none()
     )
 
@@ -823,7 +1121,9 @@ def split_layer(
         style_payload = item.get("style") if isinstance(item.get("style"), dict) else {}
 
         if index == 0:
-            layer.name = _unique_layer_name(db, project_id, str(item.get("name") or "Layer"), ignore_id=layer_id)
+            layer.name = _unique_layer_name(
+                db, project_id, align_tree_id, str(item.get("name") or "Layer"), ignore_id=layer_id
+            )
             layer.step = item.get("step")
             layer.layer_property = item.get("layer_property")
             layer.align = item.get("align")
@@ -835,7 +1135,11 @@ def split_layer(
             anchor_layout.height = float(layout_payload["height"])
             anchor_layout.z_index = int(layout_payload["z_index"])
             if anchor_style is None:
-                anchor_style = models.ShapeStyle(project_id=project_id, layer_id=layer_id)
+                anchor_style = models.ShapeStyle(
+                    project_id=project_id,
+                    align_tree_id=align_tree_id,
+                    layer_id=layer_id,
+                )
                 db.add(anchor_style)
             anchor_style.fill_color = str(style_payload.get("fill_color", anchor_style.fill_color))
             anchor_style.stroke_color = str(style_payload.get("stroke_color", anchor_style.stroke_color))
@@ -847,7 +1151,8 @@ def split_layer(
         new_layer = models.Layer(
             id=next_id,
             project_id=project_id,
-            name=_unique_layer_name(db, project_id, str(item.get("name") or "Layer")),
+            align_tree_id=align_tree_id,
+            name=_unique_layer_name(db, project_id, align_tree_id, str(item.get("name") or "Layer")),
             step=item.get("step"),
             layer_property=item.get("layer_property"),
             align=item.get("align"),
@@ -859,6 +1164,7 @@ def split_layer(
         db.flush()
         db.add(models.GraphLayout(
             project_id=project_id,
+            align_tree_id=align_tree_id,
             layer_id=next_id,
             x=float(layout_payload["x"]),
             y=float(layout_payload["y"]),
@@ -868,6 +1174,7 @@ def split_layer(
         ))
         db.add(models.ShapeStyle(
             project_id=project_id,
+            align_tree_id=align_tree_id,
             layer_id=next_id,
             fill_color=str(style_payload.get("fill_color", anchor_style.fill_color if anchor_style else "#ffffff")),
             stroke_color=str(style_payload.get("stroke_color", anchor_style.stroke_color if anchor_style else "#2563eb")),
@@ -880,6 +1187,7 @@ def split_layer(
         db.query(models.LayerRelation)
         .filter(
             models.LayerRelation.project_id == project_id,
+            models.LayerRelation.align_tree_id == align_tree_id,
             (models.LayerRelation.parent_layer_id == layer_id) | (models.LayerRelation.child_layer_id == layer_id),
         )
         .all()
@@ -889,11 +1197,23 @@ def split_layer(
         db.delete(relation)
     db.flush()
 
-    existing_layer_ids = {row.id for row in db.query(models.Layer).filter(models.Layer.project_id == project_id).all()}
-    relation_style_ids = {row.id for row in db.query(models.RelationStyle).all()}
+    existing_layer_ids = {
+        row.id
+        for row in db.query(models.Layer).filter(
+            models.Layer.project_id == project_id,
+            models.Layer.align_tree_id == align_tree_id,
+        ).all()
+    }
+    relation_style_ids = {
+        row.id
+        for row in db.query(models.RelationStyle).filter(models.RelationStyle.project_id == project_id).all()
+    }
     existing_keys = {
         (relation.parent_layer_id, relation.child_layer_id, (relation.instance or "").strip().lower())
-        for relation in db.query(models.LayerRelation).filter(models.LayerRelation.project_id == project_id).all()
+        for relation in db.query(models.LayerRelation).filter(
+            models.LayerRelation.project_id == project_id,
+            models.LayerRelation.align_tree_id == align_tree_id,
+        ).all()
     }
 
     relation_specs = stored_relations if isinstance(stored_relations, list) and stored_relations else []
@@ -904,7 +1224,7 @@ def split_layer(
                 "parent_layer_id": str(new_layer_ids[index]),
                 "child_layer_id": str(new_layer_ids[index + 1]),
                 "relation_type": "parent_child",
-                "relation_style_id": default_relation_style_id(db),
+                "relation_style_id": default_relation_style_id(db, project_id),
                 "source_port": "bottom" if payload.orientation == "vertical" else "right",
                 "target_port": "top" if payload.orientation == "vertical" else "left",
             })
@@ -939,6 +1259,7 @@ def split_layer(
         db.add(models.LayerRelation(
             id=relation_id,
             project_id=project_id,
+            align_tree_id=align_tree_id,
             parent_layer_id=parent_id,
             child_layer_id=child_id,
             relation_type=str(raw_relation.get("relation_type") or "parent_child"),
@@ -951,25 +1272,49 @@ def split_layer(
 
     try:
         db.flush()
-        report = validate_project_graph(db, project_id)
+        report = validate_project_graph(db, project_id, align_tree_id)
         if _blocking_issues(report):
             db.rollback()
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=[issue.model_dump(mode="json") for issue in report.issues])
+        _audit_graph_mutation(
+            db,
+            context,
+            project_id,
+            align_tree_id,
+            event_type="layers.split",
+            target_type="layer",
+            target_id=layer_id,
+            summary=f"Split layer into {len(new_layer_ids)} layers",
+            details={"layer_count": len(new_layer_ids), "orientation": payload.orientation},
+        )
         db.commit()
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Layer split created duplicate data") from exc
-    return crud.read_graph(db, project_id)
+    return crud.read_graph(db, project_id, align_tree_id)
 
 
 @router.patch("/layers/{layer_id}/layout", response_model=schemas.LayoutRead)
 def update_layout(
     project_id: uuid.UUID,
+    align_tree_id: uuid.UUID,
     layer_id: uuid.UUID,
     payload: schemas.LayoutUpdate,
+    context: ProjectContext = Depends(project_request_guard),
     db: Session = Depends(get_db),
 ) -> models.GraphLayout:
-    layout = upsert_layout(db, project_id, layer_id, payload)
+    layout = upsert_layout(db, project_id, align_tree_id, layer_id, payload)
+    _audit_graph_mutation(
+        db,
+        context,
+        project_id,
+        align_tree_id,
+        event_type="layout.updated",
+        target_type="layer",
+        target_id=layer_id,
+        summary="Updated layer layout",
+        details={"fields": sorted(payload.model_dump(exclude_unset=True))},
+    )
     db.commit()
     db.refresh(layout)
     return layout
@@ -978,11 +1323,24 @@ def update_layout(
 @router.patch("/layers/{layer_id}/style", response_model=schemas.StyleRead)
 def update_style(
     project_id: uuid.UUID,
+    align_tree_id: uuid.UUID,
     layer_id: uuid.UUID,
     payload: schemas.StyleUpdate,
+    context: ProjectContext = Depends(project_request_guard),
     db: Session = Depends(get_db),
 ) -> models.ShapeStyle:
-    style_row = upsert_style(db, project_id, layer_id, payload)
+    style_row = upsert_style(db, project_id, align_tree_id, layer_id, payload)
+    _audit_graph_mutation(
+        db,
+        context,
+        project_id,
+        align_tree_id,
+        event_type="style.updated",
+        target_type="layer",
+        target_id=layer_id,
+        summary="Updated layer style",
+        details={"fields": sorted(payload.model_dump(exclude_unset=True))},
+    )
     db.commit()
     db.refresh(style_row)
     return style_row
@@ -991,14 +1349,17 @@ def update_style(
 @router.patch("/batch", response_model=schemas.GraphRead)
 def batch_update_graph(
     project_id: uuid.UUID,
+    align_tree_id: uuid.UUID,
     payload: schemas.GraphBatchUpdate,
+    context: ProjectContext = Depends(project_request_guard),
     db: Session = Depends(get_db),
 ) -> schemas.GraphRead:
-    crud.get_project_or_404(db, project_id)
+    crud.get_align_tree_or_404(db, project_id, align_tree_id)
     for layout_update in payload.layouts:
         upsert_layout(
             db,
             project_id,
+            align_tree_id,
             layout_update.layer_id,
             schemas.LayoutUpdate(**layout_update.model_dump(exclude={"layer_id"}, exclude_unset=True)),
         )
@@ -1006,63 +1367,129 @@ def batch_update_graph(
         upsert_style(
             db,
             project_id,
+            align_tree_id,
             style_update.layer_id,
             schemas.StyleUpdate(**style_update.model_dump(exclude={"layer_id"}, exclude_unset=True)),
         )
     for text_box_update in payload.text_boxes:
-        text_box = crud.get_text_box_or_404(db, project_id, text_box_update.id)
+        text_box = crud.get_text_box_or_404(db, project_id, align_tree_id, text_box_update.id)
         for field, value in text_box_update.model_dump(exclude={"id"}, exclude_unset=True).items():
             setattr(text_box, field, value)
+    _audit_graph_mutation(
+        db,
+        context,
+        project_id,
+        align_tree_id,
+        event_type="graph.batch_updated",
+        target_type="align_tree",
+        target_id=align_tree_id,
+        summary="Updated graph items in batch",
+        details={
+            "layouts": len(payload.layouts),
+            "styles": len(payload.styles),
+            "text_boxes": len(payload.text_boxes),
+        },
+    )
     db.commit()
-    return crud.read_graph(db, project_id)
+    return crud.read_graph(db, project_id, align_tree_id)
 
 
 @router.get("/layers/{layer_id}/delete-preview", response_model=dict[str, list[schemas.RelationRead]])
-def preview_layer_delete(project_id: uuid.UUID, layer_id: uuid.UUID, db: Session = Depends(get_db)) -> dict[str, list[models.LayerRelation]]:
-    crud.get_layer_or_404(db, project_id, layer_id)
+def preview_layer_delete(
+    project_id: uuid.UUID,
+    align_tree_id: uuid.UUID,
+    layer_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> dict[str, list[models.LayerRelation]]:
+    crud.get_layer_or_404(db, project_id, align_tree_id, layer_id)
     incoming = (
         db.query(models.LayerRelation)
-        .filter(models.LayerRelation.project_id == project_id, models.LayerRelation.child_layer_id == layer_id)
+        .filter(
+            models.LayerRelation.project_id == project_id,
+            models.LayerRelation.align_tree_id == align_tree_id,
+            models.LayerRelation.child_layer_id == layer_id,
+        )
         .all()
     )
     outgoing = (
         db.query(models.LayerRelation)
-        .filter(models.LayerRelation.project_id == project_id, models.LayerRelation.parent_layer_id == layer_id)
+        .filter(
+            models.LayerRelation.project_id == project_id,
+            models.LayerRelation.align_tree_id == align_tree_id,
+            models.LayerRelation.parent_layer_id == layer_id,
+        )
         .all()
     )
     return {"incoming": incoming, "outgoing": outgoing}
 
 
 @router.delete("/layers/{layer_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_layer(project_id: uuid.UUID, layer_id: uuid.UUID, db: Session = Depends(get_db)) -> Response:
-    crud.delete_layer_with_relations(db, project_id, layer_id)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+def delete_layer(
+    project_id: uuid.UUID,
+    align_tree_id: uuid.UUID,
+    layer_id: uuid.UUID,
+    context: ProjectContext = Depends(project_request_guard),
+    db: Session = Depends(get_db),
+) -> None:
+    layer = crud.get_layer_or_404(db, project_id, align_tree_id, layer_id)
+    layer_name = layer.name
+    crud.delete_layer_with_relations(db, project_id, align_tree_id, layer_id)
+    _audit_graph_mutation(
+        db,
+        context,
+        project_id,
+        align_tree_id,
+        event_type="layer.deleted",
+        target_type="layer",
+        target_id=layer_id,
+        summary=f"Deleted layer {layer_name}",
+        details={"name": layer_name},
+    )
+    db.commit()
 
 
 @router.post("/relations", response_model=schemas.RelationRead, status_code=status.HTTP_201_CREATED)
 def create_relation(
     project_id: uuid.UUID,
+    align_tree_id: uuid.UUID,
     payload: schemas.RelationCreate,
+    context: ProjectContext = Depends(project_request_guard),
     db: Session = Depends(get_db),
 ) -> models.LayerRelation:
-    crud.get_project_or_404(db, project_id)
+    crud.get_align_tree_or_404(db, project_id, align_tree_id)
     if payload.parent_layer_id is not None:
-        crud.get_layer_or_404(db, project_id, payload.parent_layer_id)
+        crud.get_layer_or_404(db, project_id, align_tree_id, payload.parent_layer_id)
     if payload.child_layer_id is not None:
-        crud.get_layer_or_404(db, project_id, payload.child_layer_id)
+        crud.get_layer_or_404(db, project_id, align_tree_id, payload.child_layer_id)
+    if payload.attached_relation_id is not None:
+        crud.get_relation_or_404(db, project_id, align_tree_id, payload.attached_relation_id)
     data = payload.model_dump()
     if data.get("relation_style_id") is None:
-        data["relation_style_id"] = default_relation_style_id(db)
+        data["relation_style_id"] = default_relation_style_id(db, project_id)
     else:
-        crud.get_relation_style_or_404(db, data["relation_style_id"])
-    relation = models.LayerRelation(project_id=project_id, **data)
+        crud.get_relation_style_or_404(db, project_id, data["relation_style_id"])
+    relation = models.LayerRelation(project_id=project_id, align_tree_id=align_tree_id, **data)
     db.add(relation)
     try:
         db.flush()
-        report = validate_project_graph(db, project_id)
+        report = validate_project_graph(db, project_id, align_tree_id)
         if _blocking_issues(report):
             db.rollback()
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=[issue.model_dump(mode="json") for issue in report.issues])
+        _audit_graph_mutation(
+            db,
+            context,
+            project_id,
+            align_tree_id,
+            event_type="relation.created",
+            target_type="relation",
+            target_id=relation.id,
+            summary="Created layer relation",
+            details={
+                "parent_layer_id": str(relation.parent_layer_id) if relation.parent_layer_id else None,
+                "child_layer_id": str(relation.child_layer_id) if relation.child_layer_id else None,
+            },
+        )
         db.commit()
     except IntegrityError as exc:
         db.rollback()
@@ -1074,24 +1501,39 @@ def create_relation(
 @router.put("/relations/{relation_id}", response_model=schemas.RelationRead)
 def update_relation(
     project_id: uuid.UUID,
+    align_tree_id: uuid.UUID,
     relation_id: uuid.UUID,
     payload: schemas.RelationUpdate,
+    context: ProjectContext = Depends(project_request_guard),
     db: Session = Depends(get_db),
 ) -> models.LayerRelation:
-    relation = crud.get_relation_or_404(db, project_id, relation_id)
+    relation = crud.get_relation_or_404(db, project_id, align_tree_id, relation_id)
     for layer_id in (payload.parent_layer_id, payload.child_layer_id):
         if layer_id is not None:
-            crud.get_layer_or_404(db, project_id, layer_id)
+            crud.get_layer_or_404(db, project_id, align_tree_id, layer_id)
     if payload.relation_style_id is not None:
-        crud.get_relation_style_or_404(db, payload.relation_style_id)
+        crud.get_relation_style_or_404(db, project_id, payload.relation_style_id)
+    if payload.attached_relation_id is not None:
+        crud.get_relation_or_404(db, project_id, align_tree_id, payload.attached_relation_id)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(relation, field, value)
     try:
         db.flush()
-        report = validate_project_graph(db, project_id)
+        report = validate_project_graph(db, project_id, align_tree_id)
         if _blocking_issues(report):
             db.rollback()
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=[issue.model_dump(mode="json") for issue in report.issues])
+        _audit_graph_mutation(
+            db,
+            context,
+            project_id,
+            align_tree_id,
+            event_type="relation.updated",
+            target_type="relation",
+            target_id=relation.id,
+            summary="Updated layer relation",
+            details={"fields": sorted(payload.model_dump(exclude_unset=True))},
+        )
         db.commit()
     except IntegrityError as exc:
         db.rollback()
@@ -1101,18 +1543,50 @@ def update_relation(
 
 
 @router.delete("/relations/{relation_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_relation(project_id: uuid.UUID, relation_id: uuid.UUID, db: Session = Depends(get_db)) -> Response:
-    relation = crud.get_relation_or_404(db, project_id, relation_id)
+def delete_relation(
+    project_id: uuid.UUID,
+    align_tree_id: uuid.UUID,
+    relation_id: uuid.UUID,
+    context: ProjectContext = Depends(project_request_guard),
+    db: Session = Depends(get_db),
+) -> None:
+    relation = crud.get_relation_or_404(db, project_id, align_tree_id, relation_id)
     db.delete(relation)
+    _audit_graph_mutation(
+        db,
+        context,
+        project_id,
+        align_tree_id,
+        event_type="relation.deleted",
+        target_type="relation",
+        target_id=relation_id,
+        summary="Deleted layer relation",
+    )
     db.commit()
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/text-boxes", response_model=schemas.TextBoxRead, status_code=status.HTTP_201_CREATED)
-def create_text_box(project_id: uuid.UUID, payload: schemas.TextBoxCreate, db: Session = Depends(get_db)) -> models.TextBox:
-    crud.get_project_or_404(db, project_id)
-    text_box = models.TextBox(project_id=project_id, **payload.model_dump())
+def create_text_box(
+    project_id: uuid.UUID,
+    align_tree_id: uuid.UUID,
+    payload: schemas.TextBoxCreate,
+    context: ProjectContext = Depends(project_request_guard),
+    db: Session = Depends(get_db),
+) -> models.TextBox:
+    crud.get_align_tree_or_404(db, project_id, align_tree_id)
+    text_box = models.TextBox(project_id=project_id, align_tree_id=align_tree_id, **payload.model_dump())
     db.add(text_box)
+    db.flush()
+    _audit_graph_mutation(
+        db,
+        context,
+        project_id,
+        align_tree_id,
+        event_type="text_box.created",
+        target_type="text_box",
+        target_id=text_box.id,
+        summary="Created text box",
+    )
     db.commit()
     db.refresh(text_box)
     return text_box
@@ -1121,29 +1595,72 @@ def create_text_box(project_id: uuid.UUID, payload: schemas.TextBoxCreate, db: S
 @router.put("/text-boxes/{text_box_id}", response_model=schemas.TextBoxRead)
 def update_text_box(
     project_id: uuid.UUID,
+    align_tree_id: uuid.UUID,
     text_box_id: uuid.UUID,
     payload: schemas.TextBoxUpdate,
+    context: ProjectContext = Depends(project_request_guard),
     db: Session = Depends(get_db),
 ) -> models.TextBox:
-    text_box = crud.get_text_box_or_404(db, project_id, text_box_id)
+    text_box = crud.get_text_box_or_404(db, project_id, align_tree_id, text_box_id)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(text_box, field, value)
+    _audit_graph_mutation(
+        db,
+        context,
+        project_id,
+        align_tree_id,
+        event_type="text_box.updated",
+        target_type="text_box",
+        target_id=text_box.id,
+        summary="Updated text box",
+        details={"fields": sorted(payload.model_dump(exclude_unset=True))},
+    )
     db.commit()
     db.refresh(text_box)
     return text_box
 
 
 @router.delete("/text-boxes/{text_box_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_text_box(project_id: uuid.UUID, text_box_id: uuid.UUID, db: Session = Depends(get_db)) -> Response:
-    text_box = crud.get_text_box_or_404(db, project_id, text_box_id)
+def delete_text_box(
+    project_id: uuid.UUID,
+    align_tree_id: uuid.UUID,
+    text_box_id: uuid.UUID,
+    context: ProjectContext = Depends(project_request_guard),
+    db: Session = Depends(get_db),
+) -> None:
+    text_box = crud.get_text_box_or_404(db, project_id, align_tree_id, text_box_id)
     db.delete(text_box)
+    _audit_graph_mutation(
+        db,
+        context,
+        project_id,
+        align_tree_id,
+        event_type="text_box.deleted",
+        target_type="text_box",
+        target_id=text_box_id,
+        summary="Deleted text box",
+    )
     db.commit()
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/auto-layout", response_model=schemas.GraphRead)
-def auto_layout(project_id: uuid.UUID, db: Session = Depends(get_db)) -> schemas.GraphRead:
-    crud.get_project_or_404(db, project_id)
-    apply_auto_layout(db, project_id)
+def auto_layout(
+    project_id: uuid.UUID,
+    align_tree_id: uuid.UUID,
+    context: ProjectContext = Depends(project_request_guard),
+    db: Session = Depends(get_db),
+) -> schemas.GraphRead:
+    crud.get_align_tree_or_404(db, project_id, align_tree_id)
+    apply_auto_layout(db, project_id, align_tree_id)
+    _audit_graph_mutation(
+        db,
+        context,
+        project_id,
+        align_tree_id,
+        event_type="graph.auto_layout",
+        target_type="align_tree",
+        target_id=align_tree_id,
+        summary="Applied automatic layout",
+    )
     db.commit()
-    return crud.read_graph(db, project_id)
+    return crud.read_graph(db, project_id, align_tree_id)
