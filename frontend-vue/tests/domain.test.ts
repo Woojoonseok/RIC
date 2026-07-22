@@ -3,7 +3,7 @@ import { isReactive, reactive } from "vue";
 import { describeErrorDetail } from "../src/api/client";
 import { cloneJson } from "../src/domain/clone";
 import {
-  facingPorts, getClosestPointOnSegment, intersects, portHandlePoint, portPoint, relationGeometry, relationStroke, snap,
+  facingPorts, getClosestPointOnSegment, intersects, orthogonalWaypoints, portHandlePoint, portPoint, relationGeometry, relationStroke, snap,
 } from "../src/domain/geometry";
 import { computeDisplayGraph, expandRelationCandidates, relationTargetLayerId } from "../src/domain/graph";
 import { parseTsv } from "../src/domain/tsv";
@@ -64,6 +64,15 @@ describe("geometry", () => {
     expect(facingPorts(source, { x: 400, y: 110, width: 100, height: 50 })).toEqual({ source: "right", target: "left" });
     expect(facingPorts(source, { x: 100, y: 400, width: 100, height: 50 })).toEqual({ source: "bottom", target: "top" });
     expect(facingPorts(source, { x: -200, y: 100, width: 100, height: 50 })).toEqual({ source: "left", target: "right" });
+  });
+  it("creates orthogonal waypoints for opposing and perpendicular ports", () => {
+    expect(orthogonalWaypoints({ x: 100, y: 40 }, "right", { x: 300, y: 160 }, "left")).toEqual([
+      { x: 200, y: 40 }, { x: 200, y: 160 },
+    ]);
+    expect(orthogonalWaypoints({ x: 100, y: 40 }, "right", { x: 300, y: 160 }, "top")).toEqual([
+      { x: 300, y: 40 },
+    ]);
+    expect(orthogonalWaypoints({ x: 100, y: 40 }, "right", { x: 300, y: 40 }, "left")).toEqual([]);
   });
   it("calculates relation stroke attributes", () => {
     expect(relationStroke({ id: "s", name: "ref", stroke_color: "#123456", stroke_width: 3, line_pattern: "reference", marker_type: "none", sort_order: 0 })).toEqual({

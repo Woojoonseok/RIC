@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import Depends, Request, Response
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .. import models
@@ -121,14 +122,28 @@ def get_current_actor(
     actor = db.get(models.Actor, cookie_actor_id) if cookie_actor_id else None
 
     if actor is None:
-        actor_id = uuid.uuid4()
-        actor = models.Actor(
-            id=actor_id,
-            display_name=f"Anonymous {str(actor_id)[:8].upper()}",
-            last_ip_hash=ip_hash,
+        # A missing browser cookie should not make a returning user lose their
+        # project memberships. Recover the most recently seen Actor for the
+        # same server-derived IP before creating a new anonymous identity.
+        actor = db.scalar(
+            select(models.Actor)
+            .where(models.Actor.last_ip_hash == ip_hash)
+            .order_by(models.Actor.last_seen_at.desc(), models.Actor.created_at.desc())
+            .limit(1)
         )
-        db.add(actor)
-        db.commit()
+
+        if actor is None:
+            actor_id = uuid.uuid4()
+            actor = models.Actor(
+                id=actor_id,
+                display_name=f"Anonymous {str(actor_id)[:8].upper()}",
+                last_ip_hash=ip_hash,
+            )
+            db.add(actor)
+            db.commit()
+        else:
+            actor.last_seen_at = _utcnow()
+            db.commit()
     else:
         actor.last_ip_hash = ip_hash
         actor.last_seen_at = _utcnow()

@@ -28,7 +28,7 @@ from app.routers import (
     validation,
 )
 from app.services.dev_migrations import run_local_dev_migrations
-from app.services.identity import client_ip
+from app.services.identity import _encode_actor_cookie, client_ip, hmac_subject
 
 
 @pytest.fixture()
@@ -138,10 +138,22 @@ def current_actor(client: TestClient) -> tuple[str, str]:
 
 
 def create_anonymous_actor(client: TestClient) -> tuple[str, str]:
+    actor_id = uuid.uuid4()
+    cookie = _encode_actor_cookie(actor_id)
+    with client.app.state.session_factory() as db:
+        db.add(
+            models.Actor(
+                id=actor_id,
+                display_name=f"Anonymous {str(actor_id)[:8].upper()}",
+                last_ip_hash=hmac_subject(f"pytest-{actor_id}"),
+            )
+        )
+        db.commit()
     client.cookies.clear()
+    client.cookies.set(settings.identity_cookie_name, cookie, domain="testserver.local", path="/")
     client.headers.pop("X-Edit-Lease", None)
     client.headers.pop("If-Match", None)
-    return current_actor(client)
+    return str(actor_id), cookie
 
 
 def use_actor(client: TestClient, cookie: str) -> None:
@@ -464,7 +476,7 @@ def test_revision_rejects_a_stale_mutation(client: TestClient) -> None:
     assert [row["name"] for row in graph_response.json()["layers"]] == ["First"]
 
 
-def test_missing_anonymous_cookie_never_recovers_identity_from_ip(client: TestClient) -> None:
+def test_missing_anonymous_cookie_recovers_identity_from_ip(client: TestClient) -> None:
     first = client.get("/api/me")
     assert first.status_code == 200, first.text
     first_id = first.json()["id"]
@@ -473,7 +485,7 @@ def test_missing_anonymous_cookie_never_recovers_identity_from_ip(client: TestCl
     client.cookies.clear()
     second = client.get("/api/me")
     assert second.status_code == 200, second.text
-    assert second.json()["id"] != first_id
+    assert second.json()["id"] == first_id
 
 
 def test_public_project_metadata_is_visible_but_internal_data_requires_membership(
@@ -491,6 +503,9 @@ def test_public_project_metadata_is_visible_but_internal_data_requires_membershi
     assert owner_view.json()["access_role"] == "owner"
     assert owner_view.json()["align_tree_count"] == 1
     assert owner_view.json()["member_count"] == 1
+    assert owner_view.json()["is_locked"] is True
+    assert owner_view.json()["locked_by_me"] is True
+    assert owner_view.json()["lock_holder_display_name"] == owner_view.json()["creator"]["display_name"]
 
     owner_members = client.get(f"/api/projects/{project_id}/members")
     assert owner_members.status_code == 200, owner_members.text
@@ -506,6 +521,8 @@ def test_public_project_metadata_is_visible_but_internal_data_requires_membershi
     assert public_project["access_role"] is None
     assert public_project["align_tree_count"] == 1
     assert public_project["member_count"] == 1
+    assert public_project["is_locked"] is True
+    assert public_project["lock_holder_display_name"] is None
 
     assert client.get(f"/api/projects/{project_id}").status_code == 200
     assert client.get(f"/api/projects/{project_id}/align-trees").status_code == 404

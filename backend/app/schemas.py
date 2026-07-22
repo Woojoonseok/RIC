@@ -32,6 +32,7 @@ class ProjectRead(OrmModel):
     is_locked: bool = False
     locked_by_me: bool = False
     lock_expires_at: datetime | None = None
+    lock_holder_display_name: str | None = None
 
 
 class ActorSummary(BaseModel):

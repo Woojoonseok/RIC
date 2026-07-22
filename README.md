@@ -47,7 +47,7 @@ EDIT_LEASE_TTL_SECONDS=90
 VITE_API_BASE_URL=http://localhost:8000/api
 ```
 
-사내 무로그인 운영에서는 서버가 서명한 익명 사용자 쿠키를 기본 식별자로 사용하고, 접속 IP는 `IDENTITY_SECRET`으로 HMAC 처리한 보조 식별값으로만 저장한다. 서버는 기본값이나 32바이트 미만의 `IDENTITY_SECRET`이면 시작하지 않으므로 반드시 임의의 강한 값을 지정해야 한다. 리버스 프록시를 둘 때만 `TRUST_PROXY_HEADERS=true`로 바꾸고 해당 프록시 주소를 `TRUSTED_PROXY_IPS`에 등록한다.
+사내 무로그인 운영에서는 서버가 서명한 익명 사용자 쿠키를 기본 식별자로 사용하고, 쿠키가 없거나 유효하지 않으면 동일한 접속 IP의 가장 최근 익명 사용자를 복구한다. 접속 IP는 평문 대신 `IDENTITY_SECRET`으로 HMAC 처리해 저장한다. 서버는 기본값이나 32바이트 미만의 `IDENTITY_SECRET`이면 시작하지 않으므로 반드시 임의의 강한 값을 지정해야 한다. 리버스 프록시를 둘 때만 `TRUST_PROXY_HEADERS=true`로 바꾸고 해당 프록시 주소를 `TRUSTED_PROXY_IPS`에 등록한다.
 
 Legacy 프로젝트 수동 귀속은 기본적으로 비활성화되어 있으며, 필요한 경우에만 서버를 외부에 열기 전에 `ALLOW_LEGACY_PROJECT_CLAIMS=true`를 잠시 사용한다. 향후 AD SSO를 도입할 때는 기존 내부 Actor에 AD identity를 연결해 프로젝트 소유권과 공유 권한을 유지한다. 현재의 비보안 쿠키 설정은 임시 사내 HTTP 환경 전용이다. **AD SSO 도입 또는 production 배포 전에는 TLS(HTTPS)를 반드시 적용하고 `IDENTITY_COOKIE_SECURE=true`로 설정해야 한다.**
 

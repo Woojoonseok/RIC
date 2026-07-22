@@ -35,6 +35,14 @@ def _lease_for_project(db: Session, project_id: uuid.UUID) -> models.ProjectEdit
     )
 
 
+def _locked_detail(lease: models.ProjectEditLease) -> dict[str, str]:
+    return {
+        "message": "Project is being edited by another session",
+        "holder_display_name": lease.actor.display_name,
+        "expires_at": lease.expires_at.isoformat(),
+    }
+
+
 def _valid_owned_lease(
     db: Session,
     context: ProjectContext,
@@ -50,6 +58,8 @@ def _valid_owned_lease(
         or not hmac.compare_digest(lease.token_hash, hash_token(token))
         or (client_instance_id is not None and lease.client_instance_id != client_instance_id)
     ):
+        if lease_is_active(lease) and lease is not None:
+            raise HTTPException(status_code=status.HTTP_423_LOCKED, detail=_locked_detail(lease))
         raise HTTPException(status_code=status.HTTP_423_LOCKED, detail="The edit lease is not valid for this session")
     return lease
 
@@ -75,10 +85,7 @@ def acquire_lease(
         if not payload.force or context.role != "owner":
             raise HTTPException(
                 status_code=status.HTTP_423_LOCKED,
-                detail={
-                    "message": "Project is being edited by another session",
-                    "expires_at": lease.expires_at.isoformat(),
-                },
+                detail=_locked_detail(lease),
             )
     if lease is not None and (not active or same_session or payload.force):
         db.delete(lease)

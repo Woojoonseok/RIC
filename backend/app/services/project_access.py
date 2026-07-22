@@ -229,4 +229,5 @@ def project_to_read(db: Session, project: models.Project, actor: models.Actor) -
         is_locked=active,
         locked_by_me=bool(active and lease and lease.actor_id == actor.id),
         lock_expires_at=lease.expires_at if active and lease else None,
+        lock_holder_display_name=lease.actor.display_name if active and lease else None,
     )

@@ -1,6 +1,6 @@
 import { computed, ref, watch } from "vue";
 import { api } from "../api/client";
-import { facingPorts, findRelationSnap, intersects, portHandlePoint, portPoint, relationGeometry, relationStroke, snap } from "../domain/geometry";
+import { facingPorts, findRelationSnap, intersects, orthogonalWaypoints, portHandlePoint, portPoint, relationGeometry, relationStroke, snap } from "../domain/geometry";
 import { relationTargetLayerId } from "../domain/graph";
 import { useAppStore } from "../stores/app";
 import { useGraphStore } from "../stores/graph";
@@ -93,6 +93,21 @@ export function useCanvasEditor() {
     if (svg.value?.hasPointerCapture?.(event.pointerId)) svg.value.releasePointerCapture(event.pointerId);
   }
 
+  function layerConnectionWaypoints(sourceLayerId: string, sourcePort: PortName, targetLayerId: string, targetPort: PortName, orthogonal: boolean) {
+    if (!orthogonal) return undefined;
+    const sourceLayout = layouts.value.get(sourceLayerId);
+    const targetLayout = layouts.value.get(targetLayerId);
+    if (!sourceLayout || !targetLayout) return undefined;
+    return orthogonalWaypoints(portPoint(sourceLayout, sourcePort), sourcePort, portPoint(targetLayout, targetPort), targetPort);
+  }
+
+  function pointConnectionWaypoints(sourceLayerId: string, sourcePort: PortName, target: Point, targetPort: PortName, orthogonal: boolean) {
+    if (!orthogonal) return [];
+    const sourceLayout = layouts.value.get(sourceLayerId);
+    if (!sourceLayout) return [];
+    return orthogonalWaypoints(portPoint(sourceLayout, sourcePort), sourcePort, target, targetPort);
+  }
+
   function nodePointerDown(event: PointerEvent, id: string, resize = false) {
     if (app.mode === "connect") {
       event.preventDefault(); event.stopPropagation();
@@ -112,6 +127,7 @@ export function useCanvasEditor() {
         connect.value = null; portSnap.value = null; relationSnap.value = null; app.mode = "select";
         void graphStore.createRelationExpanded({
           parent_layer_id: source.layerId, child_layer_id: id, source_port: ports.source, target_port: ports.target,
+          waypoints: layerConnectionWaypoints(source.layerId, ports.source, id, ports.target, event.shiftKey),
           relation_style_id: reference.selectedRelationStyleId || null,
         });
       }
@@ -259,7 +275,7 @@ export function useCanvasEditor() {
     const point = clientPoint(event);
     release(event);
     if (connect.value?.pressed) {
-      if (connect.value.moved && (portSnap.value || relationSnap.value)) await finishConnect(point);
+      if (connect.value.moved && (portSnap.value || relationSnap.value)) await finishConnect(point, event.shiftKey);
       else connect.value = { ...connect.value, pressed: false };
       return;
     }
@@ -354,6 +370,7 @@ export function useCanvasEditor() {
         app.mode = "select";
         await graphStore.createRelationExpanded({
           parent_layer_id: source.layerId, child_layer_id: layerId, source_port: source.port, target_port: port,
+          waypoints: layerConnectionWaypoints(source.layerId, source.port, layerId, port, event.shiftKey),
           relation_style_id: reference.selectedRelationStyleId || null,
         });
       } else {
@@ -371,7 +388,7 @@ export function useCanvasEditor() {
     capture(event);
   }
 
-  async function finishConnect(_point: Point) {
+  async function finishConnect(_point: Point, orthogonal = false) {
     const source = connect.value;
     const targetPort = portSnap.value;
     const target = relationSnap.value;
@@ -383,6 +400,7 @@ export function useCanvasEditor() {
       await graphStore.createRelationExpanded({
         parent_layer_id: source.layerId, child_layer_id: targetPort.layerId,
         source_port: source.port, target_port: targetPort.port,
+        waypoints: layerConnectionWaypoints(source.layerId, source.port, targetPort.layerId, targetPort.port, orthogonal),
         relation_style_id: reference.selectedRelationStyleId || null,
       });
     } else if (source && target && raw.value) {
@@ -392,7 +410,10 @@ export function useCanvasEditor() {
       await graphStore.createRelationExpanded({
         parent_layer_id: source.layerId, child_layer_id: targetLayerId, source_port: source.port,
         target_port: targetRelation?.target_port ?? "top", attached_relation_id: target.relationId,
-        waypoints: [target.point], relation_style_id: reference.selectedRelationStyleId || null,
+        waypoints: [
+          ...pointConnectionWaypoints(source.layerId, source.port, target.point, targetRelation?.target_port ?? "top", orthogonal),
+          target.point,
+        ], relation_style_id: reference.selectedRelationStyleId || null,
       });
     }
   }
@@ -419,7 +440,10 @@ export function useCanvasEditor() {
       source_port: source.port,
       target_port: relation.target_port,
       attached_relation_id: relation.id,
-      waypoints: [attachPoint],
+      waypoints: [
+        ...pointConnectionWaypoints(source.layerId, source.port, attachPoint, relation.target_port, event.shiftKey),
+        attachPoint,
+      ],
       relation_style_id: reference.selectedRelationStyleId || null,
     });
   }

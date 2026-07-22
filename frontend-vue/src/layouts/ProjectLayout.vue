@@ -62,7 +62,7 @@ onBeforeRouteLeave(async (to) => {
 <template>
   <section class="project-layout">
     <header v-if="project.currentProject" class="project-context-header">
-      <div class="project-breadcrumb"><RouterLink to="/">Home</RouterLink><span>›</span><strong>{{ project.currentProject.name }}</strong><b v-if="project.currentRole" class="access-badge" :class="project.currentRole">{{ project.currentRole }}</b></div>
+      <div class="project-breadcrumb"><RouterLink to="/">Home</RouterLink><span>›</span><strong>{{ project.currentProject.name }}</strong><b v-if="project.currentRole" class="access-badge" :class="project.currentRole">{{ project.currentRole }}</b><span v-if="project.currentProject.is_locked" class="lock-badge" :class="{ mine: project.currentProject.locked_by_me }">{{ project.currentProject.locked_by_me ? '내 편집 세션' : `편집 중 · ${project.currentProject.lock_holder_display_name || '다른 사용자'}` }}</span></div>
       <nav v-if="project.hasMembership" class="project-nav" aria-label="프로젝트 메뉴">
         <RouterLink v-for="item in nav" :key="item.name" :to="{ name: item.name, params: { projectId } }">{{ item.label }}</RouterLink>
       </nav>

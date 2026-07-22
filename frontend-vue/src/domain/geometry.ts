@@ -47,6 +47,44 @@ export function snap(value: number, gridSize = 20): number {
   return Math.round(value / gridSize) * gridSize;
 }
 
+function horizontalPort(port: PortName): boolean {
+  return port === "left" || port === "right";
+}
+
+function compactOrthogonalPoints(start: Point, candidates: Point[], end: Point): Point[] {
+  const points = [start, ...candidates, end].filter((point, index, rows) => (
+    index === 0 || point.x !== rows[index - 1].x || point.y !== rows[index - 1].y
+  ));
+  for (let index = points.length - 2; index > 0; index -= 1) {
+    const previous = points[index - 1];
+    const current = points[index];
+    const next = points[index + 1];
+    if ((previous.x === current.x && current.x === next.x) || (previous.y === current.y && current.y === next.y)) {
+      points.splice(index, 1);
+    }
+  }
+  return points.slice(1, -1);
+}
+
+export function orthogonalWaypoints(start: Point, sourcePort: PortName, end: Point, targetPort: PortName): Point[] {
+  const sourceHorizontal = horizontalPort(sourcePort);
+  const targetHorizontal = horizontalPort(targetPort);
+  if (sourceHorizontal !== targetHorizontal) {
+    const corner = sourceHorizontal ? { x: end.x, y: start.y } : { x: start.x, y: end.y };
+    return compactOrthogonalPoints(start, [corner], end);
+  }
+  if (sourceHorizontal) {
+    const bendX = sourcePort === targetPort
+      ? (sourcePort === "right" ? Math.max(start.x, end.x) + 40 : Math.min(start.x, end.x) - 40)
+      : (start.x + end.x) / 2;
+    return compactOrthogonalPoints(start, [{ x: bendX, y: start.y }, { x: bendX, y: end.y }], end);
+  }
+  const bendY = sourcePort === targetPort
+    ? (sourcePort === "bottom" ? Math.max(start.y, end.y) + 40 : Math.min(start.y, end.y) - 40)
+    : (start.y + end.y) / 2;
+  return compactOrthogonalPoints(start, [{ x: start.x, y: bendY }, { x: end.x, y: bendY }], end);
+}
+
 export function intersects(a: Aabb, b: Aabb): boolean {
   return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
 }

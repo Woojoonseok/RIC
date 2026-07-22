@@ -25,7 +25,8 @@ class Actor(Base, TimestampMixin):
     """Stable internal user record.
 
     Authentication is anonymous for now: a signed HttpOnly cookie points at
-    this row and the server-derived client IP is retained only as an HMAC.
+    this row and the server-derived client IP HMAC provides recovery when the
+    cookie is unavailable.
     Keeping identities separate lets a future AD subject be attached without
     moving project ownership.
     """
@@ -52,7 +53,8 @@ class ActorIdentity(Base, TimestampMixin):
     actor_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("actors.id", ondelete="CASCADE"), index=True)
     # Reserved for authenticated providers. A future AD SSO integration can
     # add an ``ad`` identity whose subject is the immutable AD object id/SID.
-    # IP hashes must never be stored here or accepted as authentication.
+    # IP hashes are kept on Actor for local anonymous recovery, not as an
+    # authenticated external-provider identity.
     provider: Mapped[str] = mapped_column(String(40), nullable=False)
     subject_hash: Mapped[str] = mapped_column(String(128), nullable=False)
 
