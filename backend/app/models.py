@@ -243,6 +243,9 @@ class Layer(Base, TimestampMixin):
     align_tree_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("align_trees.id", ondelete="CASCADE"), nullable=True, index=True
     )
+    layer_master_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("layer_masters.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     step: Mapped[str | None] = mapped_column(String(120))
     layer_property: Mapped[str | None] = mapped_column(String(160))
@@ -399,6 +402,7 @@ class LayerMaster(Base, TimestampMixin):
     pr_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
     light_source: Mapped[str | None] = mapped_column(String(40), nullable=True)
     pr_open_close: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    group: Mapped[str | None] = mapped_column(String(80), nullable=True)
     validation_rule: Mapped[str | None] = mapped_column(Text, nullable=True)
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
 

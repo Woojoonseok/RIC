@@ -11,6 +11,7 @@ from .. import models, schemas
 from ..database import get_db
 from ..services.audit import record_project_event
 from ..services.project_access import ProjectContext, get_project_context, require_project_mutation
+from ..services.layer_master_sync import ensure_project_layer_sync
 
 router = APIRouter(prefix="/api/projects/{project_id}/align-trees", tags=["align trees"])
 
@@ -62,6 +63,7 @@ def create_align_tree(
     db.add(tree)
     try:
         db.flush()
+        ensure_project_layer_sync(db, project_id)
         record_project_event(
             db,
             project_id=project_id,

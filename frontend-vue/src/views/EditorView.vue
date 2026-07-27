@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { onMounted } from "vue";
 import CanvasEditor from "../components/canvas/CanvasEditor.vue";
 import LayerList from "../components/editor/LayerList.vue";
 import PropertyPanel from "../components/editor/PropertyPanel.vue";
@@ -6,6 +7,8 @@ import Toolbar from "../components/editor/Toolbar.vue";
 import { useGraphStore } from "../stores/graph";
 
 const graph = useGraphStore();
+
+onMounted(() => graph.reloadGraph());
 </script>
 
 <template>

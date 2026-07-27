@@ -19,6 +19,7 @@ from ..services.project_access import (
 )
 from ..services.project_catalog import project_public_read
 from ..services.project_reference import ensure_project_reference_data
+from ..services.layer_master_sync import ensure_project_layer_sync
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -74,6 +75,7 @@ def create_project(
     )
     db.add(tree)
     ensure_project_reference_data(db, project.id)
+    ensure_project_layer_sync(db, project.id)
     record_project_event(
         db,
         project_id=project.id,

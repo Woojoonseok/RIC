@@ -17,6 +17,7 @@ from .routers import (
 )
 from .services.box_presets import ensure_default_box_presets
 from .services.relation_styles import ensure_default_relation_styles
+from .services.layer_master_sync import ensure_project_layer_sync
 from .services.dev_migrations import run_local_dev_migrations
 
 app = FastAPI(title="RIC Align Tree Editor API", version="0.1.0")
@@ -46,6 +47,8 @@ def create_tables_for_local_dev() -> None:
     with SessionLocal() as db:
         ensure_default_relation_styles(db)
         ensure_default_box_presets(db)
+        for project in db.query(models.Project).filter(models.Project.deleted_at.is_(None)).all():
+            ensure_project_layer_sync(db, project.id)
         db.commit()
 
 

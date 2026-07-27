@@ -5,7 +5,8 @@ import { cloneJson } from "../src/domain/clone";
 import {
   facingPorts, getClosestPointOnSegment, intersects, orthogonalWaypoints, portHandlePoint, portPoint, relationGeometry, relationStroke, snap,
 } from "../src/domain/geometry";
-import { computeDisplayGraph, expandRelationCandidates, relationTargetLayerId } from "../src/domain/graph";
+import { computeDisplayGraph, expandRelationCandidates, isMergedLayer, relationTargetLayerId } from "../src/domain/graph";
+import { layerMasterColumns, layerMasterPayload, layerMasterRows } from "../src/domain/layerMaster";
 import { parseTsv } from "../src/domain/tsv";
 import type { Graph, Layout, Relation } from "../src/types";
 
@@ -35,7 +36,25 @@ describe("DTO cloning", () => {
   });
 });
 
+describe("shared Layer information grid", () => {
+  it("includes Group in the canonical Layer information format", () => {
+    const layouts = [{ id: "layout", name: "Scribe", scribe_lane_rows: 2, sort_order: 0 }];
+    const presets = [{ id: "preset", name: "Default", fill_color: "#fff", stroke_color: "#000", text_color: "#000", font_size: 14, width: 180, height: 72, stroke_width: 2, is_default: true, sort_order: 0 }];
+    const master = { id: "master", name: "M1", layer_number: "10", mask_main_fld: null, mask_sl_fld: null, pr_wf: null, dev_wf: null, pr_type: null, light_source: null, pr_open_close: null, group: "Front", validation_rule: null, comment: null, priorities: { layout: "1" } };
+    expect(layerMasterColumns(layouts, presets).map((column) => column.key)).toContain("group");
+    const row = layerMasterRows([master], layouts, presets)[0];
+    expect(layerMasterPayload(row, layouts)).toMatchObject({ name: "M1", group: "Front", priorities: { layout: "1" } });
+  });
+});
+
 describe("display graph", () => {
+  it("recognizes only same_group members as splittable merged layers", () => {
+    const raw = graph();
+    expect(isMergedLayer(raw, "a")).toBe(true);
+    expect(isMergedLayer(raw, "b")).toBe(true);
+    expect(isMergedLayer(raw, "c")).toBe(false);
+  });
+
   it("groups without mutating raw graph and removes duplicate display relations", () => {
     const raw = graph();
     const display = computeDisplayGraph(raw);

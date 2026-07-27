@@ -11,6 +11,11 @@ from .. import crud, models, schemas
 from ..database import get_db
 from ..services.audit import record_project_event
 from ..services.layout import apply_auto_layout
+from ..services.layer_master_sync import (
+    delete_layer_master_layers,
+    ensure_project_layer_sync,
+    sync_layer_master,
+)
 from ..services.project_access import ProjectContext, get_project_context, project_request_guard, project_to_read
 from ..services.relation_styles import default_relation_style_id
 from ..services.validation import validate_project_graph
@@ -60,6 +65,11 @@ def read_graph(
     db: Session = Depends(get_db),
 ) -> schemas.GraphRead:
     crud.get_align_tree_or_404(db, project_id, align_tree_id)
+    # Older projects can already have Layer Master rows without matching graph
+    # layers. Repair that gap on graph load so Data and Editor always expose the
+    # same canonical Layer set (master name -> layer name, number -> step).
+    ensure_project_layer_sync(db, project_id)
+    db.commit()
     graph = crud.read_graph(db, project_id, align_tree_id)
     graph.project = project_to_read(db, context.project, context.actor)
     return graph
@@ -206,6 +216,10 @@ def restore_graph(
         row.id
         for row in db.query(models.RelationStyle).filter(models.RelationStyle.project_id == project_id).all()
     }
+    layer_master_ids = {
+        row.id
+        for row in db.query(models.LayerMaster).filter(models.LayerMaster.project_id == project_id).all()
+    }
 
     db.query(models.LayerRelation).filter(
         models.LayerRelation.project_id == project_id,
@@ -235,6 +249,9 @@ def restore_graph(
             id=layer.id,
             project_id=project_id,
             align_tree_id=align_tree_id,
+            layer_master_id=(
+                layer.layer_master_id if layer.layer_master_id in layer_master_ids else None
+            ),
             name=layer.name,
             step=layer.step,
             layer_property=layer.layer_property,
@@ -365,7 +382,25 @@ def create_layer(
     db: Session = Depends(get_db),
 ) -> models.Layer:
     try:
-        layer = crud.create_layer(db, project_id, align_tree_id, payload)
+        preset = db.get(models.BoxPreset, payload.box_preset_id) if payload.box_preset_id else None
+        master = models.LayerMaster(
+            project_id=project_id,
+            name=payload.name,
+            layer_number=payload.step,
+            light_source=preset.name if preset and preset.project_id == project_id else None,
+        )
+        db.add(master)
+        db.flush()
+        sync_layer_master(db, master)
+        layer = (
+            db.query(models.Layer)
+            .filter(
+                models.Layer.project_id == project_id,
+                models.Layer.align_tree_id == align_tree_id,
+                models.Layer.layer_master_id == master.id,
+            )
+            .one()
+        )
         _audit_graph_mutation(
             db,
             context,
@@ -451,6 +486,14 @@ def update_layer(
     for field, value in updates.items():
         setattr(layer, field, value)
     try:
+        if layer.layer_master_id is not None:
+            master = db.get(models.LayerMaster, layer.layer_master_id)
+            if master is not None:
+                if "name" in updates:
+                    master.name = payload.name
+                if "step" in updates:
+                    master.layer_number = payload.step
+                sync_layer_master(db, master)
         _audit_graph_mutation(
             db,
             context,
@@ -788,6 +831,33 @@ def merge_layers(
             )
             db.add(new_rel)
 
+    # Group is canonical Layer Master data. Persist Editor merges there as
+    # well, otherwise the next project sync sees an empty master Group and
+    # removes the just-created same_group relations.
+    linked_master_ids = {
+        layer.layer_master_id
+        for layer in db.query(models.Layer)
+        .filter(
+            models.Layer.project_id == project_id,
+            models.Layer.align_tree_id == align_tree_id,
+            models.Layer.id.in_(merge_candidate_ids),
+            models.Layer.layer_master_id.is_not(None),
+        )
+        .all()
+        if layer.layer_master_id is not None
+    }
+    if linked_master_ids:
+        for master in (
+            db.query(models.LayerMaster)
+            .filter(
+                models.LayerMaster.project_id == project_id,
+                models.LayerMaster.id.in_(linked_master_ids),
+            )
+            .all()
+        ):
+            master.group = next_group
+        ensure_project_layer_sync(db, project_id)
+
     # Grouping must not rewrite layout geometry. The client renders the first
     # selected layer as the anchor and split restores every member exactly where
     # it was before the merge.
@@ -912,6 +982,10 @@ def _sync_layer_group(
         for rel in existing_member_rels:
             member_ids.add(rel.parent_layer_id)
             member_ids.add(rel.child_layer_id)
+        already_member = any(
+            rel.parent_layer_id == layer_id or rel.child_layer_id == layer_id
+            for rel in existing_member_rels
+        )
         member_ids.discard(layer_id)
 
         pending_partner = None
@@ -923,7 +997,10 @@ def _sync_layer_group(
                 models.Layer.id != layer_id,
             ).first()
 
-        if member_ids:
+        if already_member:
+            if layer is not None:
+                layer.pending_group = None
+        elif member_ids:
             anchor_id = next(iter(member_ids))
             existing_rel = db.query(models.LayerRelation).filter(
                 models.LayerRelation.project_id == project_id,
@@ -932,6 +1009,11 @@ def _sync_layer_group(
                 | ((models.LayerRelation.parent_layer_id == layer_id) & (models.LayerRelation.child_layer_id == anchor_id)),
             ).first()
             if existing_rel:
+                if not existing_rel.same_group:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="A normal relation already exists between layers in this group",
+                    )
                 existing_rel.same_group = new_group
             else:
                 db.add(models.LayerRelation(
@@ -980,8 +1062,16 @@ def update_layer_group(
     context: ProjectContext = Depends(project_request_guard),
     db: Session = Depends(get_db),
 ) -> schemas.GraphRead:
-    crud.get_layer_or_404(db, project_id, align_tree_id, layer_id)
-    _sync_layer_group(db, project_id, align_tree_id, layer_id, payload.group)
+    layer = crud.get_layer_or_404(db, project_id, align_tree_id, layer_id)
+    if layer.layer_master_id is not None:
+        master = db.get(models.LayerMaster, layer.layer_master_id)
+        if master is not None:
+            master.group = (payload.group or "").strip() or None
+            sync_layer_master(db, master)
+        else:
+            _sync_layer_group(db, project_id, align_tree_id, layer_id, payload.group)
+    else:
+        _sync_layer_group(db, project_id, align_tree_id, layer_id, payload.group)
     try:
         db.flush()
         report = validate_project_graph(db, project_id, align_tree_id)
@@ -1043,6 +1133,19 @@ def split_layer(
         ).all()
         for r in all_group_rels:
             db.delete(r)
+        linked_masters = (
+            db.query(models.LayerMaster)
+            .filter(
+                models.LayerMaster.project_id == project_id,
+                models.LayerMaster.group.in_(group_ids),
+            )
+            .all()
+        )
+        for master in linked_masters:
+            master.group = None
+        if linked_masters:
+            db.flush()
+            ensure_project_layer_sync(db, project_id)
         _audit_graph_mutation(
             db,
             context,
@@ -1433,7 +1536,12 @@ def delete_layer(
 ) -> None:
     layer = crud.get_layer_or_404(db, project_id, align_tree_id, layer_id)
     layer_name = layer.name
-    crud.delete_layer_with_relations(db, project_id, align_tree_id, layer_id)
+    master = db.get(models.LayerMaster, layer.layer_master_id) if layer.layer_master_id else None
+    if master is not None:
+        delete_layer_master_layers(db, master)
+        db.delete(master)
+    else:
+        crud.delete_layer_with_relations(db, project_id, align_tree_id, layer_id)
     _audit_graph_mutation(
         db,
         context,
