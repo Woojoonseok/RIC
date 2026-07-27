@@ -8,6 +8,7 @@ import { useProjectStore } from "../../stores/project";
 import type { LayerUpdate, LayoutUpdate, PortName, RelationUpdate, StyleUpdate, TextBoxUpdate } from "../../types";
 
 const app = useAppStore(); const graph = useGraphStore(); const project = useProjectStore();
+const emit = defineEmits<{ collapse: [] }>();
 const COLOR_SWATCHES = ["#ffffff", "#fef3c7", "#dbeafe", "#dcfce7", "#ffe4e6", "#e5e7eb", "#111827", "#2563eb", "#dc2626"];
 const selectedLayers = computed(() => app.selection.filter((item) => item.kind === "layer").flatMap((item) => {
   const layer = graph.rawGraph?.layers.find((row) => row.id === item.id); return layer ? [layer] : [];
@@ -48,7 +49,13 @@ function numberValue(event: Event) { return Number((event.target as HTMLInputEle
 
 <template>
   <aside class="property-panel">
-    <div class="side-heading"><span>PROPERTIES</span><button v-if="app.selection.length" @click="app.clearSelection()">×</button></div>
+    <div class="side-heading">
+      <span>PROPERTIES</span>
+      <div>
+        <button v-if="app.selection.length" aria-label="선택 해제" title="선택 해제" @click="app.clearSelection()">×</button>
+        <button class="panel-collapse-button" aria-label="Properties 패널 닫기" title="Properties 패널 닫기" @click="emit('collapse')">›</button>
+      </div>
+    </div>
     <fieldset class="property-fieldset" :disabled="!project.canEdit">
     <div v-if="selectedLayers.length > 1" class="property-form multi-property">
       <div class="property-title"><div><strong>{{ selectedLayers.length }} Layers</strong><small>다중 편집</small></div></div>

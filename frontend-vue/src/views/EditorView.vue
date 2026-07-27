@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted } from "vue";
+import { onMounted, ref, watch } from "vue";
 import CanvasEditor from "../components/canvas/CanvasEditor.vue";
 import LayerList from "../components/editor/LayerList.vue";
 import PropertyPanel from "../components/editor/PropertyPanel.vue";
@@ -7,14 +7,43 @@ import Toolbar from "../components/editor/Toolbar.vue";
 import { useGraphStore } from "../stores/graph";
 
 const graph = useGraphStore();
+const layersOpen = ref(localStorage.getItem("ric-editor-layers-hidden") !== "1");
+const propertiesOpen = ref(localStorage.getItem("ric-editor-properties-hidden") !== "1");
 
 onMounted(() => graph.reloadGraph());
+watch(layersOpen, (open) => localStorage.setItem("ric-editor-layers-hidden", open ? "0" : "1"));
+watch(propertiesOpen, (open) => localStorage.setItem("ric-editor-properties-hidden", open ? "0" : "1"));
 </script>
 
 <template>
   <section v-if="graph.rawGraph" class="editor-page">
     <Toolbar/>
-    <div class="editor-workspace"><LayerList/><CanvasEditor/><PropertyPanel/></div>
+    <div
+      class="editor-workspace"
+      :class="{ 'layers-hidden': !layersOpen, 'properties-hidden': !propertiesOpen }"
+    >
+      <LayerList v-if="layersOpen" @collapse="layersOpen = false"/>
+      <button
+        v-else
+        class="editor-panel-reveal reveal-layers"
+        aria-label="Layers 패널 열기"
+        title="Layers 패널 열기"
+        @click="layersOpen = true"
+      >
+        <span>›</span> Layers
+      </button>
+      <CanvasEditor/>
+      <PropertyPanel v-if="propertiesOpen" @collapse="propertiesOpen = false"/>
+      <button
+        v-else
+        class="editor-panel-reveal reveal-properties"
+        aria-label="Properties 패널 열기"
+        title="Properties 패널 열기"
+        @click="propertiesOpen = true"
+      >
+        Properties <span>‹</span>
+      </button>
+    </div>
   </section>
   <section v-else class="empty-page">프로젝트를 선택하세요.</section>
 </template>

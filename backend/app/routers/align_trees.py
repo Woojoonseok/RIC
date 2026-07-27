@@ -73,7 +73,7 @@ def create_align_tree(
             target_type="align_tree",
             target_id=tree.id,
             summary=f"Created Align Tree {tree.name}",
-            details={"name": tree.name},
+            details={"values": {"name": tree.name, "description": tree.description}},
         )
         db.commit()
     except IntegrityError as exc:
@@ -120,7 +120,13 @@ def update_align_tree(
             target_type="align_tree",
             target_id=tree.id,
             summary=f"Updated Align Tree {tree.name}",
-            details={"before": before, "after": payload.model_dump(exclude_unset=True)},
+            details={
+                "before": before,
+                "after": {
+                    "name": tree.name,
+                    "description": tree.description,
+                },
+            },
         )
         db.commit()
     except IntegrityError as exc:
@@ -146,6 +152,7 @@ def delete_align_tree(
     )
     if len(active_trees) <= 1:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A project must keep at least one Align Tree")
+    snapshot = {"name": tree.name, "description": tree.description}
     tree.deleted_at = datetime.now(timezone.utc)
     tree.revision += 1
     if tree.is_default:
@@ -161,5 +168,6 @@ def delete_align_tree(
         target_type="align_tree",
         target_id=tree.id,
         summary=f"Deleted Align Tree {tree.name}",
+        details={"values": snapshot},
     )
     db.commit()

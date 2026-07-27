@@ -7,6 +7,7 @@ import type {
   UserSummary,
 } from "../types";
 import { useAppStore } from "./app";
+import { isChangeAuditEvent } from "../domain/audit";
 
 type LeaseState = "idle" | "acquiring" | "held" | "viewer" | "locked" | "lost";
 export type AutosaveState = "idle" | "saving" | "saved" | "error" | "conflict";
@@ -296,8 +297,8 @@ export const useProjectStore = defineStore("project", () => {
   async function loadAuditEvents() {
     if (!currentProjectId.value || !hasMembership.value) { auditEvents.value = []; return }
     const projectId = currentProjectId.value;
-    const events = await api.projectAuditEvents(projectId);
-    if (currentProjectId.value === projectId) auditEvents.value = events;
+    const events = await api.projectAuditEvents(projectId, { changesOnly: true });
+    if (currentProjectId.value === projectId) auditEvents.value = events.filter(isChangeAuditEvent);
   }
 
   async function loadMembersAndRequests() {

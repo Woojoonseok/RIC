@@ -433,6 +433,21 @@ def test_graph_audit_is_atomic_for_success_and_rollback(client: TestClient) -> N
     assert len(created_events) == 1
     assert created_events[0]["align_tree_id"] == tree_id
 
+    moved = client.patch(
+        f"{graph_base(client, project_id, tree_id)}/batch",
+        json={"layouts": [{"layer_id": created.json()["id"], "x": 240}], "styles": [], "text_boxes": []},
+    )
+    assert moved.status_code == 200, moved.text
+    move_events = [
+        row for row in client.get(
+            f"/api/projects/{project_id}/audit-events",
+            params={"changes_only": "true", "target_id": created.json()["id"]},
+        ).json()
+        if row["event_type"] == "layout.updated"
+    ]
+    assert len(move_events) == 1
+    assert move_events[0]["details_json"] == {"before": {"x": 100.0}, "after": {"x": 240.0}}
+
     duplicate = client.post(
         f"{graph_base(client, project_id, tree_id)}/layers",
         json={"name": "Audited Layer"},
@@ -1125,6 +1140,14 @@ def test_lease_acquire_release_and_force_takeover_are_audited(client: TestClient
     assert "lease.heartbeat" not in event_types
     lease_details = [event["details_json"] for event in events if event["event_type"].startswith("lease.")]
     assert "token" not in str(lease_details).lower()
+
+    change_events = client.get(
+        f"/api/projects/{project_id}/audit-events",
+        params={"changes_only": "true"},
+    ).json()
+    assert change_events
+    assert all(not event["event_type"].startswith("lease.") for event in change_events)
+    assert all(not event["event_type"].startswith("project.migrated") for event in change_events)
 
 
 def test_user_search_is_project_scoped_admin_only_and_minimum_two_characters(

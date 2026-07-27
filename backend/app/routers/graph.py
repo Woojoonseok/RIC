@@ -57,6 +57,19 @@ def _audit_graph_mutation(
     )
 
 
+def _audit_value(value: Any) -> Any:
+    if isinstance(value, uuid.UUID):
+        return str(value)
+    return value
+
+
+def _audit_field_values(row: Any | None, fields: list[str]) -> dict[str, Any]:
+    return {
+        field: _audit_value(getattr(row, field, None)) if row is not None else None
+        for field in fields
+    }
+
+
 @router.get("", response_model=schemas.GraphRead)
 def read_graph(
     project_id: uuid.UUID,
@@ -410,7 +423,10 @@ def create_layer(
             target_type="layer",
             target_id=layer.id,
             summary=f"Created layer {layer.name}",
-            details={"name": layer.name},
+            details={"values": _audit_field_values(
+                layer,
+                ["name", "step", "layer_property", "align", "align_side", "description"],
+            )},
         )
         db.commit()
         db.refresh(layer)
@@ -481,6 +497,8 @@ def update_layer(
 ) -> models.Layer:
     layer = crud.get_layer_or_404(db, project_id, align_tree_id, layer_id)
     updates = payload.model_dump(exclude_unset=True)
+    changed_fields = sorted(updates)
+    before = _audit_field_values(layer, changed_fields)
     if updates.get("box_preset_id") is not None:
         crud.get_box_preset_or_404(db, project_id, updates["box_preset_id"])
     for field, value in updates.items():
@@ -503,7 +521,7 @@ def update_layer(
             target_type="layer",
             target_id=layer.id,
             summary=f"Updated layer {layer.name}",
-            details={"fields": sorted(updates)},
+            details={"before": before, "after": _audit_field_values(layer, changed_fields)},
         )
         db.commit()
     except IntegrityError as exc:
@@ -1063,6 +1081,7 @@ def update_layer_group(
     db: Session = Depends(get_db),
 ) -> schemas.GraphRead:
     layer = crud.get_layer_or_404(db, project_id, align_tree_id, layer_id)
+    before_group = layer.pending_group
     if layer.layer_master_id is not None:
         master = db.get(models.LayerMaster, layer.layer_master_id)
         if master is not None:
@@ -1087,7 +1106,7 @@ def update_layer_group(
             target_type="layer",
             target_id=layer_id,
             summary="Updated layer group",
-            details={"group": payload.group},
+            details={"before": {"group": before_group}, "after": {"group": payload.group}},
         )
         db.commit()
     except IntegrityError as exc:
@@ -1406,6 +1425,17 @@ def update_layout(
     context: ProjectContext = Depends(project_request_guard),
     db: Session = Depends(get_db),
 ) -> models.GraphLayout:
+    changed_fields = sorted(payload.model_dump(exclude_unset=True))
+    current_layout = (
+        db.query(models.GraphLayout)
+        .filter(
+            models.GraphLayout.project_id == project_id,
+            models.GraphLayout.align_tree_id == align_tree_id,
+            models.GraphLayout.layer_id == layer_id,
+        )
+        .one_or_none()
+    )
+    before = _audit_field_values(current_layout, changed_fields)
     layout = upsert_layout(db, project_id, align_tree_id, layer_id, payload)
     _audit_graph_mutation(
         db,
@@ -1416,7 +1446,7 @@ def update_layout(
         target_type="layer",
         target_id=layer_id,
         summary="Updated layer layout",
-        details={"fields": sorted(payload.model_dump(exclude_unset=True))},
+        details={"before": before, "after": _audit_field_values(layout, changed_fields)},
     )
     db.commit()
     db.refresh(layout)
@@ -1432,6 +1462,17 @@ def update_style(
     context: ProjectContext = Depends(project_request_guard),
     db: Session = Depends(get_db),
 ) -> models.ShapeStyle:
+    changed_fields = sorted(payload.model_dump(exclude_unset=True))
+    current_style = (
+        db.query(models.ShapeStyle)
+        .filter(
+            models.ShapeStyle.project_id == project_id,
+            models.ShapeStyle.align_tree_id == align_tree_id,
+            models.ShapeStyle.layer_id == layer_id,
+        )
+        .one_or_none()
+    )
+    before = _audit_field_values(current_style, changed_fields)
     style_row = upsert_style(db, project_id, align_tree_id, layer_id, payload)
     _audit_graph_mutation(
         db,
@@ -1442,7 +1483,7 @@ def update_style(
         target_type="layer",
         target_id=layer_id,
         summary="Updated layer style",
-        details={"fields": sorted(payload.model_dump(exclude_unset=True))},
+        details={"before": before, "after": _audit_field_values(style_row, changed_fields)},
     )
     db.commit()
     db.refresh(style_row)
@@ -1459,40 +1500,89 @@ def batch_update_graph(
 ) -> schemas.GraphRead:
     crud.get_align_tree_or_404(db, project_id, align_tree_id)
     for layout_update in payload.layouts:
-        upsert_layout(
+        fields = sorted(layout_update.model_dump(exclude={"layer_id"}, exclude_unset=True))
+        current = (
+            db.query(models.GraphLayout)
+            .filter(
+                models.GraphLayout.project_id == project_id,
+                models.GraphLayout.align_tree_id == align_tree_id,
+                models.GraphLayout.layer_id == layout_update.layer_id,
+            )
+            .one_or_none()
+        )
+        before = _audit_field_values(current, fields)
+        updated = upsert_layout(
             db,
             project_id,
             align_tree_id,
             layout_update.layer_id,
             schemas.LayoutUpdate(**layout_update.model_dump(exclude={"layer_id"}, exclude_unset=True)),
         )
+        after = _audit_field_values(updated, fields)
+        if before != after:
+            _audit_graph_mutation(
+                db,
+                context,
+                project_id,
+                align_tree_id,
+                event_type="layout.updated",
+                target_type="layer",
+                target_id=layout_update.layer_id,
+                summary="Updated layer layout",
+                details={"before": before, "after": after},
+            )
     for style_update in payload.styles:
-        upsert_style(
+        fields = sorted(style_update.model_dump(exclude={"layer_id"}, exclude_unset=True))
+        current = (
+            db.query(models.ShapeStyle)
+            .filter(
+                models.ShapeStyle.project_id == project_id,
+                models.ShapeStyle.align_tree_id == align_tree_id,
+                models.ShapeStyle.layer_id == style_update.layer_id,
+            )
+            .one_or_none()
+        )
+        before = _audit_field_values(current, fields)
+        updated = upsert_style(
             db,
             project_id,
             align_tree_id,
             style_update.layer_id,
             schemas.StyleUpdate(**style_update.model_dump(exclude={"layer_id"}, exclude_unset=True)),
         )
+        after = _audit_field_values(updated, fields)
+        if before != after:
+            _audit_graph_mutation(
+                db,
+                context,
+                project_id,
+                align_tree_id,
+                event_type="style.updated",
+                target_type="layer",
+                target_id=style_update.layer_id,
+                summary="Updated layer style",
+                details={"before": before, "after": after},
+            )
     for text_box_update in payload.text_boxes:
         text_box = crud.get_text_box_or_404(db, project_id, align_tree_id, text_box_update.id)
-        for field, value in text_box_update.model_dump(exclude={"id"}, exclude_unset=True).items():
+        updates = text_box_update.model_dump(exclude={"id"}, exclude_unset=True)
+        fields = sorted(updates)
+        before = _audit_field_values(text_box, fields)
+        for field, value in updates.items():
             setattr(text_box, field, value)
-    _audit_graph_mutation(
-        db,
-        context,
-        project_id,
-        align_tree_id,
-        event_type="graph.batch_updated",
-        target_type="align_tree",
-        target_id=align_tree_id,
-        summary="Updated graph items in batch",
-        details={
-            "layouts": len(payload.layouts),
-            "styles": len(payload.styles),
-            "text_boxes": len(payload.text_boxes),
-        },
-    )
+        after = _audit_field_values(text_box, fields)
+        if before != after:
+            _audit_graph_mutation(
+                db,
+                context,
+                project_id,
+                align_tree_id,
+                event_type="text_box.updated",
+                target_type="text_box",
+                target_id=text_box.id,
+                summary="Updated text box",
+                details={"before": before, "after": after},
+            )
     db.commit()
     return crud.read_graph(db, project_id, align_tree_id)
 
@@ -1536,6 +1626,10 @@ def delete_layer(
 ) -> None:
     layer = crud.get_layer_or_404(db, project_id, align_tree_id, layer_id)
     layer_name = layer.name
+    snapshot = _audit_field_values(
+        layer,
+        ["name", "step", "layer_property", "align", "align_side", "description", "pending_group"],
+    )
     master = db.get(models.LayerMaster, layer.layer_master_id) if layer.layer_master_id else None
     if master is not None:
         delete_layer_master_layers(db, master)
@@ -1551,7 +1645,7 @@ def delete_layer(
         target_type="layer",
         target_id=layer_id,
         summary=f"Deleted layer {layer_name}",
-        details={"name": layer_name},
+        details={"values": snapshot},
     )
     db.commit()
 
@@ -1593,10 +1687,12 @@ def create_relation(
             target_type="relation",
             target_id=relation.id,
             summary="Created layer relation",
-            details={
+            details={"values": {
                 "parent_layer_id": str(relation.parent_layer_id) if relation.parent_layer_id else None,
                 "child_layer_id": str(relation.child_layer_id) if relation.child_layer_id else None,
-            },
+                "relation_type": relation.relation_type,
+                "instance": relation.instance,
+            }},
         )
         db.commit()
     except IntegrityError as exc:
@@ -1616,6 +1712,8 @@ def update_relation(
     db: Session = Depends(get_db),
 ) -> models.LayerRelation:
     relation = crud.get_relation_or_404(db, project_id, align_tree_id, relation_id)
+    changed_fields = sorted(payload.model_dump(exclude_unset=True))
+    before = _audit_field_values(relation, changed_fields)
     for layer_id in (payload.parent_layer_id, payload.child_layer_id):
         if layer_id is not None:
             crud.get_layer_or_404(db, project_id, align_tree_id, layer_id)
@@ -1640,7 +1738,7 @@ def update_relation(
             target_type="relation",
             target_id=relation.id,
             summary="Updated layer relation",
-            details={"fields": sorted(payload.model_dump(exclude_unset=True))},
+            details={"before": before, "after": _audit_field_values(relation, changed_fields)},
         )
         db.commit()
     except IntegrityError as exc:
@@ -1659,6 +1757,10 @@ def delete_relation(
     db: Session = Depends(get_db),
 ) -> None:
     relation = crud.get_relation_or_404(db, project_id, align_tree_id, relation_id)
+    snapshot = _audit_field_values(
+        relation,
+        ["parent_layer_id", "child_layer_id", "relation_type", "instance"],
+    )
     db.delete(relation)
     _audit_graph_mutation(
         db,
@@ -1669,6 +1771,7 @@ def delete_relation(
         target_type="relation",
         target_id=relation_id,
         summary="Deleted layer relation",
+        details={"values": snapshot},
     )
     db.commit()
 
@@ -1694,6 +1797,10 @@ def create_text_box(
         target_type="text_box",
         target_id=text_box.id,
         summary="Created text box",
+        details={"values": _audit_field_values(
+            text_box,
+            ["text", "x", "y", "width", "height", "text_color", "font_size"],
+        )},
     )
     db.commit()
     db.refresh(text_box)
@@ -1710,6 +1817,8 @@ def update_text_box(
     db: Session = Depends(get_db),
 ) -> models.TextBox:
     text_box = crud.get_text_box_or_404(db, project_id, align_tree_id, text_box_id)
+    changed_fields = sorted(payload.model_dump(exclude_unset=True))
+    before = _audit_field_values(text_box, changed_fields)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(text_box, field, value)
     _audit_graph_mutation(
@@ -1721,7 +1830,7 @@ def update_text_box(
         target_type="text_box",
         target_id=text_box.id,
         summary="Updated text box",
-        details={"fields": sorted(payload.model_dump(exclude_unset=True))},
+        details={"before": before, "after": _audit_field_values(text_box, changed_fields)},
     )
     db.commit()
     db.refresh(text_box)
@@ -1737,6 +1846,10 @@ def delete_text_box(
     db: Session = Depends(get_db),
 ) -> None:
     text_box = crud.get_text_box_or_404(db, project_id, align_tree_id, text_box_id)
+    snapshot = _audit_field_values(
+        text_box,
+        ["text", "x", "y", "width", "height", "text_color", "font_size"],
+    )
     db.delete(text_box)
     _audit_graph_mutation(
         db,
@@ -1747,6 +1860,7 @@ def delete_text_box(
         target_type="text_box",
         target_id=text_box_id,
         summary="Deleted text box",
+        details={"values": snapshot},
     )
     db.commit()
 
@@ -1759,16 +1873,33 @@ def auto_layout(
     db: Session = Depends(get_db),
 ) -> schemas.GraphRead:
     crud.get_align_tree_or_404(db, project_id, align_tree_id)
+    fields = ["x", "y", "width", "height"]
+    before = {
+        row.layer_id: _audit_field_values(row, fields)
+        for row in db.query(models.GraphLayout).filter(
+            models.GraphLayout.project_id == project_id,
+            models.GraphLayout.align_tree_id == align_tree_id,
+        ).all()
+    }
     apply_auto_layout(db, project_id, align_tree_id)
-    _audit_graph_mutation(
-        db,
-        context,
-        project_id,
-        align_tree_id,
-        event_type="graph.auto_layout",
-        target_type="align_tree",
-        target_id=align_tree_id,
-        summary="Applied automatic layout",
-    )
+    db.flush()
+    for row in db.query(models.GraphLayout).filter(
+        models.GraphLayout.project_id == project_id,
+        models.GraphLayout.align_tree_id == align_tree_id,
+    ).all():
+        previous = before.get(row.layer_id, {field: None for field in fields})
+        after = _audit_field_values(row, fields)
+        if previous != after:
+            _audit_graph_mutation(
+                db,
+                context,
+                project_id,
+                align_tree_id,
+                event_type="layout.updated",
+                target_type="layer",
+                target_id=row.layer_id,
+                summary="Updated layer layout with automatic layout",
+                details={"before": previous, "after": after},
+            )
     db.commit()
     return crud.read_graph(db, project_id, align_tree_id)

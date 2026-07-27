@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { isReactive, reactive } from "vue";
 import { describeErrorDetail } from "../src/api/client";
+import { auditActorName, auditEventChanges, auditEventTitle, isChangeAuditEvent } from "../src/domain/audit";
 import { cloneJson } from "../src/domain/clone";
 import {
   facingPorts, getClosestPointOnSegment, intersects, orthogonalWaypoints, portHandlePoint, portPoint, relationGeometry, relationStroke, snap,
@@ -8,7 +9,7 @@ import {
 import { computeDisplayGraph, expandRelationCandidates, isMergedLayer, relationTargetLayerId } from "../src/domain/graph";
 import { layerMasterColumns, layerMasterPayload, layerMasterRows } from "../src/domain/layerMaster";
 import { parseTsv } from "../src/domain/tsv";
-import type { Graph, Layout, Relation } from "../src/types";
+import type { AuditEvent, Graph, Layout, Relation } from "../src/types";
 
 const project = { id: "p", name: "P", description: null, created_at: "", updated_at: "" };
 const layer = (id: string, name: string) => ({ id, project_id: "p", name, step: null, layer_property: null, align: null, align_side: null, description: null, metadata_json: {}, box_preset_id: null, pending_group: null, created_at: "", updated_at: "" });
@@ -33,6 +34,54 @@ describe("DTO cloning", () => {
     expect(isReactive(source)).toBe(true);
     expect(isReactive(snapshot)).toBe(false);
     expect(snapshot).toEqual(graph());
+  });
+});
+
+describe("change history presentation", () => {
+  const event = (values: Partial<AuditEvent>): AuditEvent => ({
+    id: "event",
+    project_id: "p",
+    event_type: "layer.updated",
+    created_at: "2026-07-27T00:00:00Z",
+    ...values,
+  });
+
+  it("excludes lease activity from user-facing changes", () => {
+    expect(isChangeAuditEvent(event({ event_type: "lease.acquired" }))).toBe(false);
+    expect(isChangeAuditEvent(event({ event_type: "project.migrated_v2" }))).toBe(false);
+    expect(isChangeAuditEvent(event({
+      event_type: "layer.updated",
+      details_json: { before: { step: "10" }, after: { step: "20" } },
+    }))).toBe(true);
+    expect(isChangeAuditEvent(event({
+      event_type: "layer.updated",
+      details_json: { before: { step: "10" }, after: { step: "10" } },
+    }))).toBe(false);
+  });
+
+  it("shows the actor and exact before/after values", () => {
+    const changed = event({
+      actor: { id: "user", display_name: "홍길동" },
+      summary: "Updated layer Metal 1",
+      details_json: {
+        before: { name: "Metal 1", step: "10" },
+        after: { name: "Metal 1", step: "20" },
+      },
+    });
+    expect(auditActorName(changed)).toBe("홍길동");
+    expect(auditEventTitle(changed)).toBe("Layer 정보 수정 · Metal 1");
+    expect(auditEventChanges(changed)).toEqual(["Layer 번호: 10 → 20"]);
+  });
+
+  it("describes added and deleted values explicitly", () => {
+    expect(auditEventChanges(event({
+      event_type: "layer.created",
+      details_json: { values: { name: "Metal 1", step: "10" } },
+    }))).toEqual(["이름: 없음 → Metal 1", "Layer 번호: 없음 → 10"]);
+    expect(auditEventChanges(event({
+      event_type: "layer.deleted",
+      details_json: { values: { name: "Metal 1" } },
+    }))).toEqual(["이름: Metal 1 → 삭제됨"]);
   });
 });
 

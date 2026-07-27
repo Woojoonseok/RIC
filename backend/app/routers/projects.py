@@ -84,7 +84,7 @@ def create_project(
         target_type="project",
         target_id=project.id,
         summary=f"Created project {project.name}",
-        details={"name": project.name},
+        details={"values": {"name": project.name, "description": project.description}},
     )
     db.commit()
     db.refresh(project)
@@ -193,7 +193,13 @@ def update_project(
         target_type="project",
         target_id=context.project.id,
         summary=f"Updated project {context.project.name}",
-        details={"before": before, "after": payload.model_dump(exclude_unset=True)},
+        details={
+            "before": before,
+            "after": {
+                "name": context.project.name,
+                "description": context.project.description,
+            },
+        },
     )
     db.commit()
     db.refresh(context.project)
@@ -208,6 +214,7 @@ def delete_project(
 ) -> None:
     if context.role != "owner":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the owner can delete a project")
+    snapshot = {"name": context.project.name, "description": context.project.description}
     context.project.deleted_at = datetime.now(timezone.utc)
     record_project_event(
         db,
@@ -217,5 +224,6 @@ def delete_project(
         target_type="project",
         target_id=context.project.id,
         summary=f"Deleted project {context.project.name}",
+        details={"values": snapshot},
     )
     db.commit()
