@@ -5,6 +5,7 @@ import { useGraphStore } from "../../stores/graph";
 
 const app = useAppStore();
 const graph = useGraphStore();
+const emit = defineEmits<{ collapse: [] }>();
 const query = ref("");
 const layers = computed(() => graph.displayGraph?.layers.filter((row) => row.name.toLowerCase().includes(query.value.toLowerCase())) ?? []);
 
@@ -20,7 +21,10 @@ function selectIssue(issue: { layer_id?: string | null; relation_id?: string | n
 
 <template>
   <aside class="layer-list">
-    <div class="side-heading"><span>LAYERS</span><b>{{ layers.length }}</b></div>
+    <div class="side-heading">
+      <span>LAYERS</span>
+      <div><b>{{ layers.length }}</b><button class="panel-collapse-button" aria-label="Layers 패널 닫기" title="Layers 패널 닫기" @click="emit('collapse')">‹</button></div>
+    </div>
     <input v-model="query" class="side-search" placeholder="Layer 검색">
     <button v-for="layer in layers" :key="layer.id" class="layer-item" :class="{ active: app.selection.some((row) => row.kind === 'layer' && row.id === layer.id) }" @click="selectLayer(layer.id, $event.ctrlKey || $event.metaKey || $event.shiftKey)">
       <span class="layer-dot"/><span><strong>{{ layer.name.replaceAll('\n', ' · ') }}</strong><small>{{ layer.step || 'Step 미지정' }}</small></span><em v-if="graph.groupSizeByLayerId[layer.id]">{{ graph.groupSizeByLayerId[layer.id] }}</em>

@@ -25,7 +25,8 @@ class Actor(Base, TimestampMixin):
     """Stable internal user record.
 
     Authentication is anonymous for now: a signed HttpOnly cookie points at
-    this row and the server-derived client IP is retained only as an HMAC.
+    this row and the server-derived client IP HMAC provides recovery when the
+    cookie is unavailable.
     Keeping identities separate lets a future AD subject be attached without
     moving project ownership.
     """
@@ -52,7 +53,8 @@ class ActorIdentity(Base, TimestampMixin):
     actor_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("actors.id", ondelete="CASCADE"), index=True)
     # Reserved for authenticated providers. A future AD SSO integration can
     # add an ``ad`` identity whose subject is the immutable AD object id/SID.
-    # IP hashes must never be stored here or accepted as authentication.
+    # IP hashes are kept on Actor for local anonymous recovery, not as an
+    # authenticated external-provider identity.
     provider: Mapped[str] = mapped_column(String(40), nullable=False)
     subject_hash: Mapped[str] = mapped_column(String(128), nullable=False)
 
@@ -241,6 +243,9 @@ class Layer(Base, TimestampMixin):
     align_tree_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("align_trees.id", ondelete="CASCADE"), nullable=True, index=True
     )
+    layer_master_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("layer_masters.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     step: Mapped[str | None] = mapped_column(String(120))
     layer_property: Mapped[str | None] = mapped_column(String(160))
@@ -397,6 +402,7 @@ class LayerMaster(Base, TimestampMixin):
     pr_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
     light_source: Mapped[str | None] = mapped_column(String(40), nullable=True)
     pr_open_close: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    group: Mapped[str | None] = mapped_column(String(80), nullable=True)
     validation_rule: Mapped[str | None] = mapped_column(Text, nullable=True)
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
 

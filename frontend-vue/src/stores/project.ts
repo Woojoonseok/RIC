@@ -7,6 +7,7 @@ import type {
   UserSummary,
 } from "../types";
 import { useAppStore } from "./app";
+import { isChangeAuditEvent } from "../domain/audit";
 
 type LeaseState = "idle" | "acquiring" | "held" | "viewer" | "locked" | "lost";
 export type AutosaveState = "idle" | "saving" | "saved" | "error" | "conflict";
@@ -69,7 +70,10 @@ export const useProjectStore = defineStore("project", () => {
   const readOnlyReason = computed(() => {
     if (!hasMembership.value) return accessRequestStatus.value === "pending" ? "프로젝트 사용 신청이 승인 대기 중입니다." : "프로젝트 멤버만 내부 데이터를 볼 수 있습니다.";
     if (currentRole.value === "viewer") return "보기 권한으로 열었습니다.";
-    if (leaseState.value === "locked") return "다른 사용자가 이 프로젝트를 편집 중이라 보기 전용으로 열었습니다.";
+    if (leaseState.value === "locked") {
+      const holder = currentProject.value?.lock_holder_display_name;
+      return holder ? `${holder}님이 이 프로젝트를 편집 중이라 보기 전용으로 열었습니다.` : "다른 사용자가 이 프로젝트를 편집 중이라 보기 전용으로 열었습니다.";
+    }
     if (leaseState.value === "lost") return "편집 연결이 끊겨 보기 전용으로 전환되었습니다.";
     if (leaseState.value === "acquiring") return "프로젝트 편집 권한을 확인하고 있습니다.";
     return readOnly.value ? "편집을 시작하면 변경사항이 서버에 자동 저장됩니다." : "";
@@ -293,8 +297,8 @@ export const useProjectStore = defineStore("project", () => {
   async function loadAuditEvents() {
     if (!currentProjectId.value || !hasMembership.value) { auditEvents.value = []; return }
     const projectId = currentProjectId.value;
-    const events = await api.projectAuditEvents(projectId);
-    if (currentProjectId.value === projectId) auditEvents.value = events;
+    const events = await api.projectAuditEvents(projectId, { changesOnly: true });
+    if (currentProjectId.value === projectId) auditEvents.value = events.filter(isChangeAuditEvent);
   }
 
   async function loadMembersAndRequests() {
@@ -421,6 +425,13 @@ export const useProjectStore = defineStore("project", () => {
       }
       lease.value = { ...result, project_id: projectId, client_instance_id: clientInstanceId };
       leaseState.value = "held";
+      if (currentProject.value) currentProject.value = {
+        ...currentProject.value,
+        is_locked: true,
+        locked_by_me: true,
+        lock_expires_at: result.expires_at,
+        lock_holder_display_name: session.value?.display_name ?? null,
+      };
       if (result.revision !== undefined) setRevision(result.revision);
       startHeartbeat();
       return true;
@@ -428,6 +439,16 @@ export const useProjectStore = defineStore("project", () => {
       if (projectId !== currentProjectId.value || projectNonce !== projectActivationNonce) return false;
       lease.value = null;
       leaseState.value = error instanceof ApiError && error.status === 423 ? "locked" : "lost";
+      if (error instanceof ApiError && error.status === 423 && currentProject.value) {
+        const detail = error.detail && typeof error.detail === "object" ? error.detail as Record<string, unknown> : null;
+        currentProject.value = {
+          ...currentProject.value,
+          is_locked: true,
+          locked_by_me: false,
+          lock_holder_display_name: typeof detail?.holder_display_name === "string" ? detail.holder_display_name : currentProject.value.lock_holder_display_name,
+          lock_expires_at: typeof detail?.expires_at === "string" ? detail.expires_at : currentProject.value.lock_expires_at,
+        };
+      }
       if (!(error instanceof ApiError) || error.status !== 423) throw error;
       return false;
     }
@@ -463,6 +484,13 @@ export const useProjectStore = defineStore("project", () => {
     const projectId = active?.project_id ?? currentProjectId.value;
     lease.value = null;
     leaseState.value = "idle";
+    if (currentProject.value) currentProject.value = {
+      ...currentProject.value,
+      is_locked: false,
+      locked_by_me: false,
+      lock_expires_at: null,
+      lock_holder_display_name: null,
+    };
     if (!active?.lease_token || !projectId) return;
     try { await api.releaseLease(projectId, active.lease_token, keepalive) } catch { /* Server TTL is the final fallback. */ }
   }

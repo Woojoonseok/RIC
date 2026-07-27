@@ -31,6 +31,6 @@ const {
       <rect v-if="marquee" class="marquee" :x="Math.min(marquee.start.x, marquee.end.x)" :y="Math.min(marquee.start.y, marquee.end.y)" :width="Math.abs(marquee.end.x - marquee.start.x)" :height="Math.abs(marquee.end.y - marquee.start.y)"/>
     </svg>
     <svg v-if="graph" class="minimap" viewBox="0 0 1600 1000"><rect width="1600" height="1000" fill="#f8fafc"/><rect v-for="layout in graph.layouts" :key="layout.id" :x="layout.x" :y="layout.y" :width="layout.width" :height="layout.height" rx="8" fill="#84adff"/><rect :x="viewBox.x" :y="viewBox.y" :width="viewBox.width" :height="viewBox.height" fill="none" stroke="#175cd3" stroke-width="10"/></svg>
-    <div class="canvas-hint">Connect: Source 박스 클릭 → Target 박스 클릭 · Alt + 드래그 이동 · 휠 확대/축소</div>
+    <div class="canvas-hint">Connect: Source 박스 클릭 → Target 박스 클릭 · Shift + 연결: 직각선 · Alt + 드래그 이동 · 휠 확대/축소</div>
   </div>
 </template>

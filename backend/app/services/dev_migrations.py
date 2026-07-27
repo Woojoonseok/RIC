@@ -197,21 +197,21 @@ def _rebuild_scoped_tables(target_engine: Engine) -> None:
     if not target_engine.url.drivername.startswith("sqlite"):
         return
 
-    reference_specs: tuple[tuple[type[models.Base], tuple[str, ...] | None], ...] = (
-        (models.RelationStyle, ("project_id", "name")),
-        (models.BoxPreset, ("project_id", "name")),
-        (models.KeyLayoutType, ("project_id", "name")),
-        (models.KeyDrawingType, None),
-        (models.KeyShape, ("project_id", "key_shape")),
-        (models.LayerMaster, ("project_id", "name")),
-        (models.LayerMasterPriority, ("project_id", "layer_master_id", "key_layout_type_id")),
+    reference_specs: tuple[tuple[type[models.Base], tuple[str, ...] | None, set[str]], ...] = (
+        (models.RelationStyle, ("project_id", "name"), set()),
+        (models.BoxPreset, ("project_id", "name"), set()),
+        (models.KeyLayoutType, ("project_id", "name"), set()),
+        (models.KeyDrawingType, None, set()),
+        (models.KeyShape, ("project_id", "key_shape"), set()),
+        (models.LayerMaster, ("project_id", "name"), {"group"}),
+        (models.LayerMasterPriority, ("project_id", "layer_master_id", "key_layout_type_id"), set()),
     )
-    for model, expected_unique in reference_specs:
+    for model, expected_unique, extra_columns in reference_specs:
         table_name = model.__table__.name
         if _needs_rebuild(
             target_engine,
             table_name,
-            required_columns={"project_id"},
+            required_columns={"project_id", *extra_columns},
             required_unique=expected_unique,
         ):
             _rebuild_sqlite_table(target_engine, model)
@@ -219,7 +219,7 @@ def _rebuild_scoped_tables(target_engine: Engine) -> None:
     graph_specs: tuple[
         tuple[type[models.Base], set[str], tuple[str, ...] | None, set[str] | None], ...
     ] = (
-        (models.Layer, {"align_tree_id", "box_preset_id", "pending_group"}, ("align_tree_id", "name"), None),
+        (models.Layer, {"align_tree_id", "layer_master_id", "box_preset_id", "pending_group"}, ("align_tree_id", "name"), None),
         (
             models.LayerRelation,
             {

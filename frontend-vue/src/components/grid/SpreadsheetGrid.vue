@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { cloneJson } from "../../domain/clone";
 import { parseTsv, toTsv } from "../../domain/tsv";
 
@@ -11,6 +11,7 @@ const draft = ref<Array<Record<string, unknown>>>(cloneJson(props.rows));
 const active = ref({ row: 0, col: 0 });
 const anchor = ref({ row: 0, col: 0 });
 const editing = ref(false);
+const draggingCells = ref(false);
 const lastSelectedRow = ref<number | null>(null);
 const widths = ref<Record<string, number>>({});
 watch(() => props.rows, (rows) => { draft.value = cloneJson(rows) }, { deep: true });
@@ -22,6 +23,21 @@ const selected = computed(() => ({
 const gridColumns = computed(() => `64px ${props.columns.map((column) => `${widths.value[column.key] ?? column.width ?? 150}px`).join(" ")}`);
 function isSelected(row: number, col: number) { const s = selected.value; return row >= s.r1 && row <= s.r2 && col >= s.c1 && col <= s.c2 }
 function activate(row: number, col: number, extend = false) { active.value = { row, col }; if (!extend) anchor.value = { row, col } }
+function stopCellDrag() {
+  draggingCells.value = false;
+  window.removeEventListener("pointerup", stopCellDrag);
+}
+function startCellDrag(row: number, col: number, event: PointerEvent) {
+  if (event.button !== 0 || (event.target as HTMLElement).closest("input, select, button")) return;
+  activate(row, col, event.shiftKey);
+  draggingCells.value = true;
+  window.addEventListener("pointerup", stopCellDrag);
+  event.preventDefault();
+}
+function extendCellDrag(row: number, col: number) {
+  if (!draggingCells.value) return;
+  active.value = { row, col };
+}
 function selectColumn(col: number) { anchor.value = { row: 0, col }; active.value = { row: Math.max(0, draft.value.length - 1), col } }
 function selectRow(row: number, event: MouseEvent) {
   anchor.value = { row, col: 0 }; active.value = { row, col: Math.max(0, props.columns.length - 1) };
@@ -109,6 +125,7 @@ function addDraftRow() {
   emit("addRow");
 }
 defineExpose({ addDraftRow });
+onBeforeUnmount(stopCellDrag);
 </script>
 
 <template>
@@ -121,7 +138,7 @@ defineExpose({ addDraftRow });
     </div>
     <div v-for="(row, rowIndex) in draft" :key="String(row[rowKey ?? 'id'] ?? rowIndex)" class="sheet-row" :class="{ 'row-selected': selectedRows?.includes(String(row[rowKey ?? 'id'])) }" :style="{ gridTemplateColumns: gridColumns }">
       <button type="button" class="sheet-row-number" @click="selectRow(rowIndex, $event)"><span class="row-check" :class="{ checked: selectedRows?.includes(String(row[rowKey ?? 'id'])) }" role="checkbox" :aria-checked="selectedRows?.includes(String(row[rowKey ?? 'id']))" @click.stop="toggleRow(rowIndex)">✓</span><span>{{ rowIndex + 1 }}</span></button>
-      <div v-for="(column, colIndex) in columns" :key="column.key" class="sheet-cell" :class="{ selected: isSelected(rowIndex, colIndex), active: active.row === rowIndex && active.col === colIndex, editing: editing && active.row === rowIndex && active.col === colIndex }" @mousedown="activate(rowIndex, colIndex, $event.shiftKey)" @dblclick="editCell(rowIndex, colIndex)">
+      <div v-for="(column, colIndex) in columns" :key="column.key" class="sheet-cell" :class="{ selected: isSelected(rowIndex, colIndex), active: active.row === rowIndex && active.col === colIndex, editing: editing && active.row === rowIndex && active.col === colIndex }" @pointerdown="startCellDrag(rowIndex, colIndex, $event)" @pointerenter="extendCellDrag(rowIndex, colIndex)" @dblclick="editCell(rowIndex, colIndex)">
         <button v-if="column.action" type="button" class="sheet-cell-action" :disabled="readonly" @mousedown.stop @click.stop="emit('cellAction', cloneJson(row), column.key)"><span>{{ row[column.key] || '선택' }}</span><b>›</b></button>
         <select v-else-if="column.options && !column.readonly" v-model="row[column.key] as string" class="sheet-inline-select" :disabled="readonly" @mousedown.stop @click.stop @change="commitSelect(rowIndex)"><option v-for="option in column.options" :key="option.value" :value="option.value">{{ option.label }}</option></select>
         <input v-else-if="editing && active.row === rowIndex && active.col === colIndex && !column.readonly" v-model="row[column.key] as string" :disabled="readonly" @blur="finishEditing(rowIndex)" @keydown.enter.stop.prevent="finishEditing(rowIndex); move(1, 0)" />

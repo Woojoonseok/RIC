@@ -1,18 +1,23 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { api } from "../../api/client";
+import { isMergedLayer } from "../../domain/graph";
 import { useAppStore } from "../../stores/app";
 import { useGraphStore } from "../../stores/graph";
 import { useProjectStore } from "../../stores/project";
 import type { LayerUpdate, LayoutUpdate, PortName, RelationUpdate, StyleUpdate, TextBoxUpdate } from "../../types";
 
 const app = useAppStore(); const graph = useGraphStore(); const project = useProjectStore();
+const emit = defineEmits<{ collapse: [] }>();
 const COLOR_SWATCHES = ["#ffffff", "#fef3c7", "#dbeafe", "#dcfce7", "#ffe4e6", "#e5e7eb", "#111827", "#2563eb", "#dc2626"];
 const selectedLayers = computed(() => app.selection.filter((item) => item.kind === "layer").flatMap((item) => {
   const layer = graph.rawGraph?.layers.find((row) => row.id === item.id); return layer ? [layer] : [];
 }));
 const item = computed(() => app.selection.length === 1 ? app.selection[0] : null);
 const layer = computed(() => selectedLayers.value.length === 1 ? selectedLayers.value[0] : null);
+const canSplitLayer = computed(() => Boolean(
+  layer.value && graph.rawGraph && isMergedLayer(graph.rawGraph, layer.value.id),
+));
 const layout = computed(() => layer.value ? graph.rawGraph?.layouts.find((row) => row.layer_id === layer.value!.id) : null);
 const style = computed(() => layer.value ? graph.rawGraph?.styles.find((row) => row.layer_id === layer.value!.id) : null);
 const relation = computed(() => item.value?.kind === "relation" ? graph.rawGraph?.relations.find((row) => row.id === item.value!.id) : null);
@@ -44,7 +49,13 @@ function numberValue(event: Event) { return Number((event.target as HTMLInputEle
 
 <template>
   <aside class="property-panel">
-    <div class="side-heading"><span>PROPERTIES</span><button v-if="app.selection.length" @click="app.clearSelection()">×</button></div>
+    <div class="side-heading">
+      <span>PROPERTIES</span>
+      <div>
+        <button v-if="app.selection.length" aria-label="선택 해제" title="선택 해제" @click="app.clearSelection()">×</button>
+        <button class="panel-collapse-button" aria-label="Properties 패널 닫기" title="Properties 패널 닫기" @click="emit('collapse')">›</button>
+      </div>
+    </div>
     <fieldset class="property-fieldset" :disabled="!project.canEdit">
     <div v-if="selectedLayers.length > 1" class="property-form multi-property">
       <div class="property-title"><div><strong>{{ selectedLayers.length }} Layers</strong><small>다중 편집</small></div></div>
@@ -75,7 +86,7 @@ function numberValue(event: Event) { return Number((event.target as HTMLInputEle
       <label v-if="style">Fill<input type="color" :value="style.fill_color" @change="updateStyle({ fill_color: value($event) })"></label><div v-if="style" class="color-swatches"><button v-for="color in COLOR_SWATCHES" :key="color" class="color-swatch" :style="{ background: color }" @click="updateStyle({ fill_color: color })"/></div>
       <label v-if="style">Stroke<input type="color" :value="style.stroke_color" @change="updateStyle({ stroke_color: value($event) })"></label><label v-if="style">Text<input type="color" :value="style.text_color" @change="updateStyle({ text_color: value($event) })"></label>
       <label v-if="style">Font size<input type="number" min="8" max="72" :value="style.font_size" @change="updateStyle({ font_size: numberValue($event) })"></label><label v-if="style">Stroke width<input type="number" min="1" max="12" :value="style.stroke_width" @change="updateStyle({ stroke_width: numberValue($event) })"></label>
-      <button @click="graph.mutateGraph('Layer 분할', () => api.split(project.projectId, layer!.id))">Split Layer</button>
+      <button v-if="canSplitLayer" @click="graph.mutateGraph('Layer 분할', () => api.split(project.projectId, layer!.id))">Split Layer</button>
     </div>
     <div v-else-if="relation" class="property-form">
       <div class="property-title"><span class="relation-dot"/><div><strong>Relation</strong><small>{{ relation.id.slice(0, 8) }}</small></div></div>

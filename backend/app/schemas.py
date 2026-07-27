@@ -32,6 +32,7 @@ class ProjectRead(OrmModel):
     is_locked: bool = False
     locked_by_me: bool = False
     lock_expires_at: datetime | None = None
+    lock_holder_display_name: str | None = None
 
 
 class ActorSummary(BaseModel):
@@ -223,6 +224,7 @@ class LayerRead(OrmModel, LayerBase):
     id: uuid.UUID
     project_id: uuid.UUID
     align_tree_id: uuid.UUID | None = None
+    layer_master_id: uuid.UUID | None = None
     # Only ever set/cleared via PATCH .../layers/{id}/group — see _sync_layer_group.
     pending_group: str | None = None
 
@@ -418,6 +420,7 @@ class LayerMasterBase(BaseModel):
     pr_type: str | None = None
     light_source: str | None = None
     pr_open_close: str | None = None
+    group: str | None = Field(default=None, max_length=80)
     validation_rule: str | None = None
     comment: str | None = None
 
@@ -438,6 +441,7 @@ class LayerMasterUpdate(BaseModel):
     pr_type: str | None = None
     light_source: str | None = None
     pr_open_close: str | None = None
+    group: str | None = Field(default=None, max_length=80)
     validation_rule: str | None = None
     comment: str | None = None
     priorities: dict[uuid.UUID, str | None] | None = None

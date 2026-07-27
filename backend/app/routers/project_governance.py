@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from .. import crud, models, schemas
@@ -217,7 +218,7 @@ def add_member(
         target_type="member",
         target_id=member.id,
         summary=f"Added {target.display_name} as {payload.role}",
-        details={"actor_id": str(target.id), "role": payload.role},
+        details={"values": {"name": target.display_name, "role": payload.role}},
     )
     db.commit()
     db.refresh(member)
@@ -253,7 +254,11 @@ def update_member(
         target_type="member",
         target_id=member.id,
         summary=f"Changed {member.actor.display_name} from {previous_role} to {payload.role}",
-        details={"actor_id": str(actor_id), "before": previous_role, "after": payload.role},
+        details={
+            "actor_id": str(actor_id),
+            "before": {"role": previous_role},
+            "after": {"role": payload.role},
+        },
     )
     db.commit()
     db.refresh(member)
@@ -297,7 +302,7 @@ def remove_member(
         target_type="member",
         target_id=member_id,
         summary=f"Removed {target_label} from the project",
-        details={"actor_id": str(actor_id), "legacy_grants_purged": purged_legacy_grants},
+        details={"values": {"name": target_label, "role": member.role}},
     )
     db.commit()
 
@@ -307,12 +312,28 @@ def list_audit_events(
     project_id: uuid.UUID,
     limit: int = Query(default=50, ge=1, le=100),
     before: datetime | None = Query(default=None),
+    changes_only: bool = Query(default=False),
+    align_tree_id: uuid.UUID | None = Query(default=None),
+    target_id: uuid.UUID | None = Query(default=None),
+    event_prefix: list[str] | None = Query(default=None),
     _context: ProjectContext = Depends(get_project_context),
     db: Session = Depends(get_db),
 ) -> list[schemas.AuditEventRead]:
     query = db.query(models.ProjectAuditEvent).filter(models.ProjectAuditEvent.project_id == project_id)
     if before is not None:
         query = query.filter(models.ProjectAuditEvent.created_at < before)
+    if changes_only:
+        query = query.filter(
+            ~models.ProjectAuditEvent.event_type.like("lease.%"),
+            ~models.ProjectAuditEvent.event_type.like("project.migrated%"),
+        )
+    if align_tree_id is not None:
+        query = query.filter(models.ProjectAuditEvent.align_tree_id == align_tree_id)
+    if target_id is not None:
+        query = query.filter(models.ProjectAuditEvent.target_id == target_id)
+    prefixes = [prefix.strip() for prefix in (event_prefix or []) if prefix.strip()]
+    if prefixes:
+        query = query.filter(or_(*(models.ProjectAuditEvent.event_type.like(f"{prefix}%") for prefix in prefixes)))
     rows = query.order_by(models.ProjectAuditEvent.created_at.desc(), models.ProjectAuditEvent.id.desc()).limit(limit).all()
     return [
         schemas.AuditEventRead(

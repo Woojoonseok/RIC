@@ -10,6 +10,7 @@ from .. import models, schemas
 from ..database import get_db
 from ..services.audit import record_project_event
 from ..services.project_access import ProjectContext, get_project_context, project_request_guard
+from ..services.layer_master_sync import delete_layer_master_layers, sync_layer_master
 
 router = APIRouter(
     prefix="/api/projects/{project_id}/layer-master",
@@ -44,6 +45,7 @@ def _serialize(row: models.LayerMaster) -> schemas.LayerMasterRead:
         pr_type=row.pr_type,
         light_source=row.light_source,
         pr_open_close=row.pr_open_close,
+        group=row.group,
         validation_rule=row.validation_rule,
         comment=row.comment,
         priorities={priority.key_layout_type_id: priority.value for priority in row.priorities},
@@ -111,6 +113,7 @@ def create_layer_master(
         _apply_priorities(db, project_id, row, payload.priorities)
         db.flush()
         db.expire(row, ["priorities"])
+        sync_layer_master(db, row)
         record_project_event(
             db,
             project_id=project_id,
@@ -147,6 +150,7 @@ def update_layer_master(
     try:
         db.flush()
         db.expire(row, ["priorities"])
+        sync_layer_master(db, row)
         record_project_event(
             db,
             project_id=project_id,
@@ -175,6 +179,7 @@ def delete_layer_master(
     row = _row_or_404(db, project_id, row_id)
     label = row.name
     snapshot = _snapshot(row)
+    delete_layer_master_layers(db, row)
     db.delete(row)
     record_project_event(
         db,

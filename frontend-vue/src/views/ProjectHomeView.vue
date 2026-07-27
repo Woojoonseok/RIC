@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
+import { auditActorName, auditEventChanges, auditEventTitle } from "../domain/audit";
 import { useAppStore } from "../stores/app";
 import { useProjectStore } from "../stores/project";
 
@@ -32,10 +33,6 @@ async function claimLegacy() {
   await loadMemberHome();
 }
 
-function eventSummary(event: { summary?: string | null; action?: string; event_type?: string; entity_type?: string | null; target_type?: string }) {
-  return event.summary || `${event.target_type ?? event.entity_type ? `${event.target_type ?? event.entity_type} · ` : ""}${event.event_type ?? event.action ?? "변경"}`;
-}
-
 watch(() => project.hasMembership, () => void loadMemberHome());
 onMounted(loadMemberHome);
 </script>
@@ -52,7 +49,7 @@ onMounted(loadMemberHome);
       </div>
       <div class="project-home-grid">
         <section class="panel project-quick-start"><div class="panel-heading"><h2>프로젝트 작업</h2></div><RouterLink :to="{ name: 'project-reference', params: { projectId: current.id } }"><span>01</span><div><strong>기준정보</strong><small>프로젝트별 Box·Relation 기준 관리</small></div><b>→</b></RouterLink><RouterLink :to="{ name: 'project-layers', params: { projectId: current.id } }"><span>02</span><div><strong>Layer 정보</strong><small>공정 Layer 기준과 우선순위 관리</small></div><b>→</b></RouterLink><RouterLink :to="{ name: 'align-tree-list', params: { projectId: current.id } }"><span>03</span><div><strong>Align Tree List</strong><small>여러 Align Tree 생성 및 열기</small></div><b>→</b></RouterLink></section>
-        <section class="panel project-history"><div class="panel-heading"><div><p class="eyebrow">HISTORY</p><h2>최근 활동</h2></div><button @click="project.loadAuditEvents">새로고침</button></div><p v-if="!project.auditEvents.length" class="empty">아직 기록된 활동이 없습니다.</p><ol><li v-for="event in project.auditEvents" :key="event.id"><i/><div><strong>{{ eventSummary(event) }}</strong><span>{{ event.actor?.display_name || event.actor_label_snapshot || event.actor_display_name || '시스템' }}<template v-if="event.align_tree_id"> · Align Tree</template></span></div><time>{{ new Date(event.created_at).toLocaleString() }}</time></li></ol></section>
+        <section class="panel project-history"><div class="panel-heading"><div><p class="eyebrow">HISTORY</p><h2>최근 변경</h2><small>접속·열기·닫기 기록은 제외합니다.</small></div><button @click="project.loadAuditEvents">새로고침</button></div><p v-if="!project.auditEvents.length" class="empty">아직 기록된 변경이 없습니다.</p><ol><li v-for="event in project.auditEvents" :key="event.id"><i/><div><strong>{{ auditEventTitle(event) }}</strong><small v-if="auditEventChanges(event).length">{{ auditEventChanges(event).join(' · ') }}</small><span>{{ auditActorName(event) }}<template v-if="event.align_tree_id"> · Align Tree</template></span></div><time>{{ new Date(event.created_at).toLocaleString() }}</time></li></ol></section>
       </div>
     </template>
 

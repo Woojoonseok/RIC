@@ -92,6 +92,13 @@ export function groupMaps(raw: Graph) {
   return { anchorByLayerId, groupToLayerIds };
 }
 
+export function isMergedLayer(raw: Graph, layerId: string): boolean {
+  return raw.relations.some((relation) => Boolean(
+    relation.same_group
+    && (relation.parent_layer_id === layerId || relation.child_layer_id === layerId),
+  ));
+}
+
 export function relationTargetLayerId(raw: Graph, relationId: string, visited = new Set<string>()): string | null {
   if (visited.has(relationId)) return null;
   const relation = raw.relations.find((row) => row.id === relationId);

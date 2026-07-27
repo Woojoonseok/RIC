@@ -94,6 +94,23 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
 
 const json = <T>(method: string, body?: T): RequestInit => ({ method, body: body === undefined ? undefined : JSON.stringify(body) });
 
+export interface AuditEventQuery {
+  limit?: number;
+  changesOnly?: boolean;
+  alignTreeId?: string;
+  targetId?: string;
+  eventPrefixes?: string[];
+}
+
+function auditEventPath(projectId: string, options: AuditEventQuery = {}) {
+  const params = new URLSearchParams({ limit: String(options.limit ?? 50) });
+  if (options.changesOnly) params.set("changes_only", "true");
+  if (options.alignTreeId) params.set("align_tree_id", options.alignTreeId);
+  if (options.targetId) params.set("target_id", options.targetId);
+  for (const prefix of options.eventPrefixes ?? []) params.append("event_prefix", prefix);
+  return `/projects/${projectId}/audit-events?${params.toString()}`;
+}
+
 export const api = {
   me: () => request<AnonymousSession>("/me"),
   updateMe: (displayName: string) => request<AnonymousSession>("/me", json("PATCH", { display_name: displayName })),
@@ -113,7 +130,7 @@ export const api = {
   addProjectMember: (projectId: string, actorId: string, role: ProjectRole) => request<ProjectMember>(`/projects/${projectId}/members`, json("POST", { actor_id: actorId, role })),
   updateProjectMember: (projectId: string, actorId: string, role: ProjectRole) => request<ProjectMember>(`/projects/${projectId}/members/${actorId}`, json("PATCH", { role })),
   removeProjectMember: (projectId: string, actorId: string) => request<void>(`/projects/${projectId}/members/${actorId}`, json("DELETE")),
-  projectAuditEvents: (id: string) => request<AuditEvent[]>(`/projects/${id}/audit-events?limit=50`),
+  projectAuditEvents: (id: string, options: AuditEventQuery = {}) => request<AuditEvent[]>(auditEventPath(id, options)),
 
   listAlignTrees: (id: string) => request<AlignTree[]>(`/projects/${id}/align-trees`),
   createAlignTree: (id: string, body: AlignTreeCreate) => request<AlignTree>(`/projects/${id}/align-trees`, json("POST", body)),

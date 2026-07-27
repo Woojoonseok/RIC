@@ -27,6 +27,7 @@ export interface Project {
   locked?: boolean;
   locked_by_me?: boolean;
   lock_expires_at?: string | null;
+  lock_holder_display_name?: string | null;
   creator_id?: string | null;
   creator_display_name?: string | null;
   creator?: { id: string; display_name: string } | null;
@@ -113,7 +114,7 @@ export interface AuditEvent {
 export interface Layer {
   id: string; project_id: string; name: string; step: string | null; layer_property: string | null;
   align: string | null; align_side: string | null; description: string | null; metadata_json: Record<string, unknown>;
-  box_preset_id: string | null; pending_group: string | null; created_at?: string; updated_at?: string;
+  box_preset_id: string | null; pending_group: string | null; layer_master_id?: string | null; created_at?: string; updated_at?: string;
 }
 export interface LayerCreate {
   name: string; step?: string | null; layer_property?: string | null; align?: string | null; align_side?: string | null;
@@ -182,7 +183,7 @@ export interface KeyShape { id: string; key_shape: string; drawing_guide: string
 export type KeyShapeCreate = Omit<KeyShape, "id">;
 export type KeyShapeUpdate = Partial<KeyShapeCreate>;
 
-export interface LayerMaster { id: string; name: string; layer_number: string | null; mask_main_fld: string | null; mask_sl_fld: string | null; pr_wf: string | null; dev_wf: string | null; pr_type: string | null; light_source: string | null; pr_open_close: string | null; validation_rule: string | null; comment: string | null; priorities: Record<string, string | null> }
+export interface LayerMaster { id: string; name: string; layer_number: string | null; mask_main_fld: string | null; mask_sl_fld: string | null; pr_wf: string | null; dev_wf: string | null; pr_type: string | null; light_source: string | null; pr_open_close: string | null; group: string | null; validation_rule: string | null; comment: string | null; priorities: Record<string, string | null> }
 export type LayerMasterCreate = Omit<LayerMaster, "id">;
 export type LayerMasterUpdate = Partial<LayerMasterCreate>;
 
