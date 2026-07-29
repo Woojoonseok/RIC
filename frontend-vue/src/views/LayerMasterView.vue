@@ -20,10 +20,27 @@ const pasteOpen = ref(false);
 const pasteText = ref("");
 const busy = ref(false);
 const status = ref("준비");
+const persistedRows = new Map<string, string>();
+let writeQueue: Promise<void> = Promise.resolve();
 const columns = computed(() => layerMasterColumns(reference.keyLayoutTypes, reference.boxPresets));
 const rows = computed<Row[]>(() => layerMasterRows(reference.layerMasters, reference.keyLayoutTypes, reference.boxPresets));
 
-async function load() { await reference.loadAll() }
+function rowSignature(row: Row) {
+  return JSON.stringify(layerMasterPayload(row, reference.keyLayoutTypes));
+}
+function rememberRows() {
+  persistedRows.clear();
+  for (const row of rows.value) if (row.id) persistedRows.set(String(row.id), rowSignature(row));
+}
+function enqueueWrite<T>(job: () => Promise<T>) {
+  const run = writeQueue.then(job, job);
+  writeQueue = run.then(() => undefined, () => undefined);
+  return run;
+}
+async function load() {
+  await reference.loadAll();
+  rememberRows();
+}
 function selectRow(id: string, additive: boolean) {
   if (!additive) selected.value = [id];
   else selected.value = selected.value.includes(id)
@@ -36,12 +53,21 @@ async function commit(nextRows: Row[]) {
   busy.value = true;
   project.markSaving();
   let completed = 0;
-  const targets = nextRows.filter((row) => String(row.name || "").trim());
+  const targets = nextRows.filter((row) => String(row.name || "").trim() && (!row.id || persistedRows.get(String(row.id)) !== rowSignature(row)));
+  if (!targets.length) {
+    busy.value = false;
+    status.value = "변경사항 없음";
+    project.markSaved();
+    return;
+  }
   try {
     for (const row of targets) {
       const body = layerMasterPayload(row, reference.keyLayoutTypes);
-      if (row.id) await api.updateLayerMaster(String(row.id), body);
-      else await api.createLayerMaster(body);
+      const saved = row.id
+        ? await enqueueWrite(() => api.updateLayerMaster(String(row.id), body))
+        : await enqueueWrite(() => api.createLayerMaster(body));
+      reference.syncLayerMaster(saved);
+      persistedRows.set(saved.id, JSON.stringify(body));
       completed += 1;
     }
     status.value = `${completed}개 Layer 정보 저장 완료`;
@@ -49,11 +75,7 @@ async function commit(nextRows: Row[]) {
   } catch (error) {
     status.value = `${completed}/${targets.length}개 저장 후 실패: ${error instanceof Error ? error.message : String(error)}`;
     project.handleMutationError(error);
-  } finally {
-    await load();
-    busy.value = false;
-    app.status = status.value;
-  }
+  } finally { busy.value = false; app.status = status.value }
 }
 async function groupSelected() {
   if (!project.canEdit || selected.value.length < 2) return;
@@ -64,10 +86,12 @@ async function groupSelected() {
   let completed = 0;
   try {
     for (const id of selected.value) {
-      await api.updateLayerMaster(id, { group: label });
+      const saved = await enqueueWrite(() => api.updateLayerMaster(id, { group: label }));
+      reference.syncLayerMaster(saved);
+      persistedRows.set(saved.id, rowSignature(layerMasterRows([saved], reference.keyLayoutTypes, reference.boxPresets)[0]));
       completed += 1;
     }
-    await load();
+    grid.value?.refresh();
     status.value = `${completed}개 Layer를 ${label} 그룹으로 설정`;
     project.markSaved();
   } catch (error) {
@@ -83,10 +107,12 @@ async function removeSelected() {
   busy.value = true;
   project.markSaving();
   try {
-    for (const id of selected.value) await api.deleteLayerMaster(id);
-    status.value = `${selected.value.length}개 삭제 완료`;
+    const ids = [...selected.value];
+    for (const id of ids) await enqueueWrite(() => api.deleteLayerMaster(id));
+    reference.removeLayerMasters(ids);
+    ids.forEach((id) => persistedRows.delete(id));
+    status.value = `${ids.length}개 삭제 완료`;
     selected.value = [];
-    await load();
     project.markSaved();
   } catch (error) {
     status.value = error instanceof Error ? error.message : String(error);
@@ -120,7 +146,7 @@ onMounted(load);
 <template>
   <section class="page wide-page layer-master-page">
     <div class="page-title">
-      <div><p class="eyebrow">PROJECT LAYER DATA</p><h1>Layer 정보</h1><p>{{ project.currentProject?.name }} 프로젝트의 Layer 기준정보입니다. 변경 내용은 모든 Align Tree에 동기화됩니다.</p></div>
+      <div><p class="eyebrow">PROJECT LAYER DATA</p><h1>Layer 정보</h1><p>{{ project.currentProject?.name }} 프로젝트의 Layer 기준정보입니다. Editor에는 필요한 Layer만 직접 가져올 수 있습니다.</p></div>
       <span class="status-pill" :class="{ busy }">{{ !project.canEdit ? '보기 전용' : busy ? '처리 중…' : status }}</span>
     </div>
     <div class="layer-master-summary panel">
@@ -135,7 +161,7 @@ onMounted(load);
         <button :disabled="busy || !project.canEdit" @click="pasteOpen = true">Clipboard Paste</button>
       </div>
     </div>
-    <div class="sheet-help">셀 더블클릭 또는 F2로 편집 · Ctrl+C / Ctrl+V로 Excel 범위 복사·붙여넣기 · 행 번호를 클릭해 선택</div>
+    <div class="sheet-help">셀 선택 후 바로 입력 또는 Enter/F2로 편집 · Ctrl+C / Ctrl+V로 Excel 범위 복사·붙여넣기 · 행 번호를 클릭해 선택</div>
     <input ref="upload" hidden type="file" accept=".xlsx,.xls,.csv,.tsv" @change="uploadFile">
     <div class="panel data-panel">
       <SpreadsheetGrid

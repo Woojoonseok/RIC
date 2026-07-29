@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
@@ -11,7 +10,6 @@ from .. import models, schemas
 from ..database import get_db
 from ..services.audit import record_project_event
 from ..services.project_access import ProjectContext, get_project_context, require_project_mutation
-from ..services.layer_master_sync import ensure_project_layer_sync
 
 router = APIRouter(prefix="/api/projects/{project_id}/align-trees", tags=["align trees"])
 
@@ -41,29 +39,33 @@ def list_align_trees(
 def create_align_tree(
     project_id: uuid.UUID,
     payload: schemas.AlignTreeCreate,
-    context: ProjectContext = Depends(require_project_mutation),
+    _context: ProjectContext = Depends(require_project_mutation),
     db: Session = Depends(get_db),
 ) -> models.AlignTree:
-    name = payload.name.strip()
-    if not name:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Align Tree name is required")
     has_tree = (
         db.query(models.AlignTree.id)
         .filter(models.AlignTree.project_id == project_id, models.AlignTree.deleted_at.is_(None))
         .first()
         is not None
     )
+    if has_tree:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A project can have only one Editor",
+        )
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Editor name is required")
     tree = models.AlignTree(
         project_id=project_id,
         name=name,
         description=payload.description,
         created_by_actor_id=context.actor.id,
-        is_default=not has_tree,
+        is_default=True,
     )
     db.add(tree)
     try:
         db.flush()
-        ensure_project_layer_sync(db, project_id)
         record_project_event(
             db,
             project_id=project_id,
@@ -143,31 +145,8 @@ def delete_align_tree(
     context: ProjectContext = Depends(require_project_mutation),
     db: Session = Depends(get_db),
 ) -> None:
-    tree = _tree_or_404(db, project_id, align_tree_id)
-    active_trees = (
-        db.query(models.AlignTree)
-        .filter(models.AlignTree.project_id == project_id, models.AlignTree.deleted_at.is_(None))
-        .order_by(models.AlignTree.created_at, models.AlignTree.id)
-        .all()
+    _tree_or_404(db, project_id, align_tree_id)
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="A project's only Editor cannot be deleted",
     )
-    if len(active_trees) <= 1:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A project must keep at least one Align Tree")
-    snapshot = {"name": tree.name, "description": tree.description}
-    tree.deleted_at = datetime.now(timezone.utc)
-    tree.revision += 1
-    if tree.is_default:
-        replacement = next(row for row in active_trees if row.id != tree.id)
-        replacement.is_default = True
-        tree.is_default = False
-    record_project_event(
-        db,
-        project_id=project_id,
-        align_tree_id=tree.id,
-        actor=context.actor,
-        event_type="align_tree.deleted",
-        target_type="align_tree",
-        target_id=tree.id,
-        summary=f"Deleted Align Tree {tree.name}",
-        details={"values": snapshot},
-    )
-    db.commit()

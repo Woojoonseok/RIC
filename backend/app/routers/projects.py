@@ -14,12 +14,12 @@ from ..services.identity import get_current_actor
 from ..services.project_access import (
     ProjectContext,
     as_utc,
+    get_project_context,
     require_project_admin_mutation,
     require_project_mutation,
 )
 from ..services.project_catalog import project_public_read
-from ..services.project_reference import ensure_project_reference_data
-from ..services.layer_master_sync import ensure_project_layer_sync
+from ..services.project_reference import clone_project_reference_data, ensure_project_reference_data
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -75,7 +75,6 @@ def create_project(
     )
     db.add(tree)
     ensure_project_reference_data(db, project.id)
-    ensure_project_layer_sync(db, project.id)
     record_project_event(
         db,
         project_id=project.id,
@@ -89,6 +88,67 @@ def create_project(
     db.commit()
     db.refresh(project)
     return project_public_read(db, project, actor)
+
+
+@router.post(
+    "/{project_id}/branch",
+    response_model=schemas.ProjectPublicRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def branch_project(
+    project_id: uuid.UUID,
+    payload: schemas.ProjectBranchCreate,
+    context: ProjectContext = Depends(get_project_context),
+    db: Session = Depends(get_db),
+) -> schemas.ProjectPublicRead:
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Project name is required")
+    project = models.Project(
+        name=name,
+        description=payload.description,
+        owner_actor_id=context.actor.id,
+        created_by_actor_id=context.actor.id,
+        creator_display_name=context.actor.display_name,
+        is_public=True,
+        is_legacy_unclaimed=False,
+    )
+    db.add(project)
+    db.flush()
+    db.add(
+        models.ProjectMember(
+            project_id=project.id,
+            actor_id=context.actor.id,
+            role="owner",
+            added_by_actor_id=context.actor.id,
+        )
+    )
+    tree = models.AlignTree(
+        project_id=project.id,
+        name="Main",
+        description="Project Editor",
+        created_by_actor_id=context.actor.id,
+        is_default=True,
+    )
+    db.add(tree)
+    clone_project_reference_data(db, project_id, project.id)
+    record_project_event(
+        db,
+        project_id=project.id,
+        actor=context.actor,
+        event_type="project.branched",
+        target_type="project",
+        target_id=project.id,
+        summary=f"Created project {project.name} from {context.project.name}",
+        details={
+            "source_project_id": str(context.project.id),
+            "source_project_name": context.project.name,
+            "copied": ["reference", "layer_master"],
+        },
+    )
+    db.commit()
+    db.refresh(project)
+    return project_public_read(db, project, context.actor)
 
 
 @router.post("/{project_id}/claim-legacy", response_model=schemas.ProjectPublicRead)

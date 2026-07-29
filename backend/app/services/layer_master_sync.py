@@ -163,8 +163,59 @@ def ensure_project_layer_sync(db: Session, project_id: uuid.UUID) -> None:
     db.flush()
 
 
-def sync_layer_master(db: Session, master: models.LayerMaster) -> None:
-    ensure_project_layer_sync(db, master.project_id)
+def sync_layer_master(
+    db: Session,
+    master: models.LayerMaster,
+    *,
+    sync_group: bool = True,
+    create_missing: bool = True,
+) -> None:
+    if create_missing:
+        ordered_ids = [
+            row.id
+            for row in db.query(models.LayerMaster.id)
+            .filter(models.LayerMaster.project_id == master.project_id)
+            .order_by(models.LayerMaster.created_at, models.LayerMaster.id)
+            .all()
+        ]
+        try:
+            position = ordered_ids.index(master.id)
+        except ValueError:
+            position = len(ordered_ids)
+        trees = (
+            db.query(models.AlignTree)
+            .filter(models.AlignTree.project_id == master.project_id, models.AlignTree.deleted_at.is_(None))
+            .order_by(models.AlignTree.created_at, models.AlignTree.id)
+            .all()
+        )
+        synced_layers = [_ensure_tree_layer(db, master, tree, position) for tree in trees]
+    else:
+        synced_layers = (
+            db.query(models.Layer)
+            .join(models.AlignTree, models.AlignTree.id == models.Layer.align_tree_id)
+            .filter(
+                models.Layer.project_id == master.project_id,
+                models.Layer.layer_master_id == master.id,
+                models.AlignTree.deleted_at.is_(None),
+            )
+            .all()
+        )
+        for layer in synced_layers:
+            _apply_master_to_layer(db, master, layer)
+    db.flush()
+    if sync_group:
+        from ..routers.graph import _sync_layer_group
+
+        for layer in synced_layers:
+            if layer.align_tree_id is not None:
+                _sync_layer_group(
+                    db,
+                    master.project_id,
+                    layer.align_tree_id,
+                    layer.id,
+                    master.group,
+                )
+    db.flush()
 
 
 def delete_layer_master_layers(db: Session, master: models.LayerMaster) -> None:

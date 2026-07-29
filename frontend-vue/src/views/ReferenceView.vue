@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { api } from "../api/client";
 import { cloneJson } from "../domain/clone";
 import { useProjectStore } from "../stores/project";
@@ -72,9 +72,13 @@ const drafts = ref<Record<ReferenceResource, Row[]>>({
 const query = ref("");
 const status = ref("준비");
 const busy = ref(false);
+const pendingSaves = ref(0);
 const savingRows = new Set<Row>();
 const queuedRows = new Set<Row>();
-const saveTimers = new Map<Row, ReturnType<typeof setTimeout>>();
+const saveTimers = new Map<Row, { timer: ReturnType<typeof setTimeout>; resource: ReferenceResource }>();
+const persistedRows = new Map<string, string>();
+let writeQueue: Promise<void> = Promise.resolve();
+let saveFailed = false;
 const activeConfig = computed(() => resources[active.value]);
 const visibleRows = computed(() => {
   const needle = query.value.trim().toLowerCase();
@@ -91,6 +95,17 @@ function syncDrafts() {
     "relation-styles": cloneJson(reference.relationStyles) as unknown as Row[],
     "box-presets": cloneJson(reference.boxPresets) as unknown as Row[],
   };
+  persistedRows.clear();
+  for (const resource of Object.keys(resources) as ReferenceResource[]) {
+    for (const row of drafts.value[resource]) {
+      if (row.id) persistedRows.set(row.id, JSON.stringify(normalize(row, resource)));
+    }
+  }
+}
+function enqueueWrite<T>(job: () => Promise<T>) {
+  const run = writeQueue.then(job, job);
+  writeQueue = run.then(() => undefined, () => undefined);
+  return run;
 }
 async function load() {
   busy.value = true;
@@ -118,9 +133,11 @@ async function add() {
   status.value = "새 항목 추가 중…";
   project.markSaving();
   try {
-    const saved = await api.createReference(resource, normalize(row, resource) as never);
-    drafts.value[resource].unshift(cloneJson(saved) as unknown as Row);
-    await reference.loadAll();
+    const saved = await enqueueWrite(() => api.createReference(resource, normalize(row, resource) as never));
+    const savedRow = cloneJson(saved) as unknown as Row;
+    drafts.value[resource].unshift(savedRow);
+    reference.syncReferenceRow(resource, saved as never);
+    if (savedRow.id) persistedRows.set(savedRow.id, JSON.stringify(normalize(savedRow, resource)));
     status.value = "새 항목이 추가되었습니다";
     project.markSaved();
   } catch (error) { status.value = error instanceof Error ? error.message : String(error); project.handleMutationError(error) }
@@ -137,35 +154,55 @@ function normalize(row: Row, resource: ReferenceResource) {
 async function save(row: Row, resource: ReferenceResource) {
   if (!row.id || !project.canEdit) return;
   if (savingRows.has(row)) { queuedRows.add(row); return }
+  const data = normalize(row, resource);
+  const signature = JSON.stringify(data);
+  if (persistedRows.get(row.id) === signature) return;
   savingRows.add(row);
+  if (!pendingSaves.value) saveFailed = false;
+  pendingSaves.value += 1;
   status.value = "변경사항 저장 중…";
   project.markSaving();
   try {
-    const data = normalize(row, resource);
-    const saved = await api.updateReference(resource, row.id, data as never);
-    Object.assign(row, cloneJson(saved));
-    await reference.loadAll();
+    const saved = await enqueueWrite(() => api.updateReference(resource, row.id!, data as never));
+    const savedRow = cloneJson(saved) as unknown as Row;
+    persistedRows.set(row.id, JSON.stringify(normalize(savedRow, resource)));
+    if (JSON.stringify(normalize(row, resource)) === signature) Object.assign(row, savedRow);
+    if (resource === "box-presets" && savedRow.is_default) {
+      for (const item of drafts.value[resource]) {
+        if (item.id && item.id !== savedRow.id) {
+          item.is_default = false;
+          persistedRows.set(item.id, JSON.stringify(normalize(item, resource)));
+        }
+      }
+    }
+    reference.syncReferenceRow(resource, saved as never);
     status.value = "모든 변경사항 저장됨";
-    project.markSaved();
-  } catch (error) { status.value = error instanceof Error ? error.message : String(error); project.handleMutationError(error) }
+  } catch (error) {
+    saveFailed = true;
+    status.value = error instanceof Error ? error.message : String(error);
+    project.handleMutationError(error);
+  }
   finally {
     savingRows.delete(row);
+    pendingSaves.value = Math.max(0, pendingSaves.value - 1);
+    if (!pendingSaves.value && !saveFailed) project.markSaved();
     if (queuedRows.delete(row)) void save(row, resource);
   }
 }
 function scheduleSave(row: Row) {
   if (!project.canEdit) return;
   const resource = active.value;
-  const timer = saveTimers.get(row);
-  if (timer) clearTimeout(timer);
+  const pending = saveTimers.get(row);
+  if (pending) clearTimeout(pending.timer);
   status.value = "입력 중…";
-  saveTimers.set(row, setTimeout(() => { saveTimers.delete(row); void save(row, resource) }, 500));
+  const timer = setTimeout(() => { saveTimers.delete(row); void save(row, resource) }, 350);
+  saveTimers.set(row, { timer, resource });
 }
 function saveNow(row: Row) {
   if (!project.canEdit) return;
-  const resource = active.value;
-  const timer = saveTimers.get(row);
-  if (timer) clearTimeout(timer);
+  const pending = saveTimers.get(row);
+  const resource = pending?.resource ?? active.value;
+  if (pending) clearTimeout(pending.timer);
   saveTimers.delete(row);
   void save(row, resource);
 }
@@ -180,25 +217,37 @@ function dashFor(value: unknown) { return linePatterns.find((option) => option.v
 async function remove(row: Row) {
   if (!row.id || !project.canEdit) return;
   if (!confirm("이 기준정보를 삭제할까요?")) return;
+  const resource = active.value;
   busy.value = true;
   project.markSaving();
   try {
-    await api.deleteReference(active.value, row.id);
-    drafts.value[active.value] = drafts.value[active.value].filter((item) => item !== row);
-    await reference.loadAll();
+    const pending = saveTimers.get(row);
+    if (pending) clearTimeout(pending.timer);
+    saveTimers.delete(row);
+    await enqueueWrite(() => api.deleteReference(resource, row.id!));
+    drafts.value[resource] = drafts.value[resource].filter((item) => item !== row);
+    reference.removeReferenceRow(resource, row.id);
+    persistedRows.delete(row.id);
     status.value = "삭제 완료";
     project.markSaved();
   } catch (error) { status.value = error instanceof Error ? error.message : String(error); project.handleMutationError(error) }
   finally { busy.value = false }
 }
 onMounted(load);
+onBeforeUnmount(() => {
+  for (const [row, pending] of saveTimers) {
+    clearTimeout(pending.timer);
+    void save(row, pending.resource);
+  }
+  saveTimers.clear();
+});
 </script>
 
 <template>
   <section class="page wide-page reference-page" :class="{ 'is-read-only': !project.canEdit }">
     <div class="page-title">
       <div><p class="eyebrow">PROJECT REFERENCE DATA</p><h1>기준정보</h1><p>{{ project.currentProject?.name }} 프로젝트의 공정 기준과 Editor 스타일입니다.</p></div>
-      <span class="status-pill" :class="{ busy: busy || savingRows.size }"><i></i>{{ !project.canEdit ? '보기 전용' : busy ? '처리 중…' : status }}</span>
+      <span class="status-pill" :class="{ busy: busy || pendingSaves }"><i></i>{{ !project.canEdit ? '보기 전용' : busy ? '처리 중…' : status }}</span>
     </div>
     <nav class="resource-tabs" aria-label="기준정보 종류">
       <button v-for="(config, key) in resources" :key="key" :class="{ active: active === key }" @click="active = key; query = ''">
@@ -208,7 +257,7 @@ onMounted(load);
     <div class="panel data-panel reference-workbench">
       <div class="panel-heading reference-heading">
         <div><h2>{{ activeConfig.label }}</h2><small>{{ activeConfig.description }} · 변경사항은 자동으로 저장됩니다.</small></div>
-        <div class="button-strip"><input v-model="query" class="reference-search" placeholder="항목 검색…"><button class="secondary-icon" :disabled="busy" title="다시 불러오기" @click="load">↻</button><button class="primary" :disabled="busy || !project.canEdit" @click="add">＋ 새 항목</button></div>
+        <div class="button-strip"><input v-model="query" class="reference-search" placeholder="항목 검색…"><button class="secondary-icon" :disabled="busy || pendingSaves > 0" title="다시 불러오기" @click="load">↻</button><button class="primary" :disabled="busy || !project.canEdit" @click="add">＋ 새 항목</button></div>
       </div>
       <div class="reference-table">
         <div class="reference-row reference-head" :style="{ gridTemplateColumns: gridColumns }"><span v-for="field in activeConfig.fields" :key="field.key">{{ field.label }}</span><span>작업</span></div>

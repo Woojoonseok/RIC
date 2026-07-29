@@ -1,7 +1,10 @@
 import { ref } from "vue";
 import { defineStore } from "pinia";
 import { api } from "../api/client";
-import type { BoxPreset, Graph, KeyDrawingType, KeyLayoutType, KeyShape, LayerMaster, RelationStyle } from "../types";
+import type {
+  BoxPreset, Graph, KeyDrawingType, KeyLayoutType, KeyShape, LayerMaster, ReferenceReadMap,
+  ReferenceResource, RelationStyle,
+} from "../types";
 
 export const useReferenceStore = defineStore("reference", () => {
   const keyLayoutTypes = ref<KeyLayoutType[]>([]);
@@ -12,6 +15,49 @@ export const useReferenceStore = defineStore("reference", () => {
   const layerMasters = ref<LayerMaster[]>([]);
   const selectedRelationStyleId = ref("");
   const selectedBoxPresetId = ref("");
+
+  function replaceById<T extends { id: string }>(rows: T[], row: T) {
+    const index = rows.findIndex((item) => item.id === row.id);
+    return index < 0 ? [row, ...rows] : rows.map((item, itemIndex) => itemIndex === index ? row : item);
+  }
+
+  function syncReferenceRow<K extends ReferenceResource>(resource: K, row: ReferenceReadMap[K]) {
+    if (resource === "key-layout-types") {
+      keyLayoutTypes.value = replaceById(keyLayoutTypes.value, row as KeyLayoutType);
+    } else if (resource === "key-drawing-types") {
+      keyDrawingTypes.value = replaceById(keyDrawingTypes.value, row as KeyDrawingType);
+    } else if (resource === "key-shapes") {
+      keyShapes.value = replaceById(keyShapes.value, row as KeyShape);
+    } else if (resource === "relation-styles") {
+      relationStyles.value = replaceById(relationStyles.value, row as RelationStyle);
+    } else {
+      const preset = row as BoxPreset;
+      boxPresets.value = replaceById(
+        preset.is_default ? boxPresets.value.map((item) => ({ ...item, is_default: item.id === preset.id })) : boxPresets.value,
+        preset,
+      );
+    }
+  }
+
+  function removeReferenceRow(resource: ReferenceResource, id: string) {
+    if (resource === "key-layout-types") keyLayoutTypes.value = keyLayoutTypes.value.filter((row) => row.id !== id);
+    else if (resource === "key-drawing-types") keyDrawingTypes.value = keyDrawingTypes.value.filter((row) => row.id !== id);
+    else if (resource === "key-shapes") keyShapes.value = keyShapes.value.filter((row) => row.id !== id);
+    else if (resource === "relation-styles") relationStyles.value = relationStyles.value.filter((row) => row.id !== id);
+    else boxPresets.value = boxPresets.value.filter((row) => row.id !== id);
+  }
+
+  function syncLayerMaster(row: LayerMaster) {
+    const index = layerMasters.value.findIndex((item) => item.id === row.id);
+    layerMasters.value = index < 0
+      ? [...layerMasters.value, row]
+      : layerMasters.value.map((item, itemIndex) => itemIndex === index ? row : item);
+  }
+
+  function removeLayerMasters(ids: string[]) {
+    const removed = new Set(ids);
+    layerMasters.value = layerMasters.value.filter((row) => !removed.has(row.id));
+  }
 
   function syncFromGraph(graph: Graph) {
     relationStyles.value = graph.relation_styles;
@@ -40,8 +86,13 @@ export const useReferenceStore = defineStore("reference", () => {
     }
   }
 
+  async function loadLayerMasters() {
+    layerMasters.value = await api.layerMasters();
+  }
+
   return {
     keyLayoutTypes, keyDrawingTypes, keyShapes, relationStyles, boxPresets, layerMasters,
     selectedRelationStyleId, selectedBoxPresetId, syncFromGraph, loadAll,
+    syncReferenceRow, removeReferenceRow, syncLayerMaster, removeLayerMasters, loadLayerMasters,
   };
 });

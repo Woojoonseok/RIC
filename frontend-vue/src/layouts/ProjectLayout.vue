@@ -54,7 +54,7 @@ const projectNav = [
   { name: "project-home", label: "Overview", icon: "OV" },
   { name: "project-reference", label: "기준정보", icon: "RF" },
   { name: "project-layers", label: "Layer 정보", icon: "LY" },
-  { name: "align-tree-list", label: "Align Trees", icon: "AT" },
+  { name: "align-tree-list", label: "Editor", icon: "ED" },
 ] as const;
 
 const treeNav = [
@@ -155,8 +155,8 @@ onBeforeRouteLeave(async (to) => {
 
         <section v-if="treeId" class="sidebar-nav-group tree-nav-group">
           <div class="sidebar-group-heading">
-            <p class="sidebar-group-label">CURRENT ALIGN TREE</p>
-            <RouterLink :to="{ name: 'align-tree-list', params: { projectId } }">목록</RouterLink>
+            <p class="sidebar-group-label">PROJECT EDITOR</p>
+            <RouterLink :to="{ name: 'align-tree-list', params: { projectId } }">정보</RouterLink>
           </div>
           <div class="current-tree-card">
             <span class="tree-status-dot" :class="{ readonly: project.readOnly }"/>

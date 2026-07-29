@@ -14,7 +14,11 @@ const editing = ref(false);
 const draggingCells = ref(false);
 const lastSelectedRow = ref<number | null>(null);
 const widths = ref<Record<string, number>>({});
-watch(() => props.rows, (rows) => { draft.value = cloneJson(rows) }, { deep: true });
+const structureKey = computed(() => JSON.stringify({
+  columns: props.columns.map((column) => column.key),
+  rows: props.rows.map((row, index) => String(row[props.rowKey ?? "id"] ?? `draft-${index}`)),
+}));
+watch(structureKey, () => { draft.value = cloneJson(props.rows) });
 
 const selected = computed(() => ({
   r1: Math.min(active.value.row, anchor.value.row), r2: Math.max(active.value.row, anchor.value.row),
@@ -93,7 +97,15 @@ function onKey(event: KeyboardEvent) {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "x") { void copy(true); event.preventDefault(); return }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v") { void paste(); event.preventDefault(); return }
   if (event.key === "Delete") { clearSelection(); event.preventDefault(); return }
-  if (event.key === "F2") { editing.value = true; event.preventDefault(); return }
+  if (event.key === "F2" || event.key === "Enter") {
+    const column = props.columns[active.value.col];
+    if (column && !column.readonly && !column.options) {
+      editing.value = true;
+      void nextTick(focusEditor);
+      event.preventDefault();
+      return;
+    }
+  }
   if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey && !props.columns[active.value.col]?.readonly) {
     const column = props.columns[active.value.col];
     if (!column.options) draft.value[active.value.row][column.key] = event.key;
@@ -112,7 +124,10 @@ function autoFit(column: GridColumn) {
   const longest = Math.max(column.label.length, ...draft.value.map((row) => String(row[column.key] ?? "").length));
   widths.value[column.key] = Math.min(360, Math.max(72, longest * 9 + 28));
 }
-function editCell(row: number, col: number) { if (props.readonly) return; activate(row, col); editing.value = true; void nextTick(() => (document.querySelector(".sheet-cell.editing input, .sheet-cell.editing select") as HTMLInputElement | HTMLSelectElement | null)?.focus()) }
+function focusEditor() {
+  (document.querySelector(".sheet-cell.editing input, .sheet-cell.editing select") as HTMLInputElement | HTMLSelectElement | null)?.focus();
+}
+function editCell(row: number, col: number) { if (props.readonly) return; activate(row, col); editing.value = true; void nextTick(focusEditor) }
 function commit() { emit("commit", cloneJson(draft.value)) }
 function commitRow(row: number) { if (props.autoCommit && draft.value[row]) emit("commit", [cloneJson(draft.value[row])]) }
 function finishEditing(row: number) { if (!editing.value) return; editing.value = false; commitRow(row) }
@@ -122,9 +137,12 @@ function addDraftRow() {
   draft.value.push(Object.fromEntries(props.columns.map((column) => [column.key, column.defaultValue ?? ""])));
   active.value = { row: draft.value.length - 1, col: 0 };
   anchor.value = { ...active.value };
+  editing.value = true;
+  void nextTick(focusEditor);
   emit("addRow");
 }
-defineExpose({ addDraftRow });
+function refresh() { draft.value = cloneJson(props.rows) }
+defineExpose({ addDraftRow, refresh });
 onBeforeUnmount(stopCellDrag);
 </script>
 
