@@ -329,8 +329,11 @@ h1, h2, strong, .brand { font-family: "Manrope", sans-serif; }
 .relation-picker-panel .sheet-actions { margin-top: 22px; }
 .layer-select-search { width: 100%; margin: 14px 0 10px; }
 .layer-select-list { display: grid; gap: 6px; }
-.layer-select-option { display: flex; justify-content: space-between; width: 100%; text-align: left; }
+.layer-select-option { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; border: 1px solid #d0d5dd; border-radius: 8px; cursor: pointer; text-align: left; }
+.layer-select-option.selected { border-color: #2563eb; background: #eff6ff; }
+.layer-select-option span { display: flex; justify-content: space-between; gap: 16px; width: 100%; }
 .layer-select-option small, .layer-select-empty { color: #667085; }
+.layer-select-actions { display: flex; align-items: center; justify-content: space-between; margin-top: 14px; padding-top: 12px; border-top: 1px solid #e4e7ec; }
 .add-layer-split { position: relative; display: flex; }
 .add-layer-split > button:first-child { border-radius: 8px 0 0 8px; }
 .add-layer-caret { border-left: 0; border-radius: 0 8px 8px 0; padding-right: 8px; padding-left: 8px; }

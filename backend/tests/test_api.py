@@ -223,7 +223,6 @@ def test_pending_group_merge_and_split(client: TestClient) -> None:
     first = create_layer(client, project_id, "A")
     second = create_layer(client, project_id, "B", 300)
     third = create_layer(client, project_id, "C", 600)
-    second_tree = create_tree(client, project_id, "Synced Merge")
 
     pending = client.patch(f"{graph_base(client, project_id)}/layers/{first}/group", json={"group": "ETCH"})
     assert pending.status_code == 200, pending.text
@@ -259,8 +258,6 @@ def test_pending_group_merge_and_split(client: TestClient) -> None:
     assert after_merge == before_merge
     reloaded = client.get(graph_base(client, project_id)).json()
     assert len([row for row in reloaded["relations"] if row["same_group"] == "ETCH"]) == 2
-    second_tree_graph = client.get(graph_base(client, project_id, second_tree)).json()
-    assert len([row for row in second_tree_graph["relations"] if row["same_group"] == "ETCH"]) == 2
     assert {row["group"] for row in client.get(f"/api/projects/{project_id}/layer-master").json()} == {
         "ETCH"
     }
@@ -268,10 +265,6 @@ def test_pending_group_merge_and_split(client: TestClient) -> None:
     assert split.status_code == 200, split.text
     assert not any(row["same_group"] for row in split.json()["relations"])
     assert len(split.json()["layers"]) == 3
-    assert not any(
-        row["same_group"]
-        for row in client.get(graph_base(client, project_id, second_tree)).json()["relations"]
-    )
     assert {row["group"] for row in client.get(f"/api/projects/{project_id}/layer-master").json()} == {
         None
     }
@@ -313,104 +306,19 @@ def test_merge_rejects_layers_with_an_existing_relation(client: TestClient) -> N
     assert "Relation" in group_merge.text
 
 
-def test_align_tree_graphs_are_isolated_and_mixed_ids_are_rejected(client: TestClient) -> None:
+def test_project_has_one_editor_and_mixed_project_ids_are_rejected(client: TestClient) -> None:
     project_id = create_project(client)
-    first_tree = default_tree_id(client, project_id)
-    second_tree = create_tree(client, project_id, "Alternative")
-
-    first_layer = create_layer(client, project_id, "Same Name", tree_id=first_tree)
-    first_target = create_layer(client, project_id, "First Target", x=300, tree_id=first_tree)
-    first_text = client.post(
-        f"{graph_base(client, project_id, first_tree)}/text-boxes",
-        json={"text": "First tree only"},
+    editor_id = default_tree_id(client, project_id)
+    duplicate = client.post(
+        f"/api/projects/{project_id}/align-trees",
+        json={"name": "Alternative"},
     )
-    assert first_text.status_code == 201, first_text.text
-
-    first_graph = client.get(graph_base(client, project_id, first_tree))
-    second_graph = client.get(graph_base(client, project_id, second_tree))
-    assert first_graph.status_code == 200, first_graph.text
-    assert second_graph.status_code == 200, second_graph.text
-    second_layers_by_name = {row["name"]: row for row in second_graph.json()["layers"]}
-    second_layer = second_layers_by_name["Same Name"]["id"]
-    second_target = second_layers_by_name["First Target"]["id"]
-    assert {row["id"] for row in first_graph.json()["layers"]} == {first_layer, first_target}
-    assert {row["id"] for row in second_graph.json()["layers"]} == {second_layer, second_target}
-    assert {row["name"] for row in first_graph.json()["layers"]} == {"Same Name", "First Target"}
-    assert {row["name"] for row in second_graph.json()["layers"]} == {"Same Name", "First Target"}
-    first_master_ids = {row["name"]: row["layer_master_id"] for row in first_graph.json()["layers"]}
-    second_master_ids = {row["name"]: row["layer_master_id"] for row in second_graph.json()["layers"]}
-    assert first_master_ids == second_master_ids
-    assert [row["id"] for row in first_graph.json()["text_boxes"]] == [first_text.json()["id"]]
-    assert second_graph.json()["text_boxes"] == []
-    assert all(row["align_tree_id"] == first_tree for row in first_graph.json()["layers"])
-    assert all(row["align_tree_id"] == second_tree for row in second_graph.json()["layers"])
-
-    wrong_tree_update = client.put(
-        f"{graph_base(client, project_id, second_tree)}/layers/{first_layer}",
-        json={"name": "Must not move"},
-    )
-    assert wrong_tree_update.status_code == 404, wrong_tree_update.text
-    assert client.patch(
-        f"{graph_base(client, project_id, second_tree)}/layers/{first_layer}/layout",
-        json={"x": 999},
-    ).status_code == 404
-    assert client.patch(
-        f"{graph_base(client, project_id, second_tree)}/layers/{first_layer}/style",
-        json={"fill_color": "#000000"},
-    ).status_code == 404
-    assert client.put(
-        f"{graph_base(client, project_id, second_tree)}/text-boxes/{first_text.json()['id']}",
-        json={"text": "Must not move"},
-    ).status_code == 404
-    assert client.patch(
-        f"{graph_base(client, project_id, second_tree)}/batch",
-        json={"text_boxes": [{"id": first_text.json()["id"], "text": "Must not move"}]},
-    ).status_code == 404
-    assert client.get(
-        f"{graph_base(client, project_id, second_tree)}/layers/{first_layer}/delete-preview"
-    ).status_code == 404
-
-    cross_tree_relation = client.post(
-        f"{graph_base(client, project_id, second_tree)}/relations",
-        json={"parent_layer_id": second_layer, "child_layer_id": first_target},
-    )
-    assert cross_tree_relation.status_code == 404, cross_tree_relation.text
-    assert client.get(graph_base(client, project_id, second_tree)).json()["relations"] == []
-
-    base_relation = client.post(
-        f"{graph_base(client, project_id, first_tree)}/relations",
-        json={"parent_layer_id": first_layer, "child_layer_id": first_target},
-    )
-    assert base_relation.status_code == 201, base_relation.text
-    assert client.put(
-        f"{graph_base(client, project_id, second_tree)}/relations/{base_relation.json()['id']}",
-        json={"instance": "Must not move"},
-    ).status_code == 404
-    assert client.delete(
-        f"{graph_base(client, project_id, second_tree)}/relations/{base_relation.json()['id']}"
-    ).status_code == 404
-    cross_tree_attachment = client.post(
-        f"{graph_base(client, project_id, second_tree)}/relations",
-        json={
-            "parent_layer_id": second_layer,
-            "child_layer_id": None,
-            "attached_relation_id": base_relation.json()["id"],
-        },
-    )
-    assert cross_tree_attachment.status_code == 404, cross_tree_attachment.text
-
-    foreign_restore = client.patch(
-        f"{graph_base(client, project_id, second_tree)}/restore",
-        json=client.get(graph_base(client, project_id, first_tree)).json(),
-    )
-    assert foreign_restore.status_code == 404, foreign_restore.text
-    unchanged_second = client.get(graph_base(client, project_id, second_tree)).json()
-    assert {row["id"] for row in unchanged_second["layers"]} == {second_layer, second_target}
-    assert unchanged_second["relations"] == []
-    assert unchanged_second["text_boxes"] == []
+    assert duplicate.status_code == 409, duplicate.text
+    assert len(client.get(f"/api/projects/{project_id}/align-trees").json()) == 1
+    assert client.delete(f"/api/projects/{project_id}/align-trees/{editor_id}").status_code == 409
 
     other_project_id = create_project(client)
-    mixed_project_tree = client.get(graph_base(client, other_project_id, first_tree))
+    mixed_project_tree = client.get(graph_base(client, other_project_id, editor_id))
     assert mixed_project_tree.status_code == 404, mixed_project_tree.text
 
 
@@ -464,7 +372,6 @@ def test_graph_audit_is_atomic_for_success_and_rollback(client: TestClient) -> N
 def test_reference_and_layer_master_priorities(client: TestClient) -> None:
     project_id = create_project(client)
     first_tree = default_tree_id(client, project_id)
-    second_tree = create_tree(client, project_id, "Synced")
     reference_base = f"/api/projects/{project_id}/reference"
     layer_master_base = f"/api/projects/{project_id}/layer-master"
 
@@ -489,23 +396,33 @@ def test_reference_and_layer_master_priorities(client: TestClient) -> None:
         json={"name": "M2", "layer_number": "20", "group": "Front"},
     )
     assert second_master.status_code == 201, second_master.text
-    for tree_id in (first_tree, second_tree):
-        synced_layers = client.get(graph_base(client, project_id, tree_id)).json()["layers"]
-        assert [(row["name"], row["step"], row["layer_master_id"]) for row in synced_layers] == [
-            ("M1", "10", master.json()["id"]),
-            ("M2", "20", second_master.json()["id"]),
-        ]
-        relations = client.get(graph_base(client, project_id, tree_id)).json()["relations"]
-        assert [row["same_group"] for row in relations] == ["Front"]
+    assert client.get(graph_base(client, project_id, first_tree)).json()["layers"] == []
+    for row in (master.json(), second_master.json()):
+        imported = client.post(
+            f"{graph_base(client, project_id, first_tree)}/layers",
+            json={"name": row["name"], "layer_master_id": row["id"]},
+        )
+        assert imported.status_code == 201, imported.text
+    duplicate = client.post(
+        f"{graph_base(client, project_id, first_tree)}/layers",
+        json={"name": master.json()["name"], "layer_master_id": master.json()["id"]},
+    )
+    assert duplicate.status_code == 409, duplicate.text
+    synced_layers = client.get(graph_base(client, project_id, first_tree)).json()["layers"]
+    assert [(row["name"], row["step"], row["layer_master_id"]) for row in synced_layers] == [
+        ("M1", "10", master.json()["id"]),
+        ("M2", "20", second_master.json()["id"]),
+    ]
+    relations = client.get(graph_base(client, project_id, first_tree)).json()["relations"]
+    assert [row["same_group"] for row in relations] == ["Front"]
     updated = client.put(
         f"{layer_master_base}/{master.json()['id']}",
         json={"name": "M1 updated", "layer_number": "11", "priorities": {layout_id: "2"}},
     )
     assert updated.status_code == 200, updated.text
     assert updated.json()["priorities"][layout_id] == "2"
-    for tree_id in (first_tree, second_tree):
-        synced = client.get(graph_base(client, project_id, tree_id)).json()["layers"][0]
-        assert (synced["name"], synced["step"]) == ("M1 updated", "11")
+    synced = client.get(graph_base(client, project_id, first_tree)).json()["layers"][0]
+    assert (synced["name"], synced["step"]) == ("M1 updated", "11")
     deleted = client.delete(f"{reference_base}/key-layout-types/{layout_id}")
     assert deleted.status_code == 204
     assert client.get(layer_master_base).json()[0]["priorities"] == {}
@@ -522,23 +439,91 @@ def test_reference_and_layer_master_priorities(client: TestClient) -> None:
     masters = client.get(layer_master_base).json()
     first_master = next(row for row in masters if row["id"] == master.json()["id"])
     assert (first_master["name"], first_master["layer_number"]) == ("M1 from Align", None)
-    for tree_id in (first_tree, second_tree):
-        synced = client.get(graph_base(client, project_id, tree_id)).json()["layers"][0]
-        assert (synced["name"], synced["step"]) == ("M1 from Align", None)
+    synced = client.get(graph_base(client, project_id, first_tree)).json()["layers"][0]
+    assert (synced["name"], synced["step"]) == ("M1 from Align", None)
 
     graph_deleted = client.delete(
         f"{graph_base(client, project_id, first_tree)}/layers/{first_layer_id}"
     )
     assert graph_deleted.status_code == 204, graph_deleted.text
-    assert [row["name"] for row in client.get(layer_master_base).json()] == ["M2"]
-    for tree_id in (first_tree, second_tree):
-        graph = client.get(graph_base(client, project_id, tree_id)).json()
-        assert [row["name"] for row in graph["layers"]] == ["M2"]
-        assert graph["relations"] == []
-        assert graph["layers"][0]["pending_group"] == "Front"
+    assert {row["name"] for row in client.get(layer_master_base).json()} == {"M1 from Align", "M2"}
+    first_after_delete = client.get(graph_base(client, project_id, first_tree)).json()
+    assert [row["name"] for row in first_after_delete["layers"]] == ["M2"]
+    reimported = client.post(
+        f"{graph_base(client, project_id, first_tree)}/layers",
+        json={"name": "ignored", "layer_master_id": master.json()["id"]},
+    )
+    assert reimported.status_code == 201, reimported.text
+    assert reimported.json()["name"] == "M1 from Align"
 
 
-def test_graph_load_repairs_layer_masters_missing_from_editor(client: TestClient) -> None:
+def test_project_branch_copies_reference_and_layer_master_without_editor_graph(client: TestClient) -> None:
+    source_project_id = create_project(client)
+    source_tree_id = default_tree_id(client, source_project_id)
+    reference_base = f"/api/projects/{source_project_id}/reference"
+    layout = client.post(
+        f"{reference_base}/key-layout-types",
+        json={"name": "Branch Layout", "scribe_lane_rows": 3, "sort_order": 7},
+    )
+    assert layout.status_code == 201, layout.text
+    layout_id = layout.json()["id"]
+    assert client.post(
+        f"{reference_base}/key-drawing-types",
+        json={"symbol": "BD", "key_shape": "Branch Shape", "sort_order": 2},
+    ).status_code == 201
+    assert client.post(
+        f"{reference_base}/key-shapes",
+        json={"key_shape": "Branch Shape", "drawing_guide": "Guide", "sort_order": 2},
+    ).status_code == 201
+    master = client.post(
+        f"/api/projects/{source_project_id}/layer-master",
+        json={
+            "name": "Branch Layer",
+            "layer_number": "77",
+            "group": "BRANCH",
+            "priorities": {layout_id: "9"},
+        },
+    )
+    assert master.status_code == 201, master.text
+    imported = client.post(
+        f"{graph_base(client, source_project_id, source_tree_id)}/layers",
+        json={"name": "ignored", "layer_master_id": master.json()["id"]},
+    )
+    assert imported.status_code == 201, imported.text
+
+    branched = client.post(
+        f"/api/projects/{source_project_id}/branch",
+        json={"name": "Integration Branch", "description": "Copied settings"},
+    )
+    assert branched.status_code == 201, branched.text
+    target_project_id = branched.json()["id"]
+    target_trees = client.get(f"/api/projects/{target_project_id}/align-trees").json()
+    assert len(target_trees) == 1
+    target_graph = client.get(graph_base(client, target_project_id, target_trees[0]["id"])).json()
+    assert target_graph["layers"] == []
+    assert target_graph["relations"] == []
+
+    target_layouts = client.get(
+        f"/api/projects/{target_project_id}/reference/key-layout-types"
+    ).json()
+    target_layout = next(row for row in target_layouts if row["name"] == "Branch Layout")
+    assert target_layout["id"] != layout_id
+    target_masters = client.get(f"/api/projects/{target_project_id}/layer-master").json()
+    target_master = next(row for row in target_masters if row["name"] == "Branch Layer")
+    assert target_master["id"] != master.json()["id"]
+    assert target_master["group"] == "BRANCH"
+    assert target_master["priorities"] == {target_layout["id"]: "9"}
+    assert any(
+        row["key_shape"] == "Branch Shape"
+        for row in client.get(f"/api/projects/{target_project_id}/reference/key-shapes").json()
+    )
+    assert any(
+        row["symbol"] == "BD"
+        for row in client.get(f"/api/projects/{target_project_id}/reference/key-drawing-types").json()
+    )
+
+
+def test_graph_load_keeps_layer_master_out_of_editor_until_imported(client: TestClient) -> None:
     project_id = create_project(client)
     tree_id = default_tree_id(client, project_id)
     with client.app.state.session_factory() as db:
@@ -559,13 +544,20 @@ def test_graph_load_repairs_layer_masters_missing_from_editor(client: TestClient
 
     graph_response = client.get(graph_base(client, project_id, tree_id))
     assert graph_response.status_code == 200, graph_response.text
-    assert [
-        (row["name"], row["step"], row["layer_master_id"])
-        for row in graph_response.json()["layers"]
-    ] == [("Legacy Layer Name", "42", master_id)]
+    assert graph_response.json()["layers"] == []
 
     reloaded = client.get(graph_base(client, project_id, tree_id)).json()
-    assert len(reloaded["layers"]) == 1
+    assert reloaded["layers"] == []
+    imported = client.post(
+        f"{graph_base(client, project_id, tree_id)}/layers",
+        json={"name": "ignored", "layer_master_id": master_id},
+    )
+    assert imported.status_code == 201, imported.text
+    assert (
+        imported.json()["name"],
+        imported.json()["step"],
+        imported.json()["layer_master_id"],
+    ) == ("Legacy Layer Name", "42", master_id)
 
 
 def test_revision_rejects_a_stale_mutation(client: TestClient) -> None:

@@ -113,7 +113,6 @@ def create_layer_master(
         _apply_priorities(db, project_id, row, payload.priorities)
         db.flush()
         db.expire(row, ["priorities"])
-        sync_layer_master(db, row)
         record_project_event(
             db,
             project_id=project_id,
@@ -150,7 +149,17 @@ def update_layer_master(
     try:
         db.flush()
         db.expire(row, ["priorities"])
-        sync_layer_master(db, row)
+        after = _snapshot(row)
+        if before == after:
+            db.commit()
+            db.refresh(row)
+            return _serialize(row)
+        sync_layer_master(
+            db,
+            row,
+            sync_group=before.get("group") != after.get("group"),
+            create_missing=False,
+        )
         record_project_event(
             db,
             project_id=project_id,
@@ -159,7 +168,7 @@ def update_layer_master(
             target_type="layer_master",
             target_id=row.id,
             summary=f"Updated Layer Master {row.name}",
-            details={"before": before, "after": _snapshot(row)},
+            details={"before": before, "after": after},
         )
         db.commit()
     except IntegrityError as exc:

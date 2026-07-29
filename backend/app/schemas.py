@@ -16,6 +16,10 @@ class ProjectCreate(BaseModel):
     description: str | None = None
 
 
+class ProjectBranchCreate(ProjectCreate):
+    pass
+
+
 class ProjectUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=160)
     description: str | None = None
@@ -189,6 +193,7 @@ class LayerBase(BaseModel):
 
 
 class LayerCreate(LayerBase):
+    layer_master_id: uuid.UUID | None = None
     x: float = 80
     y: float = 80
     width: float = 180

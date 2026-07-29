@@ -186,6 +186,16 @@ export const useProjectStore = defineStore("project", () => {
     return created;
   }
 
+  async function branchProject(body: ProjectCreate) {
+    if (!currentProjectId.value) throw new Error("복제할 프로젝트를 먼저 선택하세요.");
+    const created = await app.run(
+      "현재 설정으로 새 프로젝트 만들기",
+      () => api.branchProject(currentProjectId.value, body),
+    );
+    await loadPublicProjects(false);
+    return created;
+  }
+
   function registerWorkspaceReset(reset: () => void) {
     resetGraphAndHistory = reset;
   }
@@ -522,7 +532,7 @@ export const useProjectStore = defineStore("project", () => {
     session, publicProjects, projects, currentProjectId, currentProject, alignTrees, currentTreeId, currentTree, projectId,
     members, accessRequests, userCandidates, auditEvents, loadingProject, bootstrapped, lease, leaseState, clientInstanceId, autosaveState, autosaveLabel, lastSavedAt,
     currentRole, currentRevision, hasMembership, canAdminProject, canEditProject, canEdit, readOnly, readOnlyReason, accessRequestStatus,
-    bootstrap, updateDisplayName, loadPublicProjects, loadProjects, createProject, loadProject, selectProject, clearProjectSelection, updateProject, deleteProject,
+    bootstrap, updateDisplayName, loadPublicProjects, loadProjects, createProject, branchProject, loadProject, selectProject, clearProjectSelection, updateProject, deleteProject,
     requestAccess, claimLegacyProject, loadAuditEvents, loadMembersAndRequests, reviewAccessRequest, searchUsers, addMember, updateMemberRole, removeMember,
     loadAlignTrees, createAlignTree, updateAlignTree, deleteAlignTree, ensureEditLease, acquireEdit, activateTree, activateProject, releaseLease,
     syncProject, syncTree, setRevision, registerWorkspaceReset, markSaving, markSaved, markSaveError, flushAutosave, handleMutationError,

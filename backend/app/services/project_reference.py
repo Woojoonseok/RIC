@@ -112,3 +112,65 @@ def ensure_project_reference_data(
                 if relation.relation_style_id in relation_map:
                     relation.relation_style_id = relation_map[relation.relation_style_id]
     db.flush()
+
+
+def clone_project_reference_data(
+    db: Session,
+    source_project_id: uuid.UUID,
+    target_project_id: uuid.UUID,
+) -> None:
+    """Copy project reference rows and Layer Master rows without graph data."""
+
+    layout_type_map: dict[uuid.UUID, uuid.UUID] = {}
+    for source in (
+        db.query(models.KeyLayoutType)
+        .filter(models.KeyLayoutType.project_id == source_project_id)
+        .order_by(models.KeyLayoutType.created_at, models.KeyLayoutType.id)
+        .all()
+    ):
+        created = models.KeyLayoutType(
+            project_id=target_project_id,
+            **_copy_columns(source, exclude={"id", "project_id", "created_at", "updated_at"}),
+        )
+        db.add(created)
+        db.flush()
+        layout_type_map[source.id] = created.id
+
+    for model in (models.KeyDrawingType, models.KeyShape, models.RelationStyle, models.BoxPreset):
+        for source in (
+            db.query(model)
+            .filter(model.project_id == source_project_id)
+            .order_by(model.created_at, model.id)
+            .all()
+        ):
+            db.add(
+                model(
+                    project_id=target_project_id,
+                    **_copy_columns(source, exclude={"id", "project_id", "created_at", "updated_at"}),
+                )
+            )
+
+    for source in (
+        db.query(models.LayerMaster)
+        .filter(models.LayerMaster.project_id == source_project_id)
+        .order_by(models.LayerMaster.created_at, models.LayerMaster.id)
+        .all()
+    ):
+        created = models.LayerMaster(
+            project_id=target_project_id,
+            **_copy_columns(source, exclude={"id", "project_id", "created_at", "updated_at"}),
+        )
+        db.add(created)
+        db.flush()
+        for priority in source.priorities:
+            target_layout_type_id = layout_type_map.get(priority.key_layout_type_id)
+            if target_layout_type_id is not None:
+                db.add(
+                    models.LayerMasterPriority(
+                        project_id=target_project_id,
+                        layer_master_id=created.id,
+                        key_layout_type_id=target_layout_type_id,
+                        value=priority.value,
+                    )
+                )
+    db.flush()

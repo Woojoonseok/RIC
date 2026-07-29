@@ -117,6 +117,7 @@ export const api = {
 
   listProjects: () => request<Project[]>("/projects"),
   createProject: (body: ProjectCreate) => request<Project>("/projects", json("POST", body)),
+  branchProject: (id: string, body: ProjectCreate) => request<Project>(`/projects/${id}/branch`, json("POST", body)),
   getProject: (id: string) => request<Project>(`/projects/${id}`),
   updateProject: (id: string, body: ProjectUpdate) => request<Project>(`/projects/${id}`, json("PATCH", body)),
   deleteProject: (id: string) => request<void>(`/projects/${id}`, json("DELETE")),

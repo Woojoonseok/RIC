@@ -1,26 +1,41 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { api } from "../../api/client";
 import { isMergedLayer } from "../../domain/graph";
 import { useAppStore } from "../../stores/app";
 import { useGraphStore } from "../../stores/graph";
 import { useProjectStore } from "../../stores/project";
 import { useReferenceStore } from "../../stores/reference";
+import type { LayerMaster } from "../../types";
+import LayerMasterPickerModal from "./LayerMasterPickerModal.vue";
 
 const app = useAppStore();
 const graph = useGraphStore();
 const project = useProjectStore();
 const reference = useReferenceStore();
+const layerPickerOpen = ref(false);
 const splitLayerId = computed(() => {
   const layerId = app.selectedSplitLayerId;
   return layerId && graph.rawGraph && isMergedLayer(graph.rawGraph, layerId) ? layerId : null;
 });
-async function addLayer() {
-  const index = (graph.rawGraph?.layers.length ?? 0) + 1;
-  await graph.mutateGraph("Layer 추가", () => api.createLayer(project.projectId, {
-    name: `Layer ${index}`, x: 120 + index * 20, y: 100 + index * 20,
-    box_preset_id: reference.selectedBoxPresetId || null,
-  }));
+async function addLayers(masters: LayerMaster[]) {
+  const startIndex = graph.rawGraph?.layers.length ?? 0;
+  await graph.mutateGraph(`Layer 정보 ${masters.length}개 가져오기`, async () => {
+    let saved;
+    for (const [offset, master] of masters.entries()) {
+      const index = startIndex + offset;
+      saved = await api.createLayer(project.projectId, {
+        name: master.name,
+        step: master.layer_number,
+        layer_master_id: master.id,
+        x: 120 + (index % 5) * 220,
+        y: 100 + Math.floor(index / 5) * 130,
+        box_preset_id: reference.selectedBoxPresetId || null,
+      });
+    }
+    return saved;
+  });
+  layerPickerOpen.value = false;
 }
 async function addText() { await graph.mutateGraph("텍스트 추가", () => api.createText(project.projectId, { text: "Text", x: 180, y: 160 })) }
 function selectAll() { app.selection = graph.displayGraph?.layers.map((layer) => ({ kind: "layer" as const, id: layer.id })) ?? [] }
@@ -54,7 +69,7 @@ async function splitSelected() {
     </div>
     <span class="divider"/>
     <div class="tool-group">
-      <button :disabled="!project.canEdit" @click="addLayer">Add Layer</button>
+      <button :disabled="!project.canEdit" @click="layerPickerOpen = true">Layer에서 가져오기</button>
       <button :disabled="!project.canEdit || app.selectedLayerIds.length < 2" title="선택한 Layer를 첫 번째 Layer 크기로 묶습니다" @click="mergeSelected">Merge</button>
       <button v-if="splitLayerId" :disabled="!project.canEdit" title="병합 그룹을 원래 Layer로 분리합니다" @click="splitSelected">Split</button>
       <button class="danger" :disabled="!project.canEdit || !app.selection.length" @click="graph.deleteSelection">Delete</button>
@@ -69,4 +84,9 @@ async function splitSelected() {
       </div>
     </details>
   </div>
+  <LayerMasterPickerModal
+    :open="layerPickerOpen"
+    @confirm="addLayers"
+    @close="layerPickerOpen = false"
+  />
 </template>

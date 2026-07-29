@@ -12,8 +12,7 @@ from ..database import get_db
 from ..services.audit import record_project_event
 from ..services.layout import apply_auto_layout
 from ..services.layer_master_sync import (
-    delete_layer_master_layers,
-    ensure_project_layer_sync,
+    _apply_master_to_layer,
     sync_layer_master,
 )
 from ..services.project_access import ProjectContext, get_project_context, project_request_guard, project_to_read
@@ -78,11 +77,6 @@ def read_graph(
     db: Session = Depends(get_db),
 ) -> schemas.GraphRead:
     crud.get_align_tree_or_404(db, project_id, align_tree_id)
-    # Older projects can already have Layer Master rows without matching graph
-    # layers. Repair that gap on graph load so Data and Editor always expose the
-    # same canonical Layer set (master name -> layer name, number -> step).
-    ensure_project_layer_sync(db, project_id)
-    db.commit()
     graph = crud.read_graph(db, project_id, align_tree_id)
     graph.project = project_to_read(db, context.project, context.actor)
     return graph
@@ -395,25 +389,45 @@ def create_layer(
     db: Session = Depends(get_db),
 ) -> models.Layer:
     try:
-        preset = db.get(models.BoxPreset, payload.box_preset_id) if payload.box_preset_id else None
-        master = models.LayerMaster(
-            project_id=project_id,
-            name=payload.name,
-            layer_number=payload.step,
-            light_source=preset.name if preset and preset.project_id == project_id else None,
-        )
-        db.add(master)
-        db.flush()
-        sync_layer_master(db, master)
-        layer = (
-            db.query(models.Layer)
-            .filter(
-                models.Layer.project_id == project_id,
-                models.Layer.align_tree_id == align_tree_id,
-                models.Layer.layer_master_id == master.id,
+        if payload.layer_master_id is not None:
+            master = db.get(models.LayerMaster, payload.layer_master_id)
+            if master is None or master.project_id != project_id:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Layer Master not found")
+            already_added = (
+                db.query(models.Layer.id)
+                .filter(
+                    models.Layer.project_id == project_id,
+                    models.Layer.align_tree_id == align_tree_id,
+                    models.Layer.layer_master_id == master.id,
+                )
+                .first()
             )
-            .one()
-        )
+            if already_added is not None:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Layer already added to Align Tree")
+            layer_payload = payload.model_copy(update={"name": master.name, "step": master.layer_number})
+            layer = crud.create_layer(db, project_id, align_tree_id, layer_payload)
+            _apply_master_to_layer(db, master, layer)
+            sync_layer_master(db, master, create_missing=False)
+        else:
+            preset = db.get(models.BoxPreset, payload.box_preset_id) if payload.box_preset_id else None
+            master = models.LayerMaster(
+                project_id=project_id,
+                name=payload.name,
+                layer_number=payload.step,
+                light_source=preset.name if preset and preset.project_id == project_id else None,
+            )
+            db.add(master)
+            db.flush()
+            sync_layer_master(db, master)
+            layer = (
+                db.query(models.Layer)
+                .filter(
+                    models.Layer.project_id == project_id,
+                    models.Layer.align_tree_id == align_tree_id,
+                    models.Layer.layer_master_id == master.id,
+                )
+                .one()
+            )
         _audit_graph_mutation(
             db,
             context,
@@ -511,7 +525,7 @@ def update_layer(
                     master.name = payload.name
                 if "step" in updates:
                     master.layer_number = payload.step
-                sync_layer_master(db, master)
+                sync_layer_master(db, master, sync_group=False, create_missing=False)
         _audit_graph_mutation(
             db,
             context,
@@ -874,7 +888,7 @@ def merge_layers(
             .all()
         ):
             master.group = next_group
-        ensure_project_layer_sync(db, project_id)
+            sync_layer_master(db, master, create_missing=False)
 
     # Grouping must not rewrite layout geometry. The client renders the first
     # selected layer as the anchor and split restores every member exactly where
@@ -1086,7 +1100,7 @@ def update_layer_group(
         master = db.get(models.LayerMaster, layer.layer_master_id)
         if master is not None:
             master.group = (payload.group or "").strip() or None
-            sync_layer_master(db, master)
+            sync_layer_master(db, master, create_missing=False)
         else:
             _sync_layer_group(db, project_id, align_tree_id, layer_id, payload.group)
     else:
@@ -1164,7 +1178,8 @@ def split_layer(
             master.group = None
         if linked_masters:
             db.flush()
-            ensure_project_layer_sync(db, project_id)
+            for master in linked_masters:
+                sync_layer_master(db, master, create_missing=False)
         _audit_graph_mutation(
             db,
             context,
@@ -1630,12 +1645,7 @@ def delete_layer(
         layer,
         ["name", "step", "layer_property", "align", "align_side", "description", "pending_group"],
     )
-    master = db.get(models.LayerMaster, layer.layer_master_id) if layer.layer_master_id else None
-    if master is not None:
-        delete_layer_master_layers(db, master)
-        db.delete(master)
-    else:
-        crud.delete_layer_with_relations(db, project_id, align_tree_id, layer_id)
+    crud.delete_layer_with_relations(db, project_id, align_tree_id, layer_id)
     _audit_graph_mutation(
         db,
         context,
