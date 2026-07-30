@@ -53,6 +53,16 @@ async function commit(nextRows: Row[]) {
   busy.value = true;
   project.markSaving();
   let completed = 0;
+  const missingNumber = nextRows.find(
+    (row) => String(row.name || "").trim() && !String(row.layer_number || "").trim(),
+  );
+  if (missingNumber) {
+    busy.value = false;
+    status.value = "Layer 번호는 필수입니다.";
+    app.status = status.value;
+    project.markSaved();
+    return;
+  }
   const targets = nextRows.filter((row) => String(row.name || "").trim() && (!row.id || persistedRows.get(String(row.id)) !== rowSignature(row)));
   if (!targets.length) {
     busy.value = false;

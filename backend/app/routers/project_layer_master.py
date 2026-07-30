@@ -106,6 +106,12 @@ def create_layer_master(
     db: Session = Depends(get_db),
 ) -> schemas.LayerMasterRead:
     data = payload.model_dump(exclude={"priorities"})
+    data["layer_number"] = payload.layer_number.strip()
+    if not data["layer_number"]:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Layer number is required",
+        )
     row = models.LayerMaster(project_id=project_id, **data)
     db.add(row)
     try:
@@ -142,6 +148,13 @@ def update_layer_master(
     row = _row_or_404(db, project_id, row_id)
     before = _snapshot(row)
     data = payload.model_dump(exclude={"priorities"}, exclude_unset=True)
+    if "layer_number" in data:
+        data["layer_number"] = (data["layer_number"] or "").strip()
+        if not data["layer_number"]:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Layer number is required",
+            )
     for field, value in data.items():
         setattr(row, field, value)
     if payload.priorities is not None:

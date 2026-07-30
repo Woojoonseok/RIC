@@ -15,7 +15,12 @@ const error = ref("");
 const treeId = computed(() => String(route.params.treeId || ""));
 
 function syncView() {
-  const map: Record<string, AppView> = { "tree-data": "data", "tree-editor": "editor", "tree-validation": "validation", "tree-export": "export" };
+  const map: Record<string, AppView> = {
+    "tree-data": "data",
+    "tree-editor": "editor",
+    "tree-validation": "validation",
+    "tree-export": "export",
+  };
   app.view = map[String(route.name)] ?? "editor";
 }
 

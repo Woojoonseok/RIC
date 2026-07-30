@@ -77,7 +77,6 @@ def validate_project_graph(
             group_by_layer[relation.parent_layer_id] = relation.same_group
             group_by_layer[relation.child_layer_id] = relation.same_group
 
-    relation_keys: set[tuple[uuid.UUID | None, uuid.UUID | None, str | None]] = set()
     graph: dict[uuid.UUID, list[uuid.UUID]] = defaultdict(list)
     indegree: dict[uuid.UUID, int] = {layer_id: 0 for layer_id in layer_ids}
     connected: set[uuid.UUID] = set()
@@ -108,17 +107,6 @@ def validate_project_graph(
                 relation_id=relation.id,
                 layer_id=parent_id,
             ))
-
-        key = (parent_id, child_id, relation.instance)
-        if parent_id is not None and child_id is not None and key in relation_keys:
-            issues.append(schemas.ValidationIssue(
-                code="relation_duplicate",
-                severity="error",
-                message="Duplicate parent-child-instance relation.",
-                relation_id=relation.id,
-            ))
-        if parent_id is not None and child_id is not None:
-            relation_keys.add(key)
 
         if parent_id in layer_ids and child_id in layer_ids:
             connected.update((parent_id, child_id))

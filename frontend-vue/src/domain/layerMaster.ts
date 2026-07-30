@@ -20,7 +20,16 @@ export function layerMasterColumns(layouts: KeyLayoutType[], presets: BoxPreset[
       options: presets.map((preset) => ({ value: preset.name, label: preset.is_default ? `${preset.name} (기본)` : preset.name })),
       defaultValue: defaultPreset?.name ?? "",
     },
-    { key: "pr_open_close", label: "PR Open/Close", width: 130 },
+    {
+      key: "pr_open_close",
+      label: "PR Open/Close",
+      width: 130,
+      options: [
+        { value: "", label: "선택 안 함" },
+        { value: "Open", label: "Open (O)" },
+        { value: "Close", label: "Close (X)" },
+      ],
+    },
     ...layouts.map((layout) => ({ key: `priority:${layout.id}`, label: `우선순위 ${layout.name}`, width: 145 })),
     { key: "group", label: "Group", width: 130 },
     { key: "validation_rule", label: "검증 Rule", width: 180 },
@@ -42,7 +51,7 @@ export function layerMasterPayload(row: LayerMasterGridRow, layouts: KeyLayoutTy
   const text = (key: string) => String(row[key] || "") || null;
   return {
     name: String(row.name || "").trim(),
-    layer_number: text("layer_number"),
+    layer_number: String(row.layer_number || "").trim(),
     mask_main_fld: text("mask_main_fld"),
     mask_sl_fld: text("mask_sl_fld"),
     pr_wf: text("pr_wf"),

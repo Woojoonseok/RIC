@@ -1,11 +1,9 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted } from "vue";
-import { useRouter } from "vue-router";
 import { useAppStore } from "./stores/app";
 import { useGraphStore } from "./stores/graph";
 import { useProjectStore } from "./stores/project";
 
-const router = useRouter();
 const app = useAppStore();
 const graph = useGraphStore();
 const project = useProjectStore();
@@ -48,7 +46,6 @@ onBeforeUnmount(() => {
   <div class="app-shell">
     <header class="app-header global-header">
       <RouterLink class="brand" to="/"><span class="brand-mark">R</span><span><strong>RIC</strong><small>PROJECT · ALIGN TREE</small></span></RouterLink>
-      <nav class="main-nav"><button @click="router.push({ name: 'home', query: { create: '1' } })">프로젝트 만들기</button></nav>
       <div class="global-identity"><span>현재 사용자</span><strong>{{ project.session?.display_name || '사내 익명 사용자' }}</strong></div>
     </header>
     <main class="app-main"><RouterView/></main>

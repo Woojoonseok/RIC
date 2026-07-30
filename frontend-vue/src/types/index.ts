@@ -55,6 +55,11 @@ export interface AlignTree {
   project_id: string;
   name: string;
   description?: string | null;
+  process_name?: string | null;
+  gds_name?: string | null;
+  layer_process_names?: Record<string, string>;
+  layer_gds_names?: Record<string, string>;
+  final_table_cells?: Record<string, Record<string, string>>;
   created_at: string;
   updated_at: string;
   revision?: number;
@@ -64,7 +69,15 @@ export interface AlignTree {
   is_default?: boolean;
   created_by_actor_id?: string | null;
 }
-export interface AlignTreeCreate { name: string; description?: string | null }
+export interface AlignTreeCreate {
+  name: string;
+  description?: string | null;
+  process_name?: string | null;
+  gds_name?: string | null;
+  layer_process_names?: Record<string, string>;
+  layer_gds_names?: Record<string, string>;
+  final_table_cells?: Record<string, Record<string, string>>;
+}
 export interface ProjectMember {
   id: string;
   project_id?: string;
@@ -134,19 +147,49 @@ export interface ShapeStyle { id: string; project_id: string; layer_id: string; 
 export interface StyleUpdate { fill_color?: string; stroke_color?: string; text_color?: string; font_size?: number; stroke_width?: number }
 export interface StyleBatchUpdate extends StyleUpdate { layer_id: string }
 
+export interface RelationExtra {
+  id: string;
+  project_id: string;
+  relation_id: string;
+  layer_master_id: string;
+  key_drawing_type_id: string;
+  sort_order: number;
+}
+export interface RelationExtraCreate {
+  layer_master_id: string;
+  key_drawing_type_id: string;
+  sort_order?: number;
+}
 export interface Relation {
   id: string; project_id: string; parent_layer_id: string | null; child_layer_id: string | null; relation_type: string;
-  instance: string | null; relation_style_id: string | null; source_port: PortName; target_port: PortName;
+  key_layout_type_id: string | null; key_drawing_type_id: string | null; relation_style_id: string | null;
+  parent_drawing_type_id: string | null; child_drawing_type_id: string | null;
+  comment: string | null; key_priority: string | null; priority_rule: string | null;
+  final_type: string | null; key_purpose: string | null; placement: string | null;
+  stack_type: string | null; inregi: string | null; inner_size: string | null; outer_size: string | null;
+  source_port: PortName; target_port: PortName; extras: RelationExtra[];
   same_group: string | null; attached_relation_id: string | null; waypoints: Point[] | null; created_at?: string; updated_at?: string;
 }
 export interface RelationCreate {
-  parent_layer_id?: string | null; child_layer_id?: string | null; relation_type?: string; instance?: string | null;
+  parent_layer_id?: string | null; child_layer_id?: string | null;
+  key_layout_type_id?: string | null; key_drawing_type_id?: string | null; relation_type?: string;
   relation_style_id?: string | null; source_port?: PortName; target_port?: PortName; same_group?: string | null;
+  parent_drawing_type_id?: string | null; child_drawing_type_id?: string | null;
+  comment?: string | null; key_priority?: string | null; priority_rule?: string | null;
+  final_type?: string | null; key_purpose?: string | null; placement?: string | null;
+  stack_type?: string | null; inregi?: string | null; inner_size?: string | null; outer_size?: string | null;
+  extras?: RelationExtraCreate[];
   attached_relation_id?: string | null; waypoints?: Point[];
 }
 export interface RelationUpdate {
-  parent_layer_id?: string | null; child_layer_id?: string | null; relation_type?: string | null; instance?: string | null;
+  parent_layer_id?: string | null; child_layer_id?: string | null;
+  key_layout_type_id?: string | null; key_drawing_type_id?: string | null; relation_type?: string | null;
   relation_style_id?: string | null; source_port?: PortName | null; target_port?: PortName | null; same_group?: string | null;
+  parent_drawing_type_id?: string | null; child_drawing_type_id?: string | null;
+  comment?: string | null; key_priority?: string | null; priority_rule?: string | null;
+  final_type?: string | null; key_purpose?: string | null; placement?: string | null;
+  stack_type?: string | null; inregi?: string | null; inner_size?: string | null; outer_size?: string | null;
+  extras?: RelationExtraCreate[] | null;
   attached_relation_id?: string | null; waypoints?: Point[] | null;
 }
 
@@ -184,7 +227,7 @@ export type KeyShapeCreate = Omit<KeyShape, "id">;
 export type KeyShapeUpdate = Partial<KeyShapeCreate>;
 
 export interface LayerMaster { id: string; name: string; layer_number: string | null; mask_main_fld: string | null; mask_sl_fld: string | null; pr_wf: string | null; dev_wf: string | null; pr_type: string | null; light_source: string | null; pr_open_close: string | null; group: string | null; validation_rule: string | null; comment: string | null; priorities: Record<string, string | null> }
-export type LayerMasterCreate = Omit<LayerMaster, "id">;
+export type LayerMasterCreate = Omit<LayerMaster, "id" | "layer_number"> & { layer_number: string };
 export type LayerMasterUpdate = Partial<LayerMasterCreate>;
 
 export type ReferenceResource = "key-layout-types" | "key-drawing-types" | "key-shapes" | "relation-styles" | "box-presets";

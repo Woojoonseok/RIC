@@ -102,6 +102,21 @@ export function getClosestPointOnSegment(point: Point, start: Point, end: Point)
 
 export const closestPointOnSegment = getClosestPointOnSegment;
 
+export function closestPointOnPath(point: Point, path: Point[]) {
+  let best: { point: Point; segmentIndex: number; distance: number } | null = null;
+  for (let index = 0; index < path.length - 1; index += 1) {
+    const candidate = getClosestPointOnSegment(point, path[index], path[index + 1]);
+    if (!best || candidate.distance < best.distance) {
+      best = {
+        point: { x: candidate.x, y: candidate.y },
+        segmentIndex: index,
+        distance: candidate.distance,
+      };
+    }
+  }
+  return best;
+}
+
 export function relationGeometry(
   relation: Relation,
   layouts: Map<string, Layout>,

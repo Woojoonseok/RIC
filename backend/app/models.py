@@ -170,6 +170,11 @@ class AlignTree(Base, TimestampMixin):
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    process_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    gds_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    layer_process_names: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict)
+    layer_gds_names: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict)
+    final_table_cells: Mapped[dict[str, dict[str, str]]] = mapped_column(JSON, nullable=False, default=dict)
     created_by_actor_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("actors.id", ondelete="SET NULL"), nullable=True, index=True
     )
@@ -269,17 +274,6 @@ class Layer(Base, TimestampMixin):
 
 class LayerRelation(Base, TimestampMixin):
     __tablename__ = "layer_relations"
-    __table_args__ = (
-        # instance is part of the identity so the same parent->child pair can
-        # repeat as long as each occurrence names a distinct instance.
-        UniqueConstraint(
-            "align_tree_id",
-            "parent_layer_id",
-            "child_layer_id",
-            "instance",
-            name="uq_relations_tree_parent_child_instance",
-        ),
-    )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
@@ -290,9 +284,30 @@ class LayerRelation(Base, TimestampMixin):
     # typing layer names, instead of requiring a valid pair up front.
     parent_layer_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("layers.id", ondelete="CASCADE"), nullable=True, index=True)
     child_layer_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("layers.id", ondelete="CASCADE"), nullable=True, index=True)
+    key_layout_type_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("key_layout_types.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    key_drawing_type_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("key_drawing_types.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     relation_type: Mapped[str] = mapped_column(String(80), default="parent_child")
-    instance: Mapped[str | None] = mapped_column(String(120), nullable=True)
     relation_style_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("relation_styles.id", ondelete="SET NULL"), index=True)
+    parent_drawing_type_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("key_drawing_types.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    child_drawing_type_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("key_drawing_types.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    key_priority: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    priority_rule: Mapped[str | None] = mapped_column(Text, nullable=True)
+    final_type: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    key_purpose: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    placement: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    stack_type: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    inregi: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    inner_size: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    outer_size: Mapped[str | None] = mapped_column(String(160), nullable=True)
     source_port: Mapped[str] = mapped_column(String(20), default="bottom")
     target_port: Mapped[str] = mapped_column(String(20), default="top")
     same_group: Mapped[str | None] = mapped_column(String(80), nullable=True)
@@ -305,6 +320,35 @@ class LayerRelation(Base, TimestampMixin):
     parent_layer: Mapped[Layer | None] = relationship(foreign_keys=[parent_layer_id])
     child_layer: Mapped[Layer | None] = relationship(foreign_keys=[child_layer_id])
     relation_style: Mapped[RelationStyle | None] = relationship(foreign_keys=[relation_style_id])
+    extras: Mapped[list[RelationExtra]] = relationship(
+        back_populates="relation",
+        cascade="all, delete-orphan",
+        order_by="RelationExtra.sort_order",
+    )
+
+
+class RelationExtra(Base, TimestampMixin):
+    __tablename__ = "relation_extras"
+    __table_args__ = (
+        UniqueConstraint("relation_id", "sort_order", name="uq_relation_extras_relation_order"),
+    )
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    relation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("layer_relations.id", ondelete="CASCADE"), index=True
+    )
+    layer_master_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("layer_masters.id", ondelete="CASCADE"), index=True
+    )
+    key_drawing_type_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("key_drawing_types.id", ondelete="CASCADE"), index=True
+    )
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+    relation: Mapped[LayerRelation] = relationship(back_populates="extras")
+    layer_master: Mapped[LayerMaster] = relationship()
+    key_drawing_type: Mapped[KeyDrawingType] = relationship()
 
 
 class RelationStyle(Base, TimestampMixin):

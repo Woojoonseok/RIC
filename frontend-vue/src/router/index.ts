@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from "vue-router";
 import ProjectLayout from "../layouts/ProjectLayout.vue";
 import TreeWorkspaceLayout from "../layouts/TreeWorkspaceLayout.vue";
 import AlignTreeListView from "../views/AlignTreeListView.vue";
+import AlignKeyEditorView from "../views/AlignKeyEditorView.vue";
 import DataView from "../views/DataView.vue";
 import EditorView from "../views/EditorView.vue";
 import ExportView from "../views/ExportView.vue";
@@ -24,6 +25,7 @@ export const router = createRouter({
         { path: "reference", name: "project-reference", component: ReferenceView, meta: { requiresMembership: true, projectEditor: true } },
         { path: "layers", name: "project-layers", component: LayerMasterView, meta: { requiresMembership: true, projectEditor: true } },
         { path: "align-trees", name: "align-tree-list", component: AlignTreeListView, meta: { requiresMembership: true } },
+        { path: "align-key-editor", name: "align-key-editor", component: AlignKeyEditorView, meta: { requiresMembership: true } },
         { path: "settings", name: "project-settings", component: ProjectSettingsView, meta: { requiresMembership: true, requiresAdmin: true, projectEditor: true } },
         {
           path: "align-trees/:treeId",

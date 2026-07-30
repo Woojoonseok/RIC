@@ -117,7 +117,7 @@ def create_layer(
 ) -> str:
     response = client.post(
         f"{graph_base(client, project_id, tree_id)}/layers",
-        json={"name": name, "x": x, "y": 40},
+        json={"name": name, "step": "1", "x": x, "y": 40},
     )
     assert response.status_code == 201, response.text
     return response.json()["id"]
@@ -176,7 +176,7 @@ def test_project_graph_validation_restore_and_layout(client: TestClient) -> None
 
     relation_ab = client.post(
         f"{graph_base(client, project_id)}/relations",
-        json={"parent_layer_id": first, "child_layer_id": second, "instance": "main"},
+        json={"parent_layer_id": first, "child_layer_id": second},
     )
     assert relation_ab.status_code == 201, relation_ab.text
     attached = client.post(
@@ -185,7 +185,6 @@ def test_project_graph_validation_restore_and_layout(client: TestClient) -> None
             "parent_layer_id": third,
             "child_layer_id": None,
             "attached_relation_id": relation_ab.json()["id"],
-            "instance": "branch",
         },
     )
     assert attached.status_code == 201, attached.text
@@ -196,12 +195,12 @@ def test_project_graph_validation_restore_and_layout(client: TestClient) -> None
     )
     relation_bc = client.post(
         f"{graph_base(client, project_id)}/relations",
-        json={"parent_layer_id": second, "child_layer_id": third, "instance": "main"},
+        json={"parent_layer_id": second, "child_layer_id": third},
     )
     assert relation_bc.status_code == 201, relation_bc.text
     cycle = client.post(
         f"{graph_base(client, project_id)}/relations",
-        json={"parent_layer_id": third, "child_layer_id": first, "instance": "main"},
+        json={"parent_layer_id": third, "child_layer_id": first},
     )
     assert cycle.status_code == 422
 
@@ -326,9 +325,15 @@ def test_graph_audit_is_atomic_for_success_and_rollback(client: TestClient) -> N
     project_id = create_project(client)
     tree_id = default_tree_id(client, project_id)
 
+    missing_number = client.post(
+        f"{graph_base(client, project_id, tree_id)}/layers",
+        json={"name": "Missing Number"},
+    )
+    assert missing_number.status_code == 422, missing_number.text
+
     created = client.post(
         f"{graph_base(client, project_id, tree_id)}/layers",
-        json={"name": "Audited Layer"},
+        json={"name": "Audited Layer", "step": "10"},
     )
     assert created.status_code == 201, created.text
 
@@ -358,7 +363,7 @@ def test_graph_audit_is_atomic_for_success_and_rollback(client: TestClient) -> N
 
     duplicate = client.post(
         f"{graph_base(client, project_id, tree_id)}/layers",
-        json={"name": "Audited Layer"},
+        json={"name": "Audited Layer", "step": "10"},
     )
     assert duplicate.status_code == 409, duplicate.text
 
@@ -384,6 +389,8 @@ def test_reference_and_layer_master_priorities(client: TestClient) -> None:
     )
     assert layout.status_code == 201, layout.text
     layout_id = layout.json()["id"]
+    missing_number = client.post(layer_master_base, json={"name": "Missing Number"})
+    assert missing_number.status_code == 422, missing_number.text
     master = client.post(
         layer_master_base,
         json={"name": "M1", "layer_number": "10", "group": "Front", "priorities": {layout_id: "1"}},
@@ -435,18 +442,18 @@ def test_reference_and_layer_master_priorities(client: TestClient) -> None:
         f"{graph_base(client, project_id, first_tree)}/layers/{first_layer_id}",
         json={"name": "M1 from Align", "step": None},
     )
-    assert graph_updated.status_code == 200, graph_updated.text
+    assert graph_updated.status_code == 422, graph_updated.text
     masters = client.get(layer_master_base).json()
     first_master = next(row for row in masters if row["id"] == master.json()["id"])
-    assert (first_master["name"], first_master["layer_number"]) == ("M1 from Align", None)
+    assert (first_master["name"], first_master["layer_number"]) == ("M1 updated", "11")
     synced = client.get(graph_base(client, project_id, first_tree)).json()["layers"][0]
-    assert (synced["name"], synced["step"]) == ("M1 from Align", None)
+    assert (synced["name"], synced["step"]) == ("M1 updated", "11")
 
     graph_deleted = client.delete(
         f"{graph_base(client, project_id, first_tree)}/layers/{first_layer_id}"
     )
     assert graph_deleted.status_code == 204, graph_deleted.text
-    assert {row["name"] for row in client.get(layer_master_base).json()} == {"M1 from Align", "M2"}
+    assert {row["name"] for row in client.get(layer_master_base).json()} == {"M1 updated", "M2"}
     first_after_delete = client.get(graph_base(client, project_id, first_tree)).json()
     assert [row["name"] for row in first_after_delete["layers"]] == ["M2"]
     reimported = client.post(
@@ -454,7 +461,159 @@ def test_reference_and_layer_master_priorities(client: TestClient) -> None:
         json={"name": "ignored", "layer_master_id": master.json()["id"]},
     )
     assert reimported.status_code == 201, reimported.text
-    assert reimported.json()["name"] == "M1 from Align"
+    assert reimported.json()["name"] == "M1 updated"
+
+
+def test_relation_reference_fields_and_variable_extras(client: TestClient) -> None:
+    project_id = create_project(client)
+    tree_id = default_tree_id(client, project_id)
+    updated_tree = client.patch(
+        f"/api/projects/{project_id}/align-trees/{tree_id}",
+        json={
+            "process_name": "PROC-A",
+            "gds_name": "PROC-A.gds",
+            "layer_process_names": {"layer-38": "ETCH"},
+            "layer_gds_names": {"layer-38": "M38.gds"},
+            "final_table_cells": {"relation-1": {"layer-38": "CUSTOM", "layer-39": ""}},
+        },
+    )
+    assert updated_tree.status_code == 200, updated_tree.text
+    assert updated_tree.json()["process_name"] == "PROC-A"
+    assert updated_tree.json()["gds_name"] == "PROC-A.gds"
+    assert updated_tree.json()["layer_process_names"] == {"layer-38": "ETCH"}
+    assert updated_tree.json()["layer_gds_names"] == {"layer-38": "M38.gds"}
+    assert updated_tree.json()["final_table_cells"] == {
+        "relation-1": {"layer-38": "CUSTOM", "layer-39": ""}
+    }
+    reference_base = f"/api/projects/{project_id}/reference"
+    layer_master_base = f"/api/projects/{project_id}/layer-master"
+
+    layout = client.post(
+        f"{reference_base}/key-layout-types",
+        json={"name": "Center Key"},
+    ).json()
+    key_drawing = client.post(
+        f"{reference_base}/key-drawing-types",
+        json={"symbol": "KT", "key_shape": "Cross"},
+    ).json()
+    parent_drawing = client.post(
+        f"{reference_base}/key-drawing-types",
+        json={"symbol": "PD", "key_shape": "Cross"},
+    ).json()
+    child_drawing = client.post(
+        f"{reference_base}/key-drawing-types",
+        json={"symbol": "CD", "key_shape": "Cross"},
+    ).json()
+    arrow_type = client.get(f"{reference_base}/relation-styles").json()[0]
+
+    masters = []
+    for index, name in enumerate(("Parent Master", "Child Master", "Extra One", "Extra Two"), 38):
+        response = client.post(
+            layer_master_base,
+            json={"name": name, "layer_number": str(index)},
+        )
+        assert response.status_code == 201, response.text
+        masters.append(response.json())
+    imported_layers = []
+    for master in masters[:2]:
+        response = client.post(
+            f"{graph_base(client, project_id, tree_id)}/layers",
+            json={"name": master["name"], "layer_master_id": master["id"]},
+        )
+        assert response.status_code == 201, response.text
+        imported_layers.append(response.json())
+
+    created = client.post(
+        f"{graph_base(client, project_id, tree_id)}/relations",
+        json={
+            "parent_layer_id": imported_layers[0]["id"],
+            "child_layer_id": imported_layers[1]["id"],
+            "key_layout_type_id": layout["id"],
+            "key_drawing_type_id": key_drawing["id"],
+            "relation_style_id": arrow_type["id"],
+            "parent_drawing_type_id": parent_drawing["id"],
+            "child_drawing_type_id": child_drawing["id"],
+            "comment": "Primary relation",
+            "key_priority": "1",
+            "priority_rule": "Parent first",
+            "final_type": "Main",
+            "key_purpose": "Overlay",
+            "placement": "Center",
+            "stack_type": "Dual",
+            "inregi": "Yes",
+            "inner_size": "10",
+            "outer_size": "20",
+            "source_port": "right",
+            "target_port": "left",
+            "extras": [{
+                "layer_master_id": masters[2]["id"],
+                "key_drawing_type_id": parent_drawing["id"],
+            }],
+        },
+    )
+    assert created.status_code == 201, created.text
+    relation = created.json()
+    assert "instance" not in relation
+    assert relation["relation_type"] == arrow_type["name"]
+    assert relation["key_layout_type_id"] == layout["id"]
+    assert relation["key_drawing_type_id"] == key_drawing["id"]
+    assert relation["parent_drawing_type_id"] == parent_drawing["id"]
+    assert relation["child_drawing_type_id"] == child_drawing["id"]
+    assert relation["comment"] == "Primary relation"
+    assert relation["key_priority"] == "1"
+    assert relation["priority_rule"] == "Parent first"
+    assert relation["final_type"] == "Main"
+    assert relation["key_purpose"] == "Overlay"
+    assert relation["placement"] == "Center"
+    assert relation["stack_type"] == "Dual"
+    assert relation["inregi"] == "Yes"
+    assert relation["inner_size"] == "10"
+    assert relation["outer_size"] == "20"
+    assert relation["source_port"] == "right"
+    assert relation["target_port"] == "left"
+    assert [(row["layer_master_id"], row["key_drawing_type_id"]) for row in relation["extras"]] == [
+        (masters[2]["id"], parent_drawing["id"]),
+    ]
+
+    updated = client.put(
+        f"{graph_base(client, project_id, tree_id)}/relations/{relation['id']}",
+        json={
+            "extras": [
+                {
+                    "layer_master_id": masters[2]["id"],
+                    "key_drawing_type_id": parent_drawing["id"],
+                },
+                {
+                    "layer_master_id": masters[3]["id"],
+                    "key_drawing_type_id": child_drawing["id"],
+                },
+            ],
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    assert [row["sort_order"] for row in updated.json()["extras"]] == [0, 1]
+    assert [row["layer_master_id"] for row in updated.json()["extras"]] == [
+        masters[2]["id"],
+        masters[3]["id"],
+    ]
+
+    duplicate = client.post(
+        f"{graph_base(client, project_id, tree_id)}/relations",
+        json={
+            "parent_layer_id": imported_layers[0]["id"],
+            "child_layer_id": imported_layers[1]["id"],
+            "source_port": "bottom",
+            "target_port": "top",
+        },
+    )
+    assert duplicate.status_code == 201, duplicate.text
+    assert duplicate.json()["id"] != relation["id"]
+    same_pair = [
+        row for row in client.get(graph_base(client, project_id, tree_id)).json()["relations"]
+        if row["parent_layer_id"] == imported_layers[0]["id"]
+        and row["child_layer_id"] == imported_layers[1]["id"]
+    ]
+    assert len(same_pair) == 2
 
 
 def test_project_branch_copies_reference_and_layer_master_without_editor_graph(client: TestClient) -> None:
@@ -565,14 +724,14 @@ def test_revision_rejects_a_stale_mutation(client: TestClient) -> None:
     lease_token = client.headers["X-Edit-Lease"]
     created = client.post(
         f"{graph_base(client, project_id)}/layers",
-        json={"name": "First"},
+        json={"name": "First", "step": "10"},
     )
     assert created.status_code == 201, created.text
     assert created.headers["X-Project-Revision"] == "1"
 
     stale = client.post(
         f"{graph_base(client, project_id)}/layers",
-        json={"name": "Must not persist"},
+        json={"name": "Must not persist", "step": "20"},
         headers={"X-Edit-Lease": lease_token, "If-Match": '"0"'},
     )
     assert stale.status_code == 409, stale.text
