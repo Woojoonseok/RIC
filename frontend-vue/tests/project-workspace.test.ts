@@ -30,9 +30,13 @@ describe("project workspace UI contract", () => {
     expect(projectStoreSource).toMatch(/alignTrees/);
   });
 
-  it("uses one Editor per project and branches only project settings", () => {
-    expect(alignTreeListSource).toContain("프로젝트마다 Editor는 하나만 사용합니다.");
-    expect(alignTreeListSource).toContain("현재 설정으로 새 프로젝트");
+  it("uses two key editor views over one shared project graph", () => {
+    expect(alignTreeListSource).toContain("Overlay Key Editor");
+    expect(alignTreeListSource).toContain("Align Key Editor");
+    expect(alignTreeListSource).toContain("기준정보와 Layer 정보를 공유");
+    expect(alignTreeListSource).toContain("align-key-editor");
+    expect(routerSource).toContain('name: "align-key-editor"');
+    expect(alignTreeListSource).toContain("프로젝트 복제");
     expect(alignTreeListSource).toContain("기준정보와 Layer 정보만 복사");
     expect(alignTreeListSource).not.toMatch(/createAlignTree|deleteAlignTree/);
     expect(apiSource).toContain("`/projects/${id}/branch`");

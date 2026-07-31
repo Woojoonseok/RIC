@@ -15,7 +15,6 @@ function orderedGroups(raw: Graph) {
 
 export function computeDisplayGraph(raw: Graph): Graph {
   const groups = orderedGroups(raw);
-  if (!groups.size) return raw;
 
   const groupByLayerId = new Map<string, string[]>();
   const anchorById = new Map<string, string>();
@@ -60,7 +59,9 @@ export function computeDisplayGraph(raw: Graph): Graph {
       ? (anchorById.get(relation.child_layer_id) ?? relation.child_layer_id)
       : null;
     if (parent && child && parent === child) continue;
-    const key = `${parent ?? ""}:${child ?? ""}:${relation.instance ?? ""}:${relation.attached_relation_id ?? ""}`;
+    const key = parent && child
+      ? relationKey(parent, child)
+      : `${parent ?? ""}:${child ?? ""}:${relation.attached_relation_id ?? relation.id}`;
     if (seen.has(key)) continue;
     seen.add(key);
     relations.push({ ...relation, parent_layer_id: parent, child_layer_id: child });
@@ -108,8 +109,18 @@ export function relationTargetLayerId(raw: Graph, relationId: string, visited = 
   return relationTargetLayerId(raw, relation.attached_relation_id, new Set(visited).add(relationId));
 }
 
-function relationKey(parentId: string, childId: string, instance?: string | null) {
-  return `${parentId}\u0000${childId}\u0000${instance ?? ""}`;
+export function relationGroupById(raw: Graph, relationId: string): Relation[] {
+  const selected = raw.relations.find((relation) => relation.id === relationId);
+  if (!selected) return [];
+  return raw.relations.filter((relation) => (
+    !relation.same_group
+    && relation.parent_layer_id === selected.parent_layer_id
+    && relation.child_layer_id === selected.child_layer_id
+  ));
+}
+
+function relationKey(parentId: string, childId: string) {
+  return `${parentId}\u0000${childId}`;
 }
 
 export function expandRelationCandidates(raw: Graph, input: RelationCreate): RelationCreate[] {
@@ -123,18 +134,10 @@ export function expandRelationCandidates(raw: Graph, input: RelationCreate): Rel
   const children = members(childId);
   if (parents.length > 1 && children.length > 1) throw new Error("그룹 간 관계는 생성할 수 없습니다.");
 
-  const existing = new Set(raw.relations.flatMap((relation) =>
-    relation.parent_layer_id && relation.child_layer_id
-      ? [relationKey(relation.parent_layer_id, relation.child_layer_id, relation.instance)]
-      : [],
-  ));
-  const requested = new Set<string>();
   const result: RelationCreate[] = [];
   for (const parent of parents) {
     for (const child of children) {
-      const key = relationKey(parent, child, input.instance);
-      if (parent === child || existing.has(key) || requested.has(key)) continue;
-      requested.add(key);
+      if (parent === child) continue;
       result.push({ ...input, parent_layer_id: parent, child_layer_id: child });
     }
   }

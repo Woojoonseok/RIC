@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Table2, Waypoints } from "@lucide/vue";
 import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useAppStore } from "../stores/app";
@@ -12,6 +13,36 @@ const branchOpen = ref(false);
 const branchName = ref("");
 const branchDescription = ref("");
 const editor = computed(() => project.alignTrees[0] ?? null);
+const editorCards = computed(() => {
+  const current = editor.value;
+  if (!current) return [];
+  const projectId = String(route.params.projectId || "");
+  const action = (name: string) => project.currentRole === "viewer" ? `${name} 보기` : `${name} 열기`;
+  return [
+    {
+      id: "overlay",
+      icon: Waypoints,
+      title: "Overlay Key Editor",
+      description: "Layer 배치와 Relation을 캔버스에서 편집합니다.",
+      detailLabel: "최근 수정",
+      detailValue: new Date(current.updated_at).toLocaleString(),
+      revision: current.revision ?? project.currentRevision ?? 0,
+      to: { name: "tree-editor", params: { projectId, treeId: current.id } },
+      action: action("Overlay Key"),
+    },
+    {
+      id: "align",
+      icon: Table2,
+      title: "Align Key Editor",
+      description: "독립된 Align Key Table에서 표 데이터를 편집합니다.",
+      detailLabel: "작업 화면",
+      detailValue: "Align Key Table",
+      revision: current.revision ?? project.currentRevision ?? 0,
+      to: { name: "align-key-editor", params: { projectId } },
+      action: action("Align Key"),
+    },
+  ] as const;
+});
 
 function openBranchForm() {
   branchName.value = `${project.currentProject?.name ?? "Project"} - Branch`;
@@ -40,11 +71,11 @@ onMounted(() => project.loadAlignTrees());
   <section class="page align-tree-list-page project-tree-page">
     <div class="page-title align-tree-title">
       <div>
-        <p class="eyebrow">PROJECT EDITOR</p>
-        <h1>Editor</h1>
-        <p>프로젝트마다 Editor는 하나만 사용합니다.</p>
+        <p class="eyebrow">PROJECT KEY WORKSPACE</p>
+        <h1>Key Editors</h1>
+        <p>기준정보와 Layer 정보를 공유하는 두 개의 Key Editor입니다.</p>
       </div>
-      <button class="primary" @click="openBranchForm">현재 설정으로 새 프로젝트</button>
+      <button @click="openBranchForm">프로젝트 복제</button>
     </div>
 
     <section v-if="branchOpen" class="panel tree-create-panel">
@@ -60,26 +91,28 @@ onMounted(() => project.loadAlignTrees());
       </div>
     </section>
 
-    <article v-if="editor" class="panel tree-card singleton-editor-card">
-      <div class="tree-card-top">
-        <span class="tree-symbol">ED</span>
-        <span class="access-badge owner">프로젝트 전용</span>
-      </div>
-      <div>
-        <h2>{{ editor.name }}</h2>
-        <p>{{ editor.description || "프로젝트 Editor" }}</p>
-      </div>
-      <dl>
-        <div><dt>최근 수정</dt><dd>{{ new Date(editor.updated_at).toLocaleString() }}</dd></div>
-        <div><dt>Revision</dt><dd>{{ editor.revision ?? project.currentRevision ?? 0 }}</dd></div>
-      </dl>
-      <RouterLink
-        class="button-link primary"
-        :to="{ name: 'tree-editor', params: { projectId: route.params.projectId, treeId: editor.id } }"
-      >
-        {{ project.currentRole === "viewer" ? "Editor 보기" : "Editor 열기" }}
-      </RouterLink>
-    </article>
+    <div v-if="editorCards.length" class="tree-card-grid editor-choice-grid">
+      <article v-for="card in editorCards" :key="card.id" class="panel tree-card editor-choice-card" :class="card.id">
+        <div class="tree-card-top">
+          <span class="tree-symbol"><component :is="card.icon" :size="22" :stroke-width="1.8"/></span>
+          <span class="access-badge owner">공통 기준정보</span>
+        </div>
+        <div>
+          <h2>{{ card.title }}</h2>
+          <p>{{ card.description }}</p>
+        </div>
+        <dl>
+          <div><dt>{{ card.detailLabel }}</dt><dd>{{ card.detailValue }}</dd></div>
+          <div><dt>Revision</dt><dd>{{ card.revision }}</dd></div>
+        </dl>
+        <RouterLink
+          class="button-link primary"
+          :to="card.to"
+        >
+          {{ card.action }} <span aria-hidden="true">→</span>
+        </RouterLink>
+      </article>
+    </div>
 
     <section v-else class="panel tree-empty">
       <h2>Editor를 불러오지 못했습니다.</h2>

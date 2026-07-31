@@ -14,7 +14,18 @@ const {
     <svg ref="svg" class="canvas" :class="`${app.mode}-mode`" :viewBox="viewBoxString" @pointerdown="canvasDown" @pointermove="pointerMove" @pointerup="pointerUp" @pointercancel="pointerUp" @wheel="wheel">
       <defs><pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M 20 0 L 0 0 0 20" fill="none" stroke="#e9edf3" stroke-width="1"/></pattern><marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 Z" fill="context-stroke"/></marker></defs>
       <rect :x="viewBox.x" :y="viewBox.y" :width="viewBox.width" :height="viewBox.height" fill="url(#grid)"/>
-      <g v-for="path in relationPaths" :key="path.relation.id" class="relation-group" :class="{ 'connect-target': Boolean(connect) }" @dblclick="addWaypoint($event, path.relation)">
+      <g
+        v-for="path in relationPaths"
+        :key="path.relation.id"
+        class="relation-group"
+        :class="{ 'connect-target': Boolean(connect), 'selected-relation': selectedRelation === path.relation.id }"
+        role="button"
+        tabindex="0"
+        :aria-label="`Relation ${path.relation.id.slice(0, 8)}`"
+        @keydown.enter.prevent="app.select({ kind: 'relation', id: path.relation.id })"
+        @keydown.space.prevent="app.select({ kind: 'relation', id: path.relation.id })"
+        @dblclick="addWaypoint($event, path.relation)"
+      >
         <polyline class="relation-hit" :points="path.polyline" @pointerdown="relationPointerDown($event, path.relation)"/>
         <polyline class="relation-line" :class="{ selected: selectedRelation === path.relation.id }" :points="path.polyline" fill="none" :stroke="path.appearance.stroke" :stroke-width="path.appearance.strokeWidth" :stroke-dasharray="path.appearance.strokeDasharray" :marker-end="path.appearance.markerEnd"/>
         <template v-if="selectedRelation === path.relation.id && !path.relation.attached_relation_id"><circle v-for="(point, index) in (previewWaypoints[path.relation.id] || path.relation.waypoints || [])" :key="index" class="waypoint" :cx="point.x" :cy="point.y" r="7" @pointerdown="waypointDown($event, path.relation, index)" @dblclick.stop="deleteWaypoint($event, path.relation, index)"/></template>

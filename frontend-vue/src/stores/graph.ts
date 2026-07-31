@@ -94,7 +94,7 @@ export const useGraphStore = defineStore("graph", () => {
       return;
     }
     const candidates = expandRelationCandidates(rawGraph.value, body);
-    if (!candidates.length) { app.status = "관계 생성: 중복 또는 self relation 제외"; return }
+    if (!candidates.length) { app.status = "관계 생성: self relation 제외"; return }
     const previous = clone(rawGraph.value);
     app.busy = true;
     project.markSaving();

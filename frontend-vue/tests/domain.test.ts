@@ -4,9 +4,9 @@ import { describeErrorDetail } from "../src/api/client";
 import { auditActorName, auditEventChanges, auditEventTitle, isChangeAuditEvent } from "../src/domain/audit";
 import { cloneJson } from "../src/domain/clone";
 import {
-  facingPorts, getClosestPointOnSegment, intersects, orthogonalWaypoints, portHandlePoint, portPoint, relationGeometry, relationStroke, snap,
+  closestPointOnPath, facingPorts, getClosestPointOnSegment, intersects, orthogonalWaypoints, portHandlePoint, portPoint, relationGeometry, relationStroke, snap,
 } from "../src/domain/geometry";
-import { computeDisplayGraph, expandRelationCandidates, isMergedLayer, relationTargetLayerId } from "../src/domain/graph";
+import { computeDisplayGraph, expandRelationCandidates, isMergedLayer, relationGroupById, relationTargetLayerId } from "../src/domain/graph";
 import { layerMasterColumns, layerMasterPayload, layerMasterRows } from "../src/domain/layerMaster";
 import { parseTsv } from "../src/domain/tsv";
 import type { AuditEvent, Graph, Layout, Relation } from "../src/types";
@@ -14,7 +14,16 @@ import type { AuditEvent, Graph, Layout, Relation } from "../src/types";
 const project = { id: "p", name: "P", description: null, created_at: "", updated_at: "" };
 const layer = (id: string, name: string) => ({ id, project_id: "p", name, step: null, layer_property: null, align: null, align_side: null, description: null, metadata_json: {}, box_preset_id: null, pending_group: null, created_at: "", updated_at: "" });
 const layout = (id: string, x: number, y = 0): Layout => ({ id: `l${id}`, project_id: "p", layer_id: id, x, y, width: 100, height: 50, z_index: 0 });
-const relation = (id: string, parent: string | null, child: string | null, sameGroup: string | null = null, instance: string | null = null): Relation => ({ id, project_id: "p", parent_layer_id: parent, child_layer_id: child, relation_type: "parent_child", instance, relation_style_id: null, source_port: "right", target_port: "left", same_group: sameGroup, attached_relation_id: null, waypoints: [], created_at: "", updated_at: "" });
+const relation = (id: string, parent: string | null, child: string | null, sameGroup: string | null = null): Relation => ({
+  id, project_id: "p", parent_layer_id: parent, child_layer_id: child,
+  key_layout_type_id: null, key_drawing_type_id: null, relation_type: "parent_child", relation_style_id: null,
+  parent_drawing_type_id: null, child_drawing_type_id: null, comment: null,
+  key_priority: null, priority_rule: null, source_port: "right", target_port: "left",
+  final_type: null, key_purpose: null, placement: null, stack_type: null,
+  inregi: null, inner_size: null, outer_size: null,
+  extras: [], same_group: sameGroup, attached_relation_id: null, waypoints: [],
+  created_at: "", updated_at: "",
+});
 
 function graph(): Graph {
   return {
@@ -113,6 +122,17 @@ describe("display graph", () => {
     expect(display.layouts.find((row) => row.layer_id === "a")).toEqual(raw.layouts[0]);
     expect(raw.layers).toHaveLength(4);
   });
+  it("renders one representative line for duplicate parent-child relations", () => {
+    const raw = graph();
+    raw.relations = [
+      relation("r1", "a", "c"),
+      { ...relation("r2", "a", "c"), source_port: "bottom", target_port: "top" },
+    ];
+    const display = computeDisplayGraph(raw);
+    expect(display.relations.map((row) => row.id)).toEqual(["r1"]);
+    expect(raw.relations).toHaveLength(2);
+    expect(relationGroupById(raw, "r2").map((row) => row.id)).toEqual(["r1", "r2"]);
+  });
   it("keeps attached relations in the display graph", () => {
     const raw = graph();
     raw.relations.push({ ...relation("branch", "d", null), attached_relation_id: "r1" });
@@ -126,6 +146,14 @@ describe("geometry", () => {
   it("calculates ports and outward handles", () => {
     expect(portPoint(box, "right")).toEqual({ x: 120, y: 65 });
     expect(portHandlePoint(box, "right", 12)).toEqual({ x: 132, y: 65 });
+  });
+  it("finds the correct relation segment for waypoint insertion", () => {
+    expect(closestPointOnPath({ x: 190, y: 90 }, [
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 100 },
+      { x: 200, y: 100 },
+    ])).toMatchObject({ point: { x: 190, y: 100 }, segmentIndex: 2 });
   });
   it("selects facing ports from relative box positions", () => {
     const source = { x: 100, y: 100, width: 100, height: 50 };
@@ -172,25 +200,26 @@ describe("geometry", () => {
 });
 
 describe("group relation expansion", () => {
-  it("expands individual to group and removes existing combinations", () => {
+  it("expands individual to group without removing duplicate combinations", () => {
     const raw = graph();
-    const expanded = expandRelationCandidates(raw, { parent_layer_id: "d", child_layer_id: "a", instance: "new" });
+    const expanded = expandRelationCandidates(raw, { parent_layer_id: "d", child_layer_id: "a" });
     expect(expanded.map((row) => row.child_layer_id)).toEqual(["a", "b"]);
-    expect(expandRelationCandidates(raw, { parent_layer_id: "a", child_layer_id: "c" })).toEqual([]);
+    expect(expandRelationCandidates(raw, { parent_layer_id: "a", child_layer_id: "c" }).map((row) => [row.parent_layer_id, row.child_layer_id])).toEqual([["a", "c"], ["b", "c"]]);
   });
   it("expands group to individual and blocks group to group", () => {
     const raw = graph();
-    expect(expandRelationCandidates(raw, { parent_layer_id: "a", child_layer_id: "d", instance: "new" }).map((row) => [row.parent_layer_id, row.child_layer_id])).toEqual([["a", "d"], ["b", "d"]]);
+    expect(expandRelationCandidates(raw, { parent_layer_id: "a", child_layer_id: "d" }).map((row) => [row.parent_layer_id, row.child_layer_id])).toEqual([["a", "d"], ["b", "d"]]);
     raw.relations.push(relation("g2", "c", "d", "H"));
     expect(() => expandRelationCandidates(raw, { parent_layer_id: "a", child_layer_id: "c" })).toThrow("그룹 간 관계");
   });
   it("removes self relations", () => expect(expandRelationCandidates(graph(), { parent_layer_id: "c", child_layer_id: "c" })).toEqual([]));
   it("resolves a relation-line connection to its final target before expanding the merged source", () => {
     const raw = graph();
+    raw.relations = raw.relations.filter((row) => row.id !== "r2");
     raw.relations.push({ ...relation("branch", "d", null), attached_relation_id: "r1" });
     expect(relationTargetLayerId(raw, "r1")).toBe("c");
     expect(relationTargetLayerId(raw, "branch")).toBe("c");
-    const expanded = expandRelationCandidates(raw, { parent_layer_id: "a", child_layer_id: relationTargetLayerId(raw, "r1"), attached_relation_id: "r1", waypoints: [{ x: 250, y: 25 }], instance: "insert" });
+    const expanded = expandRelationCandidates(raw, { parent_layer_id: "a", child_layer_id: relationTargetLayerId(raw, "r1"), attached_relation_id: "r1", waypoints: [{ x: 250, y: 25 }] });
     expect(expanded.map((row) => [row.parent_layer_id, row.child_layer_id])).toEqual([["a", "c"], ["b", "c"]]);
     expect(expanded.every((row) => row.attached_relation_id === "r1" && row.waypoints?.[0]?.x === 250)).toBe(true);
   });

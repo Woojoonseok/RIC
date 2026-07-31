@@ -93,6 +93,65 @@ def _uuid_or_none(value: Any) -> uuid.UUID | None:
         return None
 
 
+def _project_reference_or_404(
+    db: Session,
+    model: type[models.Base],
+    project_id: uuid.UUID,
+    row_id: uuid.UUID | None,
+    label: str,
+) -> Any | None:
+    if row_id is None:
+        return None
+    row = db.get(model, row_id)
+    if row is None or row.project_id != project_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"{label} not found")
+    return row
+
+
+def _validate_relation_references(
+    db: Session,
+    project_id: uuid.UUID,
+    data: dict[str, Any],
+) -> None:
+    references = (
+        ("key_layout_type_id", models.KeyLayoutType, "Key Layout Type"),
+        ("key_drawing_type_id", models.KeyDrawingType, "Key Drawing Type"),
+        ("parent_drawing_type_id", models.KeyDrawingType, "Parent Drawing Type"),
+        ("child_drawing_type_id", models.KeyDrawingType, "Child Drawing Type"),
+    )
+    for field, model, label in references:
+        if field in data and data[field] is not None:
+            _project_reference_or_404(db, model, project_id, data[field], label)
+
+
+def _replace_relation_extras(
+    db: Session,
+    project_id: uuid.UUID,
+    relation: models.LayerRelation,
+    extras: list[schemas.RelationExtraCreate],
+) -> None:
+    db.query(models.RelationExtra).filter(models.RelationExtra.relation_id == relation.id).delete(
+        synchronize_session=False
+    )
+    for index, extra in enumerate(extras):
+        _project_reference_or_404(db, models.LayerMaster, project_id, extra.layer_master_id, "Extra Layer")
+        _project_reference_or_404(
+            db,
+            models.KeyDrawingType,
+            project_id,
+            extra.key_drawing_type_id,
+            "Extra Drawing Type",
+        )
+        db.add(models.RelationExtra(
+            project_id=project_id,
+            relation_id=relation.id,
+            layer_master_id=extra.layer_master_id,
+            key_drawing_type_id=extra.key_drawing_type_id,
+            sort_order=index,
+        ))
+    db.flush()
+
+
 def _assert_restore_payload_scope(
     db: Session,
     project_id: uuid.UUID,
@@ -195,11 +254,38 @@ def _dump_relation(relation: models.LayerRelation) -> dict[str, Any]:
         "id": str(relation.id),
         "parent_layer_id": str(relation.parent_layer_id) if relation.parent_layer_id else None,
         "child_layer_id": str(relation.child_layer_id) if relation.child_layer_id else None,
+        "key_layout_type_id": str(relation.key_layout_type_id) if relation.key_layout_type_id else None,
+        "key_drawing_type_id": (
+            str(relation.key_drawing_type_id) if relation.key_drawing_type_id else None
+        ),
         "relation_type": relation.relation_type,
         "relation_style_id": str(relation.relation_style_id) if relation.relation_style_id else None,
+        "parent_drawing_type_id": (
+            str(relation.parent_drawing_type_id) if relation.parent_drawing_type_id else None
+        ),
+        "child_drawing_type_id": (
+            str(relation.child_drawing_type_id) if relation.child_drawing_type_id else None
+        ),
+        "comment": relation.comment,
+        "key_priority": relation.key_priority,
+        "priority_rule": relation.priority_rule,
+        "final_type": relation.final_type,
+        "key_purpose": relation.key_purpose,
+        "placement": relation.placement,
+        "stack_type": relation.stack_type,
+        "inregi": relation.inregi,
+        "inner_size": relation.inner_size,
+        "outer_size": relation.outer_size,
         "source_port": relation.source_port,
         "target_port": relation.target_port,
-        "instance": relation.instance,
+        "extras": [
+            {
+                "layer_master_id": str(extra.layer_master_id),
+                "key_drawing_type_id": str(extra.key_drawing_type_id),
+                "sort_order": extra.sort_order,
+            }
+            for extra in relation.extras
+        ],
     }
 
 
@@ -226,6 +312,14 @@ def restore_graph(
     layer_master_ids = {
         row.id
         for row in db.query(models.LayerMaster).filter(models.LayerMaster.project_id == project_id).all()
+    }
+    key_layout_type_ids = {
+        row.id
+        for row in db.query(models.KeyLayoutType).filter(models.KeyLayoutType.project_id == project_id).all()
+    }
+    key_drawing_type_ids = {
+        row.id
+        for row in db.query(models.KeyDrawingType).filter(models.KeyDrawingType.project_id == project_id).all()
     }
 
     db.query(models.LayerRelation).filter(
@@ -316,7 +410,6 @@ def restore_graph(
         ))
     db.flush()
 
-    relation_keys: set[tuple[uuid.UUID | None, uuid.UUID | None, str]] = set()
     inserted_relation_ids: set[uuid.UUID] = set()
     # Remember each relation's attachment so it can be wired up after every
     # relation row exists (attached_relation_id is a self-referencing FK).
@@ -328,25 +421,62 @@ def restore_graph(
             continue
         if relation.parent_layer_id is not None and relation.parent_layer_id == relation.child_layer_id:
             continue
-        key = (relation.parent_layer_id, relation.child_layer_id, (relation.instance or "").strip().lower())
-        if key in relation_keys:
-            continue
-        relation_keys.add(key)
         inserted_relation_ids.add(relation.id)
-        db.add(models.LayerRelation(
+        relation_row = models.LayerRelation(
             id=relation.id,
             project_id=project_id,
             align_tree_id=align_tree_id,
             parent_layer_id=relation.parent_layer_id,
             child_layer_id=relation.child_layer_id,
+            key_layout_type_id=(
+                relation.key_layout_type_id if relation.key_layout_type_id in key_layout_type_ids else None
+            ),
+            key_drawing_type_id=(
+                relation.key_drawing_type_id
+                if relation.key_drawing_type_id in key_drawing_type_ids
+                else None
+            ),
             relation_type=relation.relation_type,
             relation_style_id=relation.relation_style_id if relation.relation_style_id in relation_style_ids else None,
+            parent_drawing_type_id=(
+                relation.parent_drawing_type_id
+                if relation.parent_drawing_type_id in key_drawing_type_ids
+                else None
+            ),
+            child_drawing_type_id=(
+                relation.child_drawing_type_id
+                if relation.child_drawing_type_id in key_drawing_type_ids
+                else None
+            ),
+            comment=relation.comment,
+            key_priority=relation.key_priority,
+            priority_rule=relation.priority_rule,
+            final_type=relation.final_type,
+            key_purpose=relation.key_purpose,
+            placement=relation.placement,
+            stack_type=relation.stack_type,
+            inregi=relation.inregi,
+            inner_size=relation.inner_size,
+            outer_size=relation.outer_size,
             source_port=relation.source_port,
             target_port=relation.target_port,
             same_group=relation.same_group,
             waypoints=relation.waypoints,
-            instance=relation.instance,
-        ))
+        )
+        db.add(relation_row)
+        for index, extra in enumerate(relation.extras):
+            if (
+                extra.layer_master_id not in layer_master_ids
+                or extra.key_drawing_type_id not in key_drawing_type_ids
+            ):
+                continue
+            relation_row.extras.append(models.RelationExtra(
+                id=extra.id,
+                project_id=project_id,
+                layer_master_id=extra.layer_master_id,
+                key_drawing_type_id=extra.key_drawing_type_id,
+                sort_order=index,
+            ))
         if relation.attached_relation_id is not None:
             attachments.append((relation.id, relation.attached_relation_id))
 
@@ -393,6 +523,11 @@ def create_layer(
             master = db.get(models.LayerMaster, payload.layer_master_id)
             if master is None or master.project_id != project_id:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Layer Master not found")
+            if not (master.layer_number or "").strip():
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Layer number is required",
+                )
             already_added = (
                 db.query(models.Layer.id)
                 .filter(
@@ -409,6 +544,11 @@ def create_layer(
             _apply_master_to_layer(db, master, layer)
             sync_layer_master(db, master, create_missing=False)
         else:
+            if not (payload.step or "").strip():
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Layer number is required",
+                )
             preset = db.get(models.BoxPreset, payload.box_preset_id) if payload.box_preset_id else None
             master = models.LayerMaster(
                 project_id=project_id,
@@ -511,6 +651,11 @@ def update_layer(
 ) -> models.Layer:
     layer = crud.get_layer_or_404(db, project_id, align_tree_id, layer_id)
     updates = payload.model_dump(exclude_unset=True)
+    if "step" in updates and not (updates["step"] or "").strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Layer number is required",
+        )
     changed_fields = sorted(updates)
     before = _audit_field_values(layer, changed_fields)
     if updates.get("box_preset_id") is not None:
@@ -665,7 +810,6 @@ def _merge_layers_in_db(
         ).all()
     }
     all_layouts[anchor.id] = anchor_layout
-    kept_keys: set[tuple[uuid.UUID, uuid.UUID, str]] = set()
     relation_specs: list[dict[str, object]] = []
     relations_to_delete: list[models.LayerRelation] = []
 
@@ -674,16 +818,12 @@ def _merge_layers_in_db(
         child_selected = relation.child_layer_id in selected_ids
         next_parent = anchor.id if parent_selected else relation.parent_layer_id
         next_child = anchor.id if child_selected else relation.child_layer_id
-        key = (next_parent, next_child, (relation.instance or "").strip().lower())
-
         if next_parent == next_child:
             relations_to_delete.append(relation)
             continue
 
         if parent_selected or child_selected:
             relations_to_delete.append(relation)
-            if key in kept_keys:
-                continue
             source_layout = all_layouts.get(next_parent)
             target_layout = all_layouts.get(next_child)
             relation_specs.append(
@@ -692,28 +832,49 @@ def _merge_layers_in_db(
                     "align_tree_id": align_tree_id,
                     "parent_layer_id": next_parent,
                     "child_layer_id": next_child,
+                    "key_layout_type_id": relation.key_layout_type_id,
+                    "key_drawing_type_id": relation.key_drawing_type_id,
                     "relation_type": relation.relation_type,
                     "relation_style_id": relation.relation_style_id,
+                    "parent_drawing_type_id": relation.parent_drawing_type_id,
+                    "child_drawing_type_id": relation.child_drawing_type_id,
+                    "comment": relation.comment,
+                    "key_priority": relation.key_priority,
+                    "priority_rule": relation.priority_rule,
+                    "final_type": relation.final_type,
+                    "key_purpose": relation.key_purpose,
+                    "placement": relation.placement,
+                    "stack_type": relation.stack_type,
+                    "inregi": relation.inregi,
+                    "inner_size": relation.inner_size,
+                    "outer_size": relation.outer_size,
                     "source_port": _port_towards(source_layout, target_layout) if source_layout and target_layout else relation.source_port,
                     "target_port": _port_towards(target_layout, source_layout) if source_layout and target_layout else relation.target_port,
                     "same_group": relation.same_group,
-                    "instance": relation.instance,
+                    "extras": [
+                        (extra.layer_master_id, extra.key_drawing_type_id)
+                        for extra in relation.extras
+                    ],
                 }
             )
-            kept_keys.add(key)
             continue
-
-        if key in kept_keys:
-            relations_to_delete.append(relation)
-        else:
-            kept_keys.add(key)
 
     for relation in relations_to_delete:
         db.delete(relation)
     db.flush()
 
     for spec in relation_specs:
-        db.add(models.LayerRelation(**spec))
+        extras = spec.pop("extras", [])
+        relation = models.LayerRelation(**spec)
+        db.add(relation)
+        db.flush()
+        for index, (layer_master_id, drawing_type_id) in enumerate(extras):
+            relation.extras.append(models.RelationExtra(
+                project_id=project_id,
+                layer_master_id=layer_master_id,
+                key_drawing_type_id=drawing_type_id,
+                sort_order=index,
+            ))
 
     for layer in layers[1:]:
         db.delete(layer)
@@ -1345,14 +1506,18 @@ def split_layer(
         row.id
         for row in db.query(models.RelationStyle).filter(models.RelationStyle.project_id == project_id).all()
     }
-    existing_keys = {
-        (relation.parent_layer_id, relation.child_layer_id, (relation.instance or "").strip().lower())
-        for relation in db.query(models.LayerRelation).filter(
-            models.LayerRelation.project_id == project_id,
-            models.LayerRelation.align_tree_id == align_tree_id,
-        ).all()
+    key_layout_type_ids = {
+        row.id
+        for row in db.query(models.KeyLayoutType).filter(models.KeyLayoutType.project_id == project_id).all()
     }
-
+    key_drawing_type_ids = {
+        row.id
+        for row in db.query(models.KeyDrawingType).filter(models.KeyDrawingType.project_id == project_id).all()
+    }
+    layer_master_ids = {
+        row.id
+        for row in db.query(models.LayerMaster).filter(models.LayerMaster.project_id == project_id).all()
+    }
     relation_specs = stored_relations if isinstance(stored_relations, list) and stored_relations else []
     if not relation_specs:
         relation_specs = []
@@ -1385,28 +1550,100 @@ def split_layer(
             continue
         if parent_id not in existing_layer_ids or child_id not in existing_layer_ids:
             continue
-        instance = raw_relation.get("instance")
-        key = (parent_id, child_id, (str(instance).strip().lower() if instance else ""))
-        if key in existing_keys:
-            continue
         relation_id = _uuid_or_none(raw_relation.get("id")) or uuid.uuid4()
         if db.get(models.LayerRelation, relation_id) is not None:
             relation_id = uuid.uuid4()
         relation_style_id = _uuid_or_none(raw_relation.get("relation_style_id"))
-        db.add(models.LayerRelation(
+        key_layout_type_id = _uuid_or_none(raw_relation.get("key_layout_type_id"))
+        key_drawing_type_id = _uuid_or_none(raw_relation.get("key_drawing_type_id"))
+        parent_drawing_type_id = _uuid_or_none(raw_relation.get("parent_drawing_type_id"))
+        child_drawing_type_id = _uuid_or_none(raw_relation.get("child_drawing_type_id"))
+        relation_row = models.LayerRelation(
             id=relation_id,
             project_id=project_id,
             align_tree_id=align_tree_id,
             parent_layer_id=parent_id,
             child_layer_id=child_id,
+            key_layout_type_id=(
+                key_layout_type_id if key_layout_type_id in key_layout_type_ids else None
+            ),
+            key_drawing_type_id=(
+                key_drawing_type_id if key_drawing_type_id in key_drawing_type_ids else None
+            ),
             relation_type=str(raw_relation.get("relation_type") or "parent_child"),
             relation_style_id=relation_style_id if relation_style_id in relation_style_ids else None,
+            parent_drawing_type_id=(
+                parent_drawing_type_id if parent_drawing_type_id in key_drawing_type_ids else None
+            ),
+            child_drawing_type_id=(
+                child_drawing_type_id if child_drawing_type_id in key_drawing_type_ids else None
+            ),
+            comment=str(raw_relation.get("comment")) if raw_relation.get("comment") is not None else None,
+            key_priority=(
+                str(raw_relation.get("key_priority"))
+                if raw_relation.get("key_priority") is not None
+                else None
+            ),
+            priority_rule=(
+                str(raw_relation.get("priority_rule"))
+                if raw_relation.get("priority_rule") is not None
+                else None
+            ),
+            final_type=(
+                str(raw_relation.get("final_type"))
+                if raw_relation.get("final_type") is not None
+                else None
+            ),
+            key_purpose=(
+                str(raw_relation.get("key_purpose"))
+                if raw_relation.get("key_purpose") is not None
+                else None
+            ),
+            placement=(
+                str(raw_relation.get("placement"))
+                if raw_relation.get("placement") is not None
+                else None
+            ),
+            stack_type=(
+                str(raw_relation.get("stack_type"))
+                if raw_relation.get("stack_type") is not None
+                else None
+            ),
+            inregi=(
+                str(raw_relation.get("inregi"))
+                if raw_relation.get("inregi") is not None
+                else None
+            ),
+            inner_size=(
+                str(raw_relation.get("inner_size"))
+                if raw_relation.get("inner_size") is not None
+                else None
+            ),
+            outer_size=(
+                str(raw_relation.get("outer_size"))
+                if raw_relation.get("outer_size") is not None
+                else None
+            ),
             source_port=str(raw_relation.get("source_port") or "right"),
             target_port=str(raw_relation.get("target_port") or "left"),
-            instance=str(instance) if instance else None,
-        ))
-        existing_keys.add(key)
-
+        )
+        db.add(relation_row)
+        db.flush()
+        raw_extras = raw_relation.get("extras")
+        if isinstance(raw_extras, list):
+            for index, raw_extra in enumerate(raw_extras):
+                if not isinstance(raw_extra, dict):
+                    continue
+                layer_master_id = _uuid_or_none(raw_extra.get("layer_master_id"))
+                drawing_type_id = _uuid_or_none(raw_extra.get("key_drawing_type_id"))
+                if layer_master_id not in layer_master_ids or drawing_type_id not in key_drawing_type_ids:
+                    continue
+                relation_row.extras.append(models.RelationExtra(
+                    project_id=project_id,
+                    layer_master_id=layer_master_id,
+                    key_drawing_type_id=drawing_type_id,
+                    sort_order=index,
+                ))
     try:
         db.flush()
         report = validate_project_graph(db, project_id, align_tree_id)
@@ -1675,15 +1912,18 @@ def create_relation(
         crud.get_layer_or_404(db, project_id, align_tree_id, payload.child_layer_id)
     if payload.attached_relation_id is not None:
         crud.get_relation_or_404(db, project_id, align_tree_id, payload.attached_relation_id)
-    data = payload.model_dump()
+    data = payload.model_dump(exclude={"extras"})
+    _validate_relation_references(db, project_id, data)
     if data.get("relation_style_id") is None:
         data["relation_style_id"] = default_relation_style_id(db, project_id)
-    else:
-        crud.get_relation_style_or_404(db, project_id, data["relation_style_id"])
+    if data["relation_style_id"] is not None:
+        relation_style = crud.get_relation_style_or_404(db, project_id, data["relation_style_id"])
+        data["relation_type"] = relation_style.name
     relation = models.LayerRelation(project_id=project_id, align_tree_id=align_tree_id, **data)
     db.add(relation)
     try:
         db.flush()
+        _replace_relation_extras(db, project_id, relation, payload.extras)
         report = validate_project_graph(db, project_id, align_tree_id)
         if _blocking_issues(report):
             db.rollback()
@@ -1701,7 +1941,7 @@ def create_relation(
                 "parent_layer_id": str(relation.parent_layer_id) if relation.parent_layer_id else None,
                 "child_layer_id": str(relation.child_layer_id) if relation.child_layer_id else None,
                 "relation_type": relation.relation_type,
-                "instance": relation.instance,
+                "extra_count": len(relation.extras),
             }},
         )
         db.commit()
@@ -1722,19 +1962,32 @@ def update_relation(
     db: Session = Depends(get_db),
 ) -> models.LayerRelation:
     relation = crud.get_relation_or_404(db, project_id, align_tree_id, relation_id)
-    changed_fields = sorted(payload.model_dump(exclude_unset=True))
+    data = payload.model_dump(exclude_unset=True)
+    extras = data.pop("extras", None)
+    changed_fields = sorted(data)
     before = _audit_field_values(relation, changed_fields)
     for layer_id in (payload.parent_layer_id, payload.child_layer_id):
         if layer_id is not None:
             crud.get_layer_or_404(db, project_id, align_tree_id, layer_id)
-    if payload.relation_style_id is not None:
-        crud.get_relation_style_or_404(db, project_id, payload.relation_style_id)
+    _validate_relation_references(db, project_id, data)
+    if data.get("relation_style_id") is not None:
+        relation_style = crud.get_relation_style_or_404(db, project_id, data["relation_style_id"])
+        data["relation_type"] = relation_style.name
+        if "relation_type" not in changed_fields:
+            changed_fields.append("relation_type")
     if payload.attached_relation_id is not None:
         crud.get_relation_or_404(db, project_id, align_tree_id, payload.attached_relation_id)
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    for field, value in data.items():
         setattr(relation, field, value)
     try:
         db.flush()
+        if extras is not None:
+            _replace_relation_extras(
+                db,
+                project_id,
+                relation,
+                [schemas.RelationExtraCreate.model_validate(extra) for extra in extras],
+            )
         report = validate_project_graph(db, project_id, align_tree_id)
         if _blocking_issues(report):
             db.rollback()
@@ -1769,7 +2022,24 @@ def delete_relation(
     relation = crud.get_relation_or_404(db, project_id, align_tree_id, relation_id)
     snapshot = _audit_field_values(
         relation,
-        ["parent_layer_id", "child_layer_id", "relation_type", "instance"],
+        [
+            "parent_layer_id",
+            "child_layer_id",
+            "key_layout_type_id",
+            "key_drawing_type_id",
+            "relation_type",
+            "parent_drawing_type_id",
+            "child_drawing_type_id",
+            "key_priority",
+            "priority_rule",
+            "final_type",
+            "key_purpose",
+            "placement",
+            "stack_type",
+            "inregi",
+            "inner_size",
+            "outer_size",
+        ],
     )
     db.delete(relation)
     _audit_graph_mutation(

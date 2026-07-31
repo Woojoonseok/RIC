@@ -59,7 +59,7 @@ onMounted(() => void project.bootstrap());
 
 <template>
   <section class="page project-board-page">
-    <div class="page-title board-title"><div><p class="eyebrow">PUBLIC PROJECT BOARD</p><h1>사내 프로젝트</h1><p>공개된 프로젝트를 살펴보고, 참여하거나 새 프로젝트를 시작하세요.</p></div><button class="primary" @click="createOpen = !createOpen">{{ createOpen ? '닫기' : '프로젝트 만들기' }}</button></div>
+    <div class="page-title board-title"><div><p class="eyebrow">PROJECTS</p><h1>전체 프로젝트 목록</h1><p>프로젝트를 살펴보고, 참여하거나 새 프로젝트를 시작하세요.</p></div><button class="primary" @click="createOpen = !createOpen">{{ createOpen ? '닫기' : '프로젝트 만들기' }}</button></div>
 
     <section v-if="createOpen" class="panel board-create-panel">
       <div><p class="eyebrow">NEW PROJECT</p><h2>프로젝트 게시물 만들기</h2><p>프로젝트 내부 데이터는 멤버에게만 공개됩니다.</p></div>
@@ -77,7 +77,7 @@ onMounted(() => void project.bootstrap());
       <article v-for="row in rows" :key="row.id" class="panel project-post-card">
         <div class="project-post-meta"><span class="access-badge" :class="role(row) || (row.access_request_status === 'pending' ? 'pending' : 'public')">{{ accessLabel(row) }}</span><small>{{ new Date(row.updated_at).toLocaleDateString() }}</small></div>
         <RouterLink :to="{ name: 'project-home', params: { projectId: row.id } }" class="project-post-link"><h2>{{ row.name }}</h2><p>{{ row.description || '프로젝트 소개가 아직 없습니다.' }}</p></RouterLink>
-        <div class="project-post-stats"><span>생성자 <b>{{ creatorName(row) }}</b></span><span>멤버 <b>{{ row.member_count ?? 0 }}</b></span><span>Align Tree <b>{{ row.align_tree_count ?? 0 }}</b></span></div>
+        <div class="project-post-stats"><span>생성자 <b>{{ creatorName(row) }}</b></span><span>멤버 <b>{{ row.member_count ?? 0 }}</b></span><span>Key Editor <b>2</b></span></div>
         <button v-if="row.is_legacy_unclaimed" class="primary subtle legacy-claim" @click="claimLegacy(row)">기존 프로젝트 가져오기</button>
       </article>
       <div v-if="!rows.length" class="panel board-empty"><strong>조건에 맞는 프로젝트가 없습니다.</strong><p>새 프로젝트 게시물을 만들어 작업을 시작해 보세요.</p></div>

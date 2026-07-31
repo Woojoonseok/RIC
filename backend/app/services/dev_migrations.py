@@ -32,6 +32,7 @@ def _add_timestamp_columns(target_engine: Engine) -> None:
         "project_edit_leases",
         "layers",
         "layer_relations",
+        "relation_extras",
         "relation_styles",
         "box_presets",
         "key_layout_types",
@@ -110,6 +111,32 @@ def _add_actor_columns(target_engine: Engine) -> None:
     if "legacy_claim_ip_hash" not in columns:
         with target_engine.begin() as connection:
             connection.execute(text("ALTER TABLE actors ADD COLUMN legacy_claim_ip_hash VARCHAR(64)"))
+
+
+def _add_align_tree_columns(target_engine: Engine) -> None:
+    if not target_engine.url.drivername.startswith("sqlite"):
+        return
+    inspector = inspect(target_engine)
+    if "align_trees" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("align_trees")}
+    with target_engine.begin() as connection:
+        if "process_name" not in columns:
+            connection.execute(text("ALTER TABLE align_trees ADD COLUMN process_name VARCHAR(160)"))
+        if "gds_name" not in columns:
+            connection.execute(text("ALTER TABLE align_trees ADD COLUMN gds_name VARCHAR(160)"))
+        if "layer_process_names" not in columns:
+            connection.execute(
+                text("ALTER TABLE align_trees ADD COLUMN layer_process_names JSON NOT NULL DEFAULT '{}'")
+            )
+        if "layer_gds_names" not in columns:
+            connection.execute(
+                text("ALTER TABLE align_trees ADD COLUMN layer_gds_names JSON NOT NULL DEFAULT '{}'")
+            )
+        if "final_table_cells" not in columns:
+            connection.execute(
+                text("ALTER TABLE align_trees ADD COLUMN final_table_cells JSON NOT NULL DEFAULT '{}'")
+            )
 
 
 def _unique_columns(target_engine: Engine, table_name: str) -> set[tuple[str, ...]]:
@@ -224,14 +251,33 @@ def _rebuild_scoped_tables(target_engine: Engine) -> None:
             models.LayerRelation,
             {
                 "align_tree_id",
+                "key_layout_type_id",
+                "key_drawing_type_id",
                 "relation_style_id",
+                "parent_drawing_type_id",
+                "child_drawing_type_id",
+                "comment",
+                "key_priority",
+                "priority_rule",
+                "final_type",
+                "key_purpose",
+                "placement",
+                "stack_type",
+                "inregi",
+                "inner_size",
+                "outer_size",
                 "same_group",
                 "attached_relation_id",
                 "waypoints",
-                "instance",
             },
-            ("align_tree_id", "parent_layer_id", "child_layer_id", "instance"),
+            None,
             {"parent_layer_id", "child_layer_id"},
+        ),
+        (
+            models.RelationExtra,
+            {"project_id", "relation_id", "layer_master_id", "key_drawing_type_id", "sort_order"},
+            ("relation_id", "sort_order"),
+            None,
         ),
         (models.GraphLayout, {"align_tree_id"}, ("align_tree_id", "layer_id"), None),
         (models.ShapeStyle, {"align_tree_id"}, ("align_tree_id", "layer_id"), None),
@@ -239,13 +285,24 @@ def _rebuild_scoped_tables(target_engine: Engine) -> None:
     )
     for model, columns, expected_unique, nullable_columns in graph_specs:
         table_name = model.__table__.name
-        if _needs_rebuild(
+        needs_rebuild = _needs_rebuild(
             target_engine,
             table_name,
             required_columns=columns,
             required_unique=expected_unique,
             nullable_columns=nullable_columns,
-        ):
+        )
+        if model is models.LayerRelation and table_name in inspect(target_engine).get_table_names():
+            relation_columns = {
+                column["name"] for column in inspect(target_engine).get_columns(table_name)
+            }
+            legacy_unique = ("align_tree_id", "parent_layer_id", "child_layer_id")
+            needs_rebuild = (
+                needs_rebuild
+                or "instance" in relation_columns
+                or legacy_unique in _unique_columns(target_engine, table_name)
+            )
+        if needs_rebuild:
             _rebuild_sqlite_table(target_engine, model)
 
 
@@ -412,6 +469,7 @@ def run_local_dev_migrations(target_engine: Engine | None = None) -> None:
     _add_timestamp_columns(active_engine)
     _add_actor_columns(active_engine)
     _add_project_columns(active_engine)
+    _add_align_tree_columns(active_engine)
     _rebuild_scoped_tables(active_engine)
     models.Base.metadata.create_all(bind=active_engine)
     _migrate_project_rows(active_engine)

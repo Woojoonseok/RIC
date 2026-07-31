@@ -19,7 +19,20 @@ function exportBaseName(graph: Graph) {
 export function exportExcel(graph: Graph, template = false) {
   const workbook = XLSX.utils.book_new();
   const layerRows = template ? [["Layer", "Step", "Property", "Align", "Align Side", "Group"]] : graph.layers.map((row) => [row.name, row.step, row.layer_property, row.align, row.align_side, row.pending_group]);
-  const relationRows = template ? [["Parent", "Child", "Type", "Instance", "Source Port", "Target Port"]] : graph.relations.map((row) => [row.parent_layer_id, row.child_layer_id, row.relation_type, row.instance, row.source_port, row.target_port]);
+  const relationRows = template
+    ? [[
+        "Key Layout Type", "Key Drawing Type", "Parent", "Child", "Comment", "Relation Type",
+        "Parent Drawing", "Child Drawing", "Key Priority", "Priority Rule",
+        "Type", "Key Purpose", "Placement", "Stack Type", "INREGI",
+        "Inner Size", "Outer Size", "Source Port", "Target Port", "Extra Count",
+      ]]
+    : graph.relations.map((row) => [
+        row.key_layout_type_id, row.key_drawing_type_id, row.parent_layer_id, row.child_layer_id,
+        row.comment, row.relation_type, row.parent_drawing_type_id, row.child_drawing_type_id,
+        row.key_priority, row.priority_rule, row.final_type, row.key_purpose, row.placement,
+        row.stack_type, row.inregi, row.inner_size, row.outer_size,
+        row.source_port, row.target_port, row.extras.length,
+      ]);
   const validationRows = template ? [["Severity", "Code", "Message"]] : graph.validation.issues.map((row) => [row.severity, row.code, row.message]);
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(layerRows), "Align_Input");
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(relationRows), "Layer_Relation");
@@ -34,8 +47,8 @@ export function exportExcelTemplate() {
     ["S01", "WL", "Main", "AA01", "LEFT", "", ""],
   ]), "Align_Input");
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([
-    ["Parent_Layer", "Child_Layer", "Relation_Type", "Instance", "Same Group"],
-    ["WL", "BL", "Align", "", ""],
+    ["Parent_Layer", "Child_Layer", "Relation_Type", "Source_Port", "Target_Port", "Same Group"],
+    ["WL", "BL", "Align", "bottom", "top", ""],
   ]), "Layer_Relation");
   XLSX.writeFile(workbook, "RIC_Align_Template.xlsx");
 }

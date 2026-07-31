@@ -39,7 +39,7 @@ def list_align_trees(
 def create_align_tree(
     project_id: uuid.UUID,
     payload: schemas.AlignTreeCreate,
-    _context: ProjectContext = Depends(require_project_mutation),
+    context: ProjectContext = Depends(require_project_mutation),
     db: Session = Depends(get_db),
 ) -> models.AlignTree:
     has_tree = (
@@ -60,6 +60,11 @@ def create_align_tree(
         project_id=project_id,
         name=name,
         description=payload.description,
+        process_name=payload.process_name,
+        gds_name=payload.gds_name,
+        layer_process_names=payload.layer_process_names,
+        layer_gds_names=payload.layer_gds_names,
+        final_table_cells=payload.final_table_cells,
         created_by_actor_id=context.actor.id,
         is_default=True,
     )
@@ -104,7 +109,15 @@ def update_align_tree(
     db: Session = Depends(get_db),
 ) -> models.AlignTree:
     tree = _tree_or_404(db, project_id, align_tree_id)
-    before = {"name": tree.name, "description": tree.description}
+    before = {
+        "name": tree.name,
+        "description": tree.description,
+        "process_name": tree.process_name,
+        "gds_name": tree.gds_name,
+        "layer_process_names": tree.layer_process_names,
+        "layer_gds_names": tree.layer_gds_names,
+        "final_table_cells": tree.final_table_cells,
+    }
     for field, value in payload.model_dump(exclude_unset=True).items():
         if field == "name" and value is not None:
             value = value.strip()
@@ -127,6 +140,11 @@ def update_align_tree(
                 "after": {
                     "name": tree.name,
                     "description": tree.description,
+                    "process_name": tree.process_name,
+                    "gds_name": tree.gds_name,
+                    "layer_process_names": tree.layer_process_names,
+                    "layer_gds_names": tree.layer_gds_names,
+                    "final_table_cells": tree.final_table_cells,
                 },
             },
         )

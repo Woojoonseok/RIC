@@ -1,4 +1,16 @@
 <script setup lang="ts">
+import {
+  BadgeCheck,
+  BookOpen,
+  Clock3,
+  KeyRound,
+  Layers,
+  LayoutDashboard,
+  Settings,
+  Table2,
+  TableProperties,
+  Waypoints,
+} from "@lucide/vue";
 import { computed, ref, watch } from "vue";
 import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
 import ChangeHistoryDrawer from "../components/history/ChangeHistoryDrawer.vue";
@@ -17,6 +29,9 @@ const historyOpen = ref(false);
 
 const projectId = computed(() => String(route.params.projectId || ""));
 const treeId = computed(() => String(route.params.treeId || ""));
+const routeName = computed(() => String(route.name || ""));
+const isAlignKeyWorkspace = computed(() => routeName.value === "align-key-editor");
+const isKeyEditorRoute = computed(() => Boolean(treeId.value) || isAlignKeyWorkspace.value || routeName.value === "align-tree-list");
 const projectInitial = computed(() => project.currentProject?.name.trim().charAt(0).toUpperCase() || "R");
 const pendingRequests = computed(() => project.accessRequests.filter((row) => row.status === "pending").length);
 const hasSidebar = computed(() => Boolean(project.currentProject && project.hasMembership));
@@ -25,18 +40,19 @@ const selectedHistoryTargetId = computed(() => {
   return app.selection[0].id;
 });
 const historyScope = computed(() => {
-  const routeName = String(route.name);
-  if (routeName === "project-reference") return { title: "기준정보 변경 이력", prefixes: ["reference."] };
-  if (routeName === "project-layers") return { title: "Layer 정보 변경 이력", prefixes: ["layer_master."] };
-  if (routeName === "align-tree-list") return { title: "Align Tree 변경 이력", prefixes: ["align_tree."] };
-  if (routeName === "project-settings") return { title: "프로젝트 설정 변경 이력", prefixes: ["project.", "access.", "member."] };
-  if (routeName === "tree-data") {
+  const name = routeName.value;
+  if (name === "project-reference") return { title: "기준정보 변경 이력", prefixes: ["reference."] };
+  if (name === "project-layers") return { title: "Layer 정보 변경 이력", prefixes: ["layer_master."] };
+  if (name === "align-tree-list") return { title: "Key Editor 변경 이력", prefixes: ["align_tree."] };
+  if (name === "align-key-editor") return { title: "Align Key 변경 이력", prefixes: [] as string[] };
+  if (name === "project-settings") return { title: "프로젝트 설정 변경 이력", prefixes: ["project.", "access.", "member."] };
+  if (name === "tree-data") {
     return {
       title: selectedHistoryTargetId.value ? "선택한 Relation 변경 이력" : "Layer Relation 변경 이력",
       prefixes: ["relation."],
     };
   }
-  if (routeName === "tree-editor") {
+  if (name === "tree-editor") {
     const selectedKind = app.selection.length === 1 ? app.selection[0].kind : "";
     const label = selectedKind === "layer" ? "선택한 Layer" : selectedKind === "relation" ? "선택한 Relation" : selectedKind === "text" ? "선택한 Text Box" : "Editor";
     return {
@@ -44,24 +60,24 @@ const historyScope = computed(() => {
       prefixes: ["layer.", "layers.", "layout.", "style.", "relation.", "text_box.", "graph."],
     };
   }
-  if (["tree-validation", "tree-export"].includes(routeName)) {
+  if (["tree-validation", "tree-export"].includes(name)) {
     return { title: "Align Tree 변경 이력", prefixes: [] as string[] };
   }
   return { title: "프로젝트 전체 변경 이력", prefixes: [] as string[] };
 });
 
 const projectNav = [
-  { name: "project-home", label: "Overview", icon: "OV" },
-  { name: "project-reference", label: "기준정보", icon: "RF" },
-  { name: "project-layers", label: "Layer 정보", icon: "LY" },
-  { name: "align-tree-list", label: "Editor", icon: "ED" },
+  { name: "project-home", label: "Dashboard", icon: LayoutDashboard },
+  { name: "project-reference", label: "기준정보", icon: BookOpen },
+  { name: "project-layers", label: "Layer 정보", icon: Layers },
+  { name: "align-tree-list", label: "Key Editors", icon: KeyRound },
 ] as const;
 
 const treeNav = [
-  { name: "tree-data", label: "Data", icon: "DT" },
-  { name: "tree-editor", label: "Editor", icon: "ED" },
-  { name: "tree-validation", label: "Validation", icon: "VL" },
-  { name: "tree-export", label: "Export", icon: "EX" },
+  { name: "tree-data", label: "Overlay Key Data", icon: TableProperties },
+  { name: "tree-editor", label: "Overlay Key Editor", icon: Waypoints },
+  { name: "tree-validation", label: "Validation", icon: BadgeCheck },
+  { name: "tree-export", label: "Overlay Key Table", icon: Table2 },
 ] as const;
 
 async function load(id: string) {
@@ -146,33 +162,58 @@ onBeforeRouteLeave(async (to) => {
             v-for="item in projectNav"
             :key="item.name"
             class="sidebar-nav-link"
+            :class="{ 'section-active': item.name === 'align-tree-list' && isKeyEditorRoute }"
+            :title="item.label"
             :to="{ name: item.name, params: { projectId } }"
           >
-            <span class="sidebar-nav-icon">{{ item.icon }}</span>
+            <span class="sidebar-nav-icon"><component :is="item.icon" :size="15" :stroke-width="1.8"/></span>
             <span>{{ item.label }}</span>
           </RouterLink>
         </section>
 
         <section v-if="treeId" class="sidebar-nav-group tree-nav-group">
           <div class="sidebar-group-heading">
-            <p class="sidebar-group-label">PROJECT EDITOR</p>
-            <RouterLink :to="{ name: 'align-tree-list', params: { projectId } }">정보</RouterLink>
+            <p class="sidebar-group-label">OVERLAY KEY</p>
+            <RouterLink :to="{ name: 'align-tree-list', params: { projectId } }">Editor 선택</RouterLink>
           </div>
           <div class="current-tree-card">
             <span class="tree-status-dot" :class="{ readonly: project.readOnly }"/>
             <div>
-              <strong>{{ project.currentTree?.name || "Align Tree" }}</strong>
-              <small>{{ project.readOnly ? "보기 전용" : project.autosaveLabel }}</small>
+              <strong>Overlay Key Editor</strong>
+              <small>{{ project.currentTree?.name || "Main" }} · {{ project.readOnly ? "보기 전용" : project.autosaveLabel }}</small>
             </div>
           </div>
           <RouterLink
             v-for="item in treeNav"
             :key="item.name"
             class="sidebar-nav-link tree-nav-link"
+            :title="item.label"
             :to="{ name: item.name, params: { projectId, treeId } }"
           >
-            <span class="sidebar-nav-icon">{{ item.icon }}</span>
+            <span class="sidebar-nav-icon"><component :is="item.icon" :size="15" :stroke-width="1.8"/></span>
             <span>{{ item.label }}</span>
+          </RouterLink>
+        </section>
+
+        <section v-else-if="isAlignKeyWorkspace" class="sidebar-nav-group tree-nav-group align-key-nav-group">
+          <div class="sidebar-group-heading">
+            <p class="sidebar-group-label">ALIGN KEY</p>
+            <RouterLink :to="{ name: 'align-tree-list', params: { projectId } }">Editor 선택</RouterLink>
+          </div>
+          <div class="current-tree-card align-key-context">
+            <span class="tree-status-dot"/>
+            <div>
+              <strong>Align Key Editor</strong>
+              <small>Table workspace</small>
+            </div>
+          </div>
+          <RouterLink
+            class="sidebar-nav-link tree-nav-link"
+            title="Align Key Table"
+            :to="{ name: 'align-key-editor', params: { projectId } }"
+          >
+            <span class="sidebar-nav-icon"><Table2 :size="15" :stroke-width="1.8"/></span>
+            <span>Align Key Table</span>
           </RouterLink>
         </section>
       </nav>
@@ -181,17 +222,19 @@ onBeforeRouteLeave(async (to) => {
         <button
           class="sidebar-nav-link sidebar-action-link"
           :class="{ active: historyOpen }"
+          title="변경 이력"
           @click="historyOpen = !historyOpen"
         >
-          <span class="sidebar-nav-icon">CH</span>
+          <span class="sidebar-nav-icon"><Clock3 :size="15" :stroke-width="1.8"/></span>
           <span>변경 이력</span>
         </button>
         <RouterLink
           v-if="project.canAdminProject"
           class="sidebar-nav-link"
+          title="Settings"
           :to="{ name: 'project-settings', params: { projectId } }"
         >
-          <span class="sidebar-nav-icon">ST</span>
+          <span class="sidebar-nav-icon"><Settings :size="15" :stroke-width="1.8"/></span>
           <span>Settings</span>
           <b v-if="pendingRequests" class="sidebar-count">{{ pendingRequests }}</b>
         </RouterLink>
@@ -228,7 +271,7 @@ onBeforeRouteLeave(async (to) => {
           aria-label="변경 이력 열기"
           title="변경 이력"
           @click="historyOpen = !historyOpen"
-        >CH</button>
+        ><Clock3 :size="15" :stroke-width="1.8"/></button>
       </div>
     </aside>
 

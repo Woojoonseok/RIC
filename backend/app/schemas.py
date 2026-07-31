@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
 class OrmModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
+
+
+FinalTableText = Annotated[str, Field(max_length=160)]
+FinalTableLayerTextMap = dict[str, FinalTableText]
+FinalTableCellMap = dict[str, FinalTableLayerTextMap]
 
 
 class ProjectCreate(BaseModel):
@@ -118,11 +123,21 @@ class AuditEventRead(BaseModel):
 class AlignTreeCreate(BaseModel):
     name: str = Field(min_length=1, max_length=160)
     description: str | None = None
+    process_name: str | None = Field(default=None, max_length=160)
+    gds_name: str | None = Field(default=None, max_length=160)
+    layer_process_names: FinalTableLayerTextMap = Field(default_factory=dict)
+    layer_gds_names: FinalTableLayerTextMap = Field(default_factory=dict)
+    final_table_cells: FinalTableCellMap = Field(default_factory=dict)
 
 
 class AlignTreeUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=160)
     description: str | None = None
+    process_name: str | None = Field(default=None, max_length=160)
+    gds_name: str | None = Field(default=None, max_length=160)
+    layer_process_names: FinalTableLayerTextMap = Field(default_factory=dict)
+    layer_gds_names: FinalTableLayerTextMap = Field(default_factory=dict)
+    final_table_cells: FinalTableCellMap = Field(default_factory=dict)
 
 
 class AlignTreeRead(OrmModel):
@@ -130,6 +145,11 @@ class AlignTreeRead(OrmModel):
     project_id: uuid.UUID
     name: str
     description: str | None
+    process_name: str | None
+    gds_name: str | None
+    layer_process_names: FinalTableLayerTextMap = Field(default_factory=dict)
+    layer_gds_names: FinalTableLayerTextMap = Field(default_factory=dict)
+    final_table_cells: FinalTableCellMap = Field(default_factory=dict)
     revision: int
     is_default: bool
     created_by_actor_id: uuid.UUID | None
@@ -431,6 +451,7 @@ class LayerMasterBase(BaseModel):
 
 
 class LayerMasterCreate(LayerMasterBase):
+    layer_number: str = Field(min_length=1, max_length=40)
     # key_layout_type_id -> value. Rows are seeded from every 기준정보 Key 배치
     # Type that exists at creation time; any type not mentioned here starts blank.
     priorities: dict[uuid.UUID, str | None] = Field(default_factory=dict)
@@ -458,42 +479,82 @@ class LayerMasterRead(OrmModel, LayerMasterBase):
     priorities: dict[uuid.UUID, str | None] = Field(default_factory=dict)
 
 
+class RelationExtraCreate(BaseModel):
+    layer_master_id: uuid.UUID
+    key_drawing_type_id: uuid.UUID
+    sort_order: int = Field(default=0, ge=0)
+
+
+class RelationExtraRead(OrmModel, RelationExtraCreate):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    relation_id: uuid.UUID
+
+
 class RelationBase(BaseModel):
     # Optional so a blank "Add Row" relation can be created before the user
     # has typed in a parent/child layer name.
     parent_layer_id: uuid.UUID | None = None
     child_layer_id: uuid.UUID | None = None
+    key_layout_type_id: uuid.UUID | None = None
+    key_drawing_type_id: uuid.UUID | None = None
     relation_type: str = "parent_child"
     relation_style_id: uuid.UUID | None = None
+    parent_drawing_type_id: uuid.UUID | None = None
+    child_drawing_type_id: uuid.UUID | None = None
+    comment: str | None = None
+    key_priority: str | None = Field(default=None, max_length=120)
+    priority_rule: str | None = None
+    final_type: str | None = Field(default=None, max_length=160)
+    key_purpose: str | None = Field(default=None, max_length=160)
+    placement: str | None = Field(default=None, max_length=160)
+    stack_type: str | None = Field(default=None, max_length=160)
+    inregi: str | None = Field(default=None, max_length=160)
+    inner_size: str | None = Field(default=None, max_length=160)
+    outer_size: str | None = Field(default=None, max_length=160)
     source_port: Literal["top", "right", "bottom", "left"] = "bottom"
     target_port: Literal["top", "right", "bottom", "left"] = "top"
     same_group: str | None = None
     attached_relation_id: uuid.UUID | None = None
     waypoints: list[dict[str, float]] | None = None
-    instance: str | None = Field(default=None, max_length=120)
 
 
 class RelationCreate(RelationBase):
-    pass
+    extras: list[RelationExtraCreate] = Field(default_factory=list)
 
 
 class RelationUpdate(BaseModel):
     parent_layer_id: uuid.UUID | None = None
     child_layer_id: uuid.UUID | None = None
+    key_layout_type_id: uuid.UUID | None = None
+    key_drawing_type_id: uuid.UUID | None = None
     relation_type: str | None = None
     relation_style_id: uuid.UUID | None = None
+    parent_drawing_type_id: uuid.UUID | None = None
+    child_drawing_type_id: uuid.UUID | None = None
+    comment: str | None = None
+    key_priority: str | None = Field(default=None, max_length=120)
+    priority_rule: str | None = None
+    final_type: str | None = Field(default=None, max_length=160)
+    key_purpose: str | None = Field(default=None, max_length=160)
+    placement: str | None = Field(default=None, max_length=160)
+    stack_type: str | None = Field(default=None, max_length=160)
+    inregi: str | None = Field(default=None, max_length=160)
+    inner_size: str | None = Field(default=None, max_length=160)
+    outer_size: str | None = Field(default=None, max_length=160)
     source_port: Literal["top", "right", "bottom", "left"] | None = None
     target_port: Literal["top", "right", "bottom", "left"] | None = None
     same_group: str | None = None
     attached_relation_id: uuid.UUID | None = None
     waypoints: list[dict[str, float]] | None = None
-    instance: str | None = Field(default=None, max_length=120)
+    extras: list[RelationExtraCreate] | None = None
 
 
 class RelationRead(OrmModel, RelationBase):
     id: uuid.UUID
     project_id: uuid.UUID
     align_tree_id: uuid.UUID | None = None
+    extras: list[RelationExtraRead] = Field(default_factory=list)
 
 
 class TextBoxBase(BaseModel):
