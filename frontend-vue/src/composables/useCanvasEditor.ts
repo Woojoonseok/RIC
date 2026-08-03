@@ -1,7 +1,7 @@
 import { computed, ref, watch } from "vue";
 import { api } from "../api/client";
 import { closestPointOnPath, facingPorts, findRelationSnap, intersects, orthogonalWaypoints, portHandlePoint, portPoint, relationGeometry, relationStroke, snap } from "../domain/geometry";
-import { relationTargetLayerId } from "../domain/graph";
+import { layerMatchesQuery, relationTargetLayerId } from "../domain/graph";
 import { useAppStore } from "../stores/app";
 import { useGraphStore } from "../stores/graph";
 import { useProjectStore } from "../stores/project";
@@ -515,7 +515,7 @@ export function useCanvasEditor() {
     }));
   }
   function focusSearch() {
-    const layer = graph.value?.layers.find((row) => row.name.toLowerCase().includes(query.value.toLowerCase()));
+    const layer = graph.value?.layers.find((row) => layerMatchesQuery(row, app.labelField, query.value));
     const layout = layer ? layouts.value.get(layer.id) : null;
     if (!layer || !layout) return;
     viewBox.value = { x: layout.x - 320, y: layout.y - 220, width: 800, height: 500 };

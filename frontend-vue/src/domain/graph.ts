@@ -101,6 +101,11 @@ export function isMergedLayer(raw: Graph, layerId: string): boolean {
   ));
 }
 
+export function layerMatchesQuery(layer: Pick<Layer, "name" | "step">, field: "name" | "step", query: string): boolean {
+  const label = field === "step" ? layer.step?.trim() || layer.name : layer.name;
+  return label.toLowerCase().includes(query.trim().toLowerCase());
+}
+
 export function relationTargetLayerId(raw: Graph, relationId: string, visited = new Set<string>()): string | null {
   if (visited.has(relationId)) return null;
   const relation = raw.relations.find((row) => row.id === relationId);
@@ -127,6 +132,9 @@ function relationKey(parentId: string, childId: string) {
 export function expandRelationCandidates(raw: Graph, input: RelationCreate): RelationCreate[] {
   const parentId = input.parent_layer_id;
   const childId = input.child_layer_id;
+  if (childId && isMergedLayer(raw, childId)) {
+    throw new Error("Merge된 Layer에는 들어오는 화살표를 연결할 수 없습니다.");
+  }
   if (!parentId || !childId) return [input];
 
   const { groupToLayerIds } = groupMaps(raw);

@@ -200,6 +200,8 @@ h1, h2, strong, .brand { font-family: "Manrope", sans-serif; }
 .sheet-header { position: sticky; top: 0; z-index: 3; }
 .sheet-head { position: relative; border-right: 1px solid #d0d5dd; border-bottom: 1px solid #d0d5dd; background: #f2f4f7; color: #475467; font-size: 11px; font-weight: 700; padding: 9px 10px; text-transform: uppercase; }
 .sheet-head.row-number { position: sticky; left: 0; z-index: 4; text-align: center; }
+.sheet-select-all { display: grid; width: 24px; height: 24px; place-items: center; margin: -6px auto; border: 0; background: transparent; padding: 0; }
+.sheet-select-all .row-check { width: 17px; height: 17px; }
 .sheet-head.sticky-column { position: sticky; z-index: 4; }
 .sheet-row-number { position: sticky; left: 0; z-index: 2; min-height: 35px; border: 0; border-right: 1px solid #d0d5dd; border-bottom: 1px solid #eaecf0; border-radius: 0; background: #f8fafc; color: #667085; padding: 0; font-size: 11px; }
 .sheet-row-number { display: flex; align-items: center; justify-content: center; gap: 7px; }

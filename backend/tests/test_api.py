@@ -305,6 +305,58 @@ def test_merge_rejects_layers_with_an_existing_relation(client: TestClient) -> N
     assert "Relation" in group_merge.text
 
 
+def test_merged_layers_only_allow_outgoing_relations(client: TestClient) -> None:
+    project_id = create_project(client)
+    first = create_layer(client, project_id, "Merged A")
+    second = create_layer(client, project_id, "Merged B", 300)
+    outside = create_layer(client, project_id, "Outside", 600)
+
+    merged = client.post(
+        f"{graph_base(client, project_id)}/layers/merge",
+        json={"layer_ids": [first, second]},
+    )
+    assert merged.status_code == 200, merged.text
+
+    incoming = client.post(
+        f"{graph_base(client, project_id)}/relations",
+        json={"parent_layer_id": outside, "child_layer_id": first},
+    )
+    assert incoming.status_code == 422
+    assert "relation_merged_target" in incoming.text
+
+    outgoing = client.post(
+        f"{graph_base(client, project_id)}/relations",
+        json={"parent_layer_id": first, "child_layer_id": outside},
+    )
+    assert outgoing.status_code == 201, outgoing.text
+
+    reversed_relation = client.put(
+        f"{graph_base(client, project_id)}/relations/{outgoing.json()['id']}",
+        json={"parent_layer_id": outside, "child_layer_id": second},
+    )
+    assert reversed_relation.status_code == 422
+    assert "relation_merged_target" in reversed_relation.text
+
+
+def test_merge_rejects_an_existing_incoming_relation(client: TestClient) -> None:
+    project_id = create_project(client)
+    first = create_layer(client, project_id, "Merge Candidate A")
+    second = create_layer(client, project_id, "Merge Candidate B", 300)
+    outside = create_layer(client, project_id, "Outside", 600)
+    incoming = client.post(
+        f"{graph_base(client, project_id)}/relations",
+        json={"parent_layer_id": outside, "child_layer_id": first},
+    )
+    assert incoming.status_code == 201, incoming.text
+
+    merged = client.post(
+        f"{graph_base(client, project_id)}/layers/merge",
+        json={"layer_ids": [first, second]},
+    )
+    assert merged.status_code == 422
+    assert "relation_merged_target" in merged.text
+
+
 def test_project_has_one_editor_and_mixed_project_ids_are_rejected(client: TestClient) -> None:
     project_id = create_project(client)
     editor_id = default_tree_id(client, project_id)

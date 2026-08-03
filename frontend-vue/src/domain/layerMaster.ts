@@ -3,6 +3,12 @@ import type { BoxPreset, KeyLayoutType, LayerMaster, LayerMasterCreate } from ".
 
 export type LayerMasterGridRow = Record<string, unknown>;
 
+export function layerMasterMatchesQuery(master: Pick<LayerMaster, "name" | "layer_number">, query: string): boolean {
+  const needle = query.trim().toLowerCase();
+  return master.name.toLowerCase().includes(needle)
+    || (master.layer_number ?? "").toLowerCase().includes(needle);
+}
+
 function baseColumns(presets: BoxPreset[]): GridColumn[] {
   const defaultPreset = presets.find((preset) => preset.is_default) ?? presets[0];
   return [

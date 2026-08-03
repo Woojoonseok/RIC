@@ -2,7 +2,7 @@ import { computed, ref } from "vue";
 import { defineStore } from "pinia";
 import { ApiError, api } from "../api/client";
 import { cloneJson } from "../domain/clone";
-import { computeDisplayGraph, expandRelationCandidates, graphRestoreFromGraph, groupMaps } from "../domain/graph";
+import { computeDisplayGraph, expandRelationCandidates, graphRestoreFromGraph, groupMaps, isMergedLayer } from "../domain/graph";
 import type { Graph, RelationCreate } from "../types";
 import { useAppStore } from "./app";
 import { useProjectStore } from "./project";
@@ -89,6 +89,10 @@ export const useGraphStore = defineStore("graph", () => {
   async function createRelationExpanded(body: RelationCreate) {
     if (!project.projectId || !rawGraph.value) return;
     if (!project.canEdit) { app.status = project.readOnlyReason || "이 Align Tree는 보기 전용입니다."; return }
+    if (body.child_layer_id && isMergedLayer(rawGraph.value, body.child_layer_id)) {
+      app.status = "Merge된 Layer에는 들어오는 화살표를 연결할 수 없습니다.";
+      return;
+    }
     if (!body.parent_layer_id || !body.child_layer_id) {
       await mutateGraph("관계 생성", () => api.createRelation(project.projectId, body));
       return;
