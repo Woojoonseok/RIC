@@ -84,7 +84,9 @@ def validate_project_graph(
     for relation in relations:
         parent_id = relation.parent_layer_id
         child_id = relation.child_layer_id
-        if parent_id is None or parent_id not in layer_ids:
+        parent_is_spare = relation.parent_endpoint_type == "spare"
+        child_is_spare = relation.child_endpoint_type == "spare"
+        if not parent_is_spare and (parent_id is None or parent_id not in layer_ids):
             issues.append(schemas.ValidationIssue(
                 code="relation_parent_missing",
                 severity="error",
@@ -92,14 +94,17 @@ def validate_project_graph(
                 relation_id=relation.id,
             ))
         attached_target_is_valid = relation.attached_relation_id in relation_ids if relation.attached_relation_id else False
-        if (child_id is None and not attached_target_is_valid) or (child_id is not None and child_id not in layer_ids):
+        if not child_is_spare and (
+            (child_id is None and not attached_target_is_valid)
+            or (child_id is not None and child_id not in layer_ids)
+        ):
             issues.append(schemas.ValidationIssue(
                 code="relation_child_missing",
                 severity="error",
                 message="Relation references a missing child layer.",
                 relation_id=relation.id,
             ))
-        if parent_id is not None and parent_id == child_id:
+        if not parent_is_spare and not child_is_spare and parent_id is not None and parent_id == child_id:
             issues.append(schemas.ValidationIssue(
                 code="relation_self_loop",
                 severity="error",
@@ -108,7 +113,7 @@ def validate_project_graph(
                 layer_id=parent_id,
             ))
 
-        if parent_id in layer_ids and child_id in layer_ids:
+        if not parent_is_spare and not child_is_spare and parent_id in layer_ids and child_id in layer_ids:
             connected.update((parent_id, child_id))
             if relation.same_group:
                 continue

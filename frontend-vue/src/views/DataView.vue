@@ -1,15 +1,16 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import * as XLSX from "xlsx";
+import { ChevronDown, ClipboardPaste, Download, Plus, Trash2 } from "@lucide/vue";
 import SpreadsheetGrid from "../components/grid/SpreadsheetGrid.vue";
 import { api } from "../api/client";
+import { exportExcel } from "../domain/export";
 import { formatLayerNumber } from "../domain/finalTable";
 import { parseTsv } from "../domain/tsv";
 import { useAppStore } from "../stores/app";
 import { useGraphStore } from "../stores/graph";
 import { useProjectStore } from "../stores/project";
 import { useReferenceStore } from "../stores/reference";
-import type { PortName, Relation, RelationCreate, RelationUpdate } from "../types";
+import type { PortName, Relation, RelationCreate, RelationEndpointType, RelationUpdate } from "../types";
 
 type Row = Record<string, unknown>;
 interface GridColumn {
@@ -41,13 +42,14 @@ interface ExtraDraft {
   drawingTypeId: string;
 }
 
+const SPARE_ENDPOINT = "__spare__";
+
 const app = useAppStore();
 const graph = useGraphStore();
 const project = useProjectStore();
 const reference = useReferenceStore();
 const pasteOpen = ref(false);
 const pasteText = ref("");
-const upload = ref<HTMLInputElement | null>(null);
 const relationEditor = ref<RelationEditor | null>(null);
 const extraEditor = ref<{ relationId: string; rows: ExtraDraft[] } | null>(null);
 
@@ -61,6 +63,11 @@ function layerNumberLabel(layerId: string | null | undefined) {
     ? reference.layerMasters.find((item) => item.id === layer.layer_master_id)
     : undefined;
   return formatLayerNumber(master?.layer_number || layer?.step) || "Layer 번호 미지정";
+}
+function endpointLabel(relation: Relation, side: "parent" | "child") {
+  return relation[`${side}_endpoint_type`] === "spare"
+    ? "SPARE"
+    : layerNumberLabel(relation[`${side}_layer_id`]);
 }
 function options(rows: Array<{ id: string }>, label: (row: { id: string }) => string) {
   return [{ value: "", label: "선택 안 함" }, ...rows.map((row) => ({ value: row.id, label: label(row) }))];
@@ -111,8 +118,8 @@ const selectedRelationIds = computed(() => app.selection
 const relationRows = computed<Row[]>(() => {
   return graph.rawGraph?.relations.filter((row) => !row.same_group).map((row) => ({
     ...row,
-    parent: row.parent_layer_id ? layerNumberLabel(row.parent_layer_id) : "",
-    child: row.child_layer_id ? layerNumberLabel(row.child_layer_id) : "",
+    parent: endpointLabel(row, "parent"),
+    child: endpointLabel(row, "child"),
     extras_summary: `${row.extras.length}개`,
   })) ?? [];
 });
@@ -127,8 +134,8 @@ function editRelation(row: Row = {}) {
   if (!project.canEdit) return;
   relationEditor.value = {
     id: String(row.id || ""),
-    parentId: String(row.parent_layer_id || ""),
-    childId: String(row.child_layer_id || ""),
+    parentId: row.parent_endpoint_type === "spare" ? SPARE_ENDPOINT : String(row.parent_layer_id || ""),
+    childId: row.child_endpoint_type === "spare" ? SPARE_ENDPOINT : String(row.child_layer_id || ""),
     keyLayoutTypeId: String(row.key_layout_type_id || ""),
     keyDrawingTypeId: String(row.key_drawing_type_id || ""),
     relationStyleId: String(row.relation_style_id || reference.selectedRelationStyleId || ""),
@@ -181,9 +188,13 @@ async function saveExtras() {
 }
 function relationBody(editor: RelationEditor): RelationCreate & RelationUpdate {
   const relationStyle = reference.relationStyles.find((row) => row.id === editor.relationStyleId);
+  const parentIsSpare = editor.parentId === SPARE_ENDPOINT;
+  const childIsSpare = editor.childId === SPARE_ENDPOINT;
   return {
-    parent_layer_id: editor.parentId,
-    child_layer_id: editor.childId,
+    parent_endpoint_type: parentIsSpare ? "spare" : "layer",
+    child_endpoint_type: childIsSpare ? "spare" : "layer",
+    parent_layer_id: parentIsSpare ? null : editor.parentId,
+    child_layer_id: childIsSpare ? null : editor.childId,
     key_layout_type_id: editor.keyLayoutTypeId || null,
     key_drawing_type_id: editor.keyDrawingTypeId || null,
     relation_type: relationStyle?.name || "parent_child",
@@ -199,7 +210,8 @@ function relationBody(editor: RelationEditor): RelationCreate & RelationUpdate {
 }
 async function saveRelation() {
   const editor = relationEditor.value;
-  if (!editor?.parentId || !editor.childId || editor.parentId === editor.childId) return;
+  if (!editor?.parentId || !editor.childId) return;
+  if (editor.parentId === editor.childId && editor.parentId !== SPARE_ENDPOINT) return;
   const body = relationBody(editor);
   if (editor.id) {
     await graph.mutateGraph("Relation 수정", () => api.updateRelation(project.projectId, editor.id, body));
@@ -207,6 +219,15 @@ async function saveRelation() {
     await graph.createRelationExpanded(body);
   }
   relationEditor.value = null;
+}
+
+function endpointFromValue(value: unknown, layerIds: Map<string, string>) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (normalized === "spare") {
+    return { type: "spare" as RelationEndpointType, layerId: null, valid: true };
+  }
+  const layerId = layerIds.get(normalized) ?? null;
+  return { type: "layer" as RelationEndpointType, layerId, valid: Boolean(layerId) };
 }
 
 function idFromValue(
@@ -226,6 +247,8 @@ async function commitRelations(rows: Row[]) {
   );
   try {
     for (const row of rows) {
+      const parent = endpointFromValue(row.parent, layerIds);
+      const child = endpointFromValue(row.child, layerIds);
       const relationStyleId = idFromValue(
         row.relation_style_id,
         reference.relationStyles,
@@ -233,8 +256,10 @@ async function commitRelations(rows: Row[]) {
       );
       const relationStyle = reference.relationStyles.find((item) => item.id === relationStyleId);
       const body: RelationCreate & RelationUpdate = {
-        parent_layer_id: layerIds.get(String(row.parent ?? "").trim().toLowerCase()) ?? null,
-        child_layer_id: layerIds.get(String(row.child ?? "").trim().toLowerCase()) ?? null,
+        parent_endpoint_type: parent.type,
+        child_endpoint_type: child.type,
+        parent_layer_id: parent.layerId,
+        child_layer_id: child.layerId,
         key_layout_type_id: idFromValue(
           row.key_layout_type_id,
           reference.keyLayoutTypes,
@@ -256,7 +281,7 @@ async function commitRelations(rows: Row[]) {
         target_port: String(row.target_port || "top") as PortName,
       };
       if (row.id) await api.updateRelation(project.projectId, String(row.id), body);
-      else if (body.parent_layer_id && body.child_layer_id) await graph.createRelationExpanded(body);
+      else if (parent.valid && child.valid) await graph.createRelationExpanded(body);
     }
     await graph.reloadGraph();
     project.markSaved();
@@ -290,17 +315,6 @@ async function applyPaste() {
   pasteOpen.value = false;
   pasteText.value = "";
 }
-async function uploadFile(event: Event) {
-  const file = (event.target as HTMLInputElement).files?.[0];
-  if (!file) return;
-  const workbook = XLSX.read(await file.arrayBuffer());
-  const matrix = XLSX.utils.sheet_to_json<unknown[]>(
-    workbook.Sheets[workbook.SheetNames[0]],
-    { header: 1, defval: "" },
-  );
-  await commitRelations(rowsFromMatrix(matrix.slice(1)));
-  (event.target as HTMLInputElement).value = "";
-}
 onMounted(async () => {
   await Promise.all([reference.loadAll(), graph.reloadGraph()]);
 });
@@ -318,21 +332,26 @@ onMounted(async () => {
     <div v-if="graph.rawGraph" class="panel data-panel relation-data-panel">
       <div class="panel-heading data-actions">
         <div><h2>Layer Relation</h2><span>{{ relationRows.length }} rows</span></div>
-        <div class="button-strip">
-          <button :disabled="!project.canEdit" @click="editRelation()">Add Row</button>
-          <button :disabled="!project.canEdit || !selectedRelationIds.length" class="danger" @click="deleteSelected">Delete</button>
-          <button :disabled="!project.canEdit" @click="upload?.click()">Excel Upload</button>
-          <button :disabled="!project.canEdit" @click="pasteOpen = true">Clipboard Paste</button>
+        <div class="relation-data-toolbar">
+          <button class="primary" :disabled="!project.canEdit" @click="editRelation()"><Plus :size="16"/>Relation 추가</button>
+          <button class="danger ghost" :disabled="!project.canEdit || !selectedRelationIds.length" @click="deleteSelected"><Trash2 :size="15"/>선택 삭제</button>
+          <span class="layer-action-divider"/>
+          <details class="action-menu">
+            <summary>데이터 도구<ChevronDown :size="14"/></summary>
+            <div>
+              <button type="button" @click="exportExcel(graph.rawGraph!)"><Download :size="15"/>Excel 내보내기</button>
+              <button type="button" :disabled="!project.canEdit" @click="pasteOpen = true"><ClipboardPaste :size="15"/>표 붙여넣기</button>
+            </div>
+          </details>
         </div>
       </div>
-      <input ref="upload" hidden type="file" accept=".xlsx,.xls,.csv,.tsv" @change="uploadFile">
       <SpreadsheetGrid
         auto-commit
         :readonly="project.readOnly"
         :columns="relationColumns"
         :rows="relationRows"
         :selected-rows="selectedRelationIds"
-        empty-hint="Add Row에서 Parent와 Child Layer를 선택해 Relation을 추가하세요."
+        empty-hint="Relation 추가에서 Parent와 Child Layer를 선택하세요."
         @row-select="selectRelation"
         @row-selection="setRelationSelection"
         @cell-action="handleCellAction"
@@ -360,6 +379,7 @@ onMounted(async () => {
             <span>Parent Layer 번호</span>
             <select v-model="relationEditor.parentId">
               <option value="">Parent 선택</option>
+              <option :value="SPARE_ENDPOINT">SPARE</option>
               <option v-for="layer in graph.rawGraph?.layers" :key="layer.id" :value="layer.id" :disabled="layer.id === relationEditor?.childId">{{ layerNumberLabel(layer.id) }}</option>
             </select>
           </label>
@@ -368,6 +388,7 @@ onMounted(async () => {
             <span>Child Layer 번호</span>
             <select v-model="relationEditor.childId">
               <option value="">Child 선택</option>
+              <option :value="SPARE_ENDPOINT">SPARE</option>
               <option v-for="layer in graph.rawGraph?.layers" :key="layer.id" :value="layer.id" :disabled="layer.id === relationEditor?.parentId">{{ layerNumberLabel(layer.id) }}</option>
             </select>
           </label>
@@ -386,7 +407,7 @@ onMounted(async () => {
         </div>
         <div class="sheet-actions">
           <button @click="relationEditor = null">취소</button>
-          <button class="primary" :disabled="!relationEditor.parentId || !relationEditor.childId || relationEditor.parentId === relationEditor.childId" @click="saveRelation">{{ relationEditor.id ? "Relation 변경" : "Relation 연결" }}</button>
+          <button class="primary" :disabled="!relationEditor.parentId || !relationEditor.childId || (relationEditor.parentId === relationEditor.childId && relationEditor.parentId !== SPARE_ENDPOINT)" @click="saveRelation">{{ relationEditor.id ? "Relation 변경" : "Relation 연결" }}</button>
         </div>
       </section>
     </div>

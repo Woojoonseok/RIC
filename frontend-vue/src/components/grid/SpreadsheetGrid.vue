@@ -4,7 +4,7 @@ import { cloneJson } from "../../domain/clone";
 import { parseTsv, toTsv } from "../../domain/tsv";
 
 export interface GridOption { value: string; label: string }
-export interface GridColumn { key: string; label: string; width?: number; readonly?: boolean; options?: GridOption[]; defaultValue?: unknown; action?: boolean }
+export interface GridColumn { key: string; label: string; width?: number; readonly?: boolean; options?: GridOption[]; defaultValue?: unknown; action?: boolean; sticky?: boolean; highlightEmpty?: boolean }
 const props = defineProps<{ columns: GridColumn[]; rows: Array<Record<string, unknown>>; rowKey?: string; selectedRows?: string[]; emptyHint?: string; autoCommit?: boolean; readonly?: boolean }>();
 const emit = defineEmits<{ commit: [rows: Array<Record<string, unknown>>]; rowSelect: [id: string, additive: boolean]; rowSelection: [ids: string[]]; cellAction: [row: Record<string, unknown>, key: string]; addRow: [] }>();
 const draft = ref<Array<Record<string, unknown>>>(cloneJson(props.rows));
@@ -25,6 +25,12 @@ const selected = computed(() => ({
   c1: Math.min(active.value.col, anchor.value.col), c2: Math.max(active.value.col, anchor.value.col),
 }));
 const gridColumns = computed(() => `64px ${props.columns.map((column) => `${widths.value[column.key] ?? column.width ?? 150}px`).join(" ")}`);
+function stickyLeft(colIndex: number) {
+  return 64 + props.columns.slice(0, colIndex).reduce(
+    (total, column) => total + (widths.value[column.key] ?? column.width ?? 150),
+    0,
+  );
+}
 function isSelected(row: number, col: number) { const s = selected.value; return row >= s.r1 && row <= s.r2 && col >= s.c1 && col <= s.c2 }
 function activate(row: number, col: number, extend = false) { active.value = { row, col }; if (!extend) anchor.value = { row, col } }
 function stopCellDrag() {
@@ -150,13 +156,13 @@ onBeforeUnmount(stopCellDrag);
   <div class="sheet" tabindex="0" @keydown="onKey">
     <div class="sheet-row sheet-header" :style="{ gridTemplateColumns: gridColumns }">
       <div class="sheet-head row-number" @click="selectAll">#</div>
-      <div v-for="(column, colIndex) in columns" :key="column.key" class="sheet-head" @click="selectColumn(colIndex)" @dblclick="autoFit(column)">
+      <div v-for="(column, colIndex) in columns" :key="column.key" class="sheet-head" :class="{ 'sticky-column': column.sticky }" :style="column.sticky ? { left: `${stickyLeft(colIndex)}px` } : undefined" @click="selectColumn(colIndex)" @dblclick="autoFit(column)">
         {{ column.label }}<span class="column-resizer" @pointerdown.stop="resize(column, $event)" />
       </div>
     </div>
     <div v-for="(row, rowIndex) in draft" :key="String(row[rowKey ?? 'id'] ?? rowIndex)" class="sheet-row" :class="{ 'row-selected': selectedRows?.includes(String(row[rowKey ?? 'id'])) }" :style="{ gridTemplateColumns: gridColumns }">
       <button type="button" class="sheet-row-number" @click="selectRow(rowIndex, $event)"><span class="row-check" :class="{ checked: selectedRows?.includes(String(row[rowKey ?? 'id'])) }" role="checkbox" :aria-checked="selectedRows?.includes(String(row[rowKey ?? 'id']))" @click.stop="toggleRow(rowIndex)">✓</span><span>{{ rowIndex + 1 }}</span></button>
-      <div v-for="(column, colIndex) in columns" :key="column.key" class="sheet-cell" :class="{ selected: isSelected(rowIndex, colIndex), active: active.row === rowIndex && active.col === colIndex, editing: editing && active.row === rowIndex && active.col === colIndex }" @pointerdown="startCellDrag(rowIndex, colIndex, $event)" @pointerenter="extendCellDrag(rowIndex, colIndex)" @dblclick="editCell(rowIndex, colIndex)">
+      <div v-for="(column, colIndex) in columns" :key="column.key" class="sheet-cell" :class="{ selected: isSelected(rowIndex, colIndex), active: active.row === rowIndex && active.col === colIndex, editing: editing && active.row === rowIndex && active.col === colIndex, 'sticky-column': column.sticky, 'missing-value': column.highlightEmpty && !String(row[column.key] ?? '').trim() }" :style="column.sticky ? { left: `${stickyLeft(colIndex)}px` } : undefined" @pointerdown="startCellDrag(rowIndex, colIndex, $event)" @pointerenter="extendCellDrag(rowIndex, colIndex)" @dblclick="editCell(rowIndex, colIndex)">
         <button v-if="column.action" type="button" class="sheet-cell-action" :disabled="readonly" @mousedown.stop @click.stop="emit('cellAction', cloneJson(row), column.key)"><span>{{ row[column.key] || '선택' }}</span><b>›</b></button>
         <select v-else-if="column.options && !column.readonly" v-model="row[column.key] as string" class="sheet-inline-select" :disabled="readonly" @mousedown.stop @click.stop @change="commitSelect(rowIndex)"><option v-for="option in column.options" :key="option.value" :value="option.value">{{ option.label }}</option></select>
         <input v-else-if="editing && active.row === rowIndex && active.col === colIndex && !column.readonly" v-model="row[column.key] as string" :disabled="readonly" @blur="finishEditing(rowIndex)" @keydown.enter.stop.prevent="finishEditing(rowIndex); move(1, 0)" />

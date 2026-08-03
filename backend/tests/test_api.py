@@ -374,6 +374,47 @@ def test_graph_audit_is_atomic_for_success_and_rollback(client: TestClient) -> N
     assert [row["name"] for row in graph["layers"]] == ["Audited Layer"]
 
 
+def test_batch_box_preset_applies_and_can_switch_back_to_default(client: TestClient) -> None:
+    project_id = create_project(client)
+    tree_id = default_tree_id(client, project_id)
+    layer_ids = [
+        create_layer(client, project_id, "Box A", tree_id=tree_id),
+        create_layer(client, project_id, "Box B", tree_id=tree_id),
+        create_layer(client, project_id, "Box C", tree_id=tree_id),
+    ]
+    graph_url = graph_base(client, project_id, tree_id)
+    presets = {
+        row["name"]: row
+        for row in client.get(graph_url).json()["box_presets"]
+    }
+
+    for preset_name in ("Yellow Note", "Default Blue"):
+        preset = presets[preset_name]
+        response = client.patch(
+            f"{graph_url}/batch",
+            json={
+                "layer_presets": [
+                    {"layer_id": layer_id, "box_preset_id": preset["id"]}
+                    for layer_id in layer_ids
+                ]
+            },
+        )
+        assert response.status_code == 200, response.text
+        graph = response.json()
+        layers = {row["id"]: row for row in graph["layers"]}
+        layouts = {row["layer_id"]: row for row in graph["layouts"]}
+        styles = {row["layer_id"]: row for row in graph["styles"]}
+        for layer_id in layer_ids:
+            assert layers[layer_id]["box_preset_id"] == preset["id"]
+            assert layouts[layer_id]["width"] == preset["width"]
+            assert layouts[layer_id]["height"] == preset["height"]
+            assert styles[layer_id]["fill_color"] == preset["fill_color"]
+            assert styles[layer_id]["stroke_color"] == preset["stroke_color"]
+            assert styles[layer_id]["text_color"] == preset["text_color"]
+            assert styles[layer_id]["font_size"] == preset["font_size"]
+            assert styles[layer_id]["stroke_width"] == preset["stroke_width"]
+
+
 def test_reference_and_layer_master_priorities(client: TestClient) -> None:
     project_id = create_project(client)
     first_tree = default_tree_id(client, project_id)
@@ -614,6 +655,46 @@ def test_relation_reference_fields_and_variable_extras(client: TestClient) -> No
         and row["child_layer_id"] == imported_layers[1]["id"]
     ]
     assert len(same_pair) == 2
+
+
+def test_spare_relations_support_all_directions_and_duplicates(client: TestClient) -> None:
+    project_id = create_project(client)
+    tree_id = default_tree_id(client, project_id)
+    layer_a = create_layer(client, project_id, "Layer A", tree_id=tree_id)
+    layer_b = create_layer(client, project_id, "Layer B", tree_id=tree_id)
+    base = f"{graph_base(client, project_id, tree_id)}/relations"
+
+    payloads = [
+        {
+            "parent_endpoint_type": "layer",
+            "parent_layer_id": layer_a,
+            "child_endpoint_type": "spare",
+            "child_layer_id": layer_b,
+        },
+        {
+            "parent_endpoint_type": "spare",
+            "parent_layer_id": layer_a,
+            "child_endpoint_type": "layer",
+            "child_layer_id": layer_b,
+        },
+        {"parent_endpoint_type": "spare", "child_endpoint_type": "spare"},
+        {"parent_endpoint_type": "spare", "child_endpoint_type": "spare"},
+    ]
+    created = [client.post(base, json=payload) for payload in payloads]
+    assert all(response.status_code == 201 for response in created), [response.text for response in created]
+
+    rows = [response.json() for response in created]
+    assert rows[0]["parent_layer_id"] == layer_a
+    assert rows[0]["child_layer_id"] is None
+    assert rows[1]["parent_layer_id"] is None
+    assert rows[1]["child_layer_id"] == layer_b
+    assert rows[2]["parent_layer_id"] is None and rows[2]["child_layer_id"] is None
+    assert rows[2]["id"] != rows[3]["id"]
+
+    graph = client.get(graph_base(client, project_id, tree_id)).json()
+    spare_rows = [row for row in graph["relations"] if row["parent_endpoint_type"] == "spare" or row["child_endpoint_type"] == "spare"]
+    assert len(spare_rows) == 4
+    assert not [issue for issue in graph["validation"]["issues"] if issue["relation_id"] in {row["id"] for row in spare_rows}]
 
 
 def test_project_branch_copies_reference_and_layer_master_without_editor_graph(client: TestClient) -> None:

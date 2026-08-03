@@ -17,6 +17,10 @@ const filtered = computed(() => reference.layerMasters.filter(
   (master) => !importedIds.value.has(master.id)
     && master.name.toLowerCase().includes(search.value.toLowerCase()),
 ));
+const allFilteredSelected = computed(() => (
+  filtered.value.length > 0
+  && filtered.value.every((master) => selectedIds.value.includes(master.id))
+));
 const selectedMasters = computed(() => reference.layerMasters.filter(
   (master) => selectedIds.value.includes(master.id) && !importedIds.value.has(master.id),
 ));
@@ -26,6 +30,12 @@ function toggle(masterId: string) {
   selectedIds.value = selectedIds.value.includes(masterId)
     ? selectedIds.value.filter((id) => id !== masterId)
     : [...selectedIds.value, masterId];
+}
+function toggleAllFiltered() {
+  const filteredIds = new Set(filtered.value.map((master) => master.id));
+  selectedIds.value = allFilteredSelected.value
+    ? selectedIds.value.filter((id) => !filteredIds.has(id))
+    : [...new Set([...selectedIds.value, ...filteredIds])];
 }
 function confirm() {
   if (selectedMasters.value.length) emit("confirm", selectedMasters.value);
@@ -43,6 +53,12 @@ onMounted(load);
     <section class="panel paste-panel layer-select-panel" @click.stop>
       <div class="panel-heading"><h2>Layer 정보에서 가져오기</h2><button @click="emit('close')">취소</button></div>
       <input v-model="search" autofocus class="layer-select-search" placeholder="Layer명 검색...">
+      <div class="layer-select-tools">
+        <span>가져올 수 있는 Layer {{ filtered.length }}개</span>
+        <button type="button" :disabled="!filtered.length" @click="toggleAllFiltered">
+          {{ allFilteredSelected ? '전체 선택 해제' : '전체 선택' }}
+        </button>
+      </div>
       <div class="layer-select-list">
         <p v-if="!filtered.length" class="empty">가져올 Layer 정보가 없습니다.</p>
         <label

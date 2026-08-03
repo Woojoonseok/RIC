@@ -1,5 +1,5 @@
 import PptxGenJS from "pptxgenjs";
-import * as XLSX from "xlsx";
+import * as XLSX from "xlsx-js-style";
 
 import { relationPoints } from "./geometry";
 import type { Graph } from "../types";

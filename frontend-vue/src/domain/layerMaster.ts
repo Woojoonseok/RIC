@@ -3,7 +3,7 @@ import type { BoxPreset, KeyLayoutType, LayerMaster, LayerMasterCreate } from ".
 
 export type LayerMasterGridRow = Record<string, unknown>;
 
-export function layerMasterColumns(layouts: KeyLayoutType[], presets: BoxPreset[]): GridColumn[] {
+function baseColumns(presets: BoxPreset[]): GridColumn[] {
   const defaultPreset = presets.find((preset) => preset.is_default) ?? presets[0];
   return [
     { key: "name", label: "Layer 명", width: 180 },
@@ -30,10 +30,38 @@ export function layerMasterColumns(layouts: KeyLayoutType[], presets: BoxPreset[
         { value: "Close", label: "Close (X)" },
       ],
     },
-    ...layouts.map((layout) => ({ key: `priority:${layout.id}`, label: `우선순위 ${layout.name}`, width: 145 })),
     { key: "group", label: "Group", width: 130 },
     { key: "validation_rule", label: "검증 Rule", width: 180 },
     { key: "comment", label: "Comment", width: 220 },
+  ];
+}
+
+export function layerMasterBaseColumns(presets: BoxPreset[]): GridColumn[] {
+  return [
+    ...baseColumns(presets),
+    { key: "priority_summary", label: "Key 우선순위", width: 150, readonly: true, action: true },
+  ];
+}
+
+export function layerMasterPriorityColumns(layouts: KeyLayoutType[]): GridColumn[] {
+  return [
+    { key: "layer_number", label: "Layer 번호", width: 120, readonly: true, sticky: true },
+    { key: "name", label: "Layer 명", width: 180, readonly: true, sticky: true },
+    ...layouts.map((layout) => ({
+      key: `priority:${layout.id}`,
+      label: layout.name,
+      width: 145,
+      highlightEmpty: true,
+    })),
+  ];
+}
+
+export function layerMasterColumns(layouts: KeyLayoutType[], presets: BoxPreset[]): GridColumn[] {
+  const basic = baseColumns(presets);
+  return [
+    ...basic.slice(0, 9),
+    ...layouts.map((layout) => ({ key: `priority:${layout.id}`, label: `우선순위 ${layout.name}`, width: 145 })),
+    ...basic.slice(9),
   ];
 }
 
@@ -44,6 +72,7 @@ export function layerMasterRows(masters: LayerMaster[], layouts: KeyLayoutType[]
     group: master.group ?? "",
     light_source: master.light_source || defaultPreset?.name || "",
     ...Object.fromEntries(layouts.map((layout) => [`priority:${layout.id}`, master.priorities[layout.id] ?? ""])),
+    priority_summary: `${layouts.filter((layout) => String(master.priorities[layout.id] ?? "").trim()).length}/${layouts.length} 설정`,
   }));
 }
 
