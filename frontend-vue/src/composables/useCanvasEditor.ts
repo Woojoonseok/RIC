@@ -1,6 +1,6 @@
 import { computed, ref, watch } from "vue";
 import { api } from "../api/client";
-import { attachmentPort, closestPointOnPath, facingPorts, findRelationSnap, intersects, orthogonalWaypoints, portHandlePoint, portPoint, relationGeometry, relationStroke, snap } from "../domain/geometry";
+import { attachmentPort, closestPointOnPath, facingPorts, findRelationSnap, intersects, orthogonalWaypoints, portHandlePoint, portPoint, relationBendWaypoints, relationGeometry, relationStroke, snap } from "../domain/geometry";
 import { layerMatchesQuery, relationTargetLayerId } from "../domain/graph";
 import { useAppStore } from "../stores/app";
 import { useGraphStore } from "../stores/graph";
@@ -474,9 +474,12 @@ export function useCanvasEditor() {
   function relationAppearance(relation: Relation) {
     return relationStroke(relation.relation_style_id ? relationStyles.value.get(relation.relation_style_id) : undefined, relation.relation_type, relation.same_group);
   }
+  function editableWaypoints(relation: Relation) {
+    return relationBendWaypoints(relation, previewWaypoints.value[relation.id] ?? relation.waypoints ?? []);
+  }
   async function addWaypoint(event: MouseEvent, relation: Relation) {
     event.stopPropagation();
-    if (!project.canEdit || relation.attached_relation_id) return;
+    if (!project.canEdit) return;
     const path = relationGeometry(relations.value.get(relation.id) ?? relation, layouts.value, relations.value);
     const insertion = closestPointOnPath(clientPoint(event as unknown as PointerEvent), path);
     if (!insertion) return;
@@ -484,6 +487,7 @@ export function useCanvasEditor() {
       ? { x: snap(insertion.point.x), y: snap(insertion.point.y) }
       : insertion.point;
     const waypoints = [...(relation.waypoints ?? [])];
+    if (relation.attached_relation_id && !waypoints.length) waypoints.push(path.at(-1)!);
     waypoints.splice(insertion.segmentIndex, 0, point);
     app.select({ kind: "relation", id: relation.id });
     await graphStore.mutateGraph("Waypoint 추가", () => api.updateRelation(project.projectId, relation.id, { waypoints }));
@@ -532,6 +536,6 @@ export function useCanvasEditor() {
     previewWaypoints, connect, portSnap, relationSnap, relationPaths, graph, raw, layouts, styles, relationStyles, selectedLayers,
     selectedRelation, selectedTexts, ports, viewBoxString, portPoint, portHandlePoint, layerLabel, nodePointerDown, textPointerDown, canvasDown,
     pointerMove, pointerUp, wheel, startConnect, relationPointerDown, relationAppearance,
-    addWaypoint, waypointDown, deleteWaypoint, focusSearch, editLayer, fit, zoom,
+    editableWaypoints, addWaypoint, waypointDown, deleteWaypoint, focusSearch, editLayer, fit, zoom,
   };
 }

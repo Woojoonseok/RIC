@@ -137,6 +137,10 @@ export function attachmentPort(source: Point, target: Point, segmentStart: Point
   return source.x <= target.x ? "left" : "right";
 }
 
+export function relationBendWaypoints(relation: Pick<Relation, "attached_relation_id" | "waypoints">, waypoints = relation.waypoints ?? []): Point[] {
+  return relation.attached_relation_id ? waypoints.slice(0, -1) : waypoints;
+}
+
 export function relationGeometry(
   relation: Relation,
   layouts: Map<string, Layout>,
