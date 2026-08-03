@@ -117,6 +117,14 @@ def validate_project_graph(
             connected.update((parent_id, child_id))
             if relation.same_group:
                 continue
+            if child_id in group_by_layer:
+                issues.append(schemas.ValidationIssue(
+                    code="relation_merged_target",
+                    severity="error",
+                    message="A merged layer can only be the source of a relation.",
+                    relation_id=relation.id,
+                    layer_id=child_id,
+                ))
             if parent_id in group_by_layer and child_id in group_by_layer:
                 issues.append(schemas.ValidationIssue(
                     code="relation_group_to_group",

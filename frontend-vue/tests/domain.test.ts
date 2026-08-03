@@ -6,8 +6,8 @@ import { cloneJson } from "../src/domain/clone";
 import {
   closestPointOnPath, facingPorts, getClosestPointOnSegment, intersects, orthogonalWaypoints, portHandlePoint, portPoint, relationGeometry, relationStroke, snap,
 } from "../src/domain/geometry";
-import { computeDisplayGraph, expandRelationCandidates, isMergedLayer, relationGroupById, relationTargetLayerId } from "../src/domain/graph";
-import { layerMasterBaseColumns, layerMasterColumns, layerMasterPayload, layerMasterPriorityColumns, layerMasterRows } from "../src/domain/layerMaster";
+import { computeDisplayGraph, expandRelationCandidates, isMergedLayer, layerMatchesQuery, relationGroupById, relationTargetLayerId } from "../src/domain/graph";
+import { layerMasterBaseColumns, layerMasterColumns, layerMasterMatchesQuery, layerMasterPayload, layerMasterPriorityColumns, layerMasterRows } from "../src/domain/layerMaster";
 import { parseTsv } from "../src/domain/tsv";
 import type { AuditEvent, Graph, Layout, Relation } from "../src/types";
 
@@ -96,6 +96,12 @@ describe("change history presentation", () => {
 });
 
 describe("shared Layer information grid", () => {
+  it("searches Layer Master rows by name or decimal Layer number", () => {
+    const master = { name: "Metal Layer", layer_number: "25.1" };
+    expect(layerMasterMatchesQuery(master, "metal")).toBe(true);
+    expect(layerMasterMatchesQuery(master, "25.1")).toBe(true);
+    expect(layerMasterMatchesQuery(master, "26")).toBe(false);
+  });
   it("includes Group in the canonical Layer information format", () => {
     const layouts = [{ id: "layout", name: "Scribe", scribe_lane_rows: 2, sort_order: 0 }];
     const presets = [{ id: "preset", name: "Default", fill_color: "#fff", stroke_color: "#000", text_color: "#000", font_size: 14, width: 180, height: 72, stroke_width: 2, is_default: true, sort_order: 0 }];
@@ -115,6 +121,13 @@ describe("shared Layer information grid", () => {
 });
 
 describe("display graph", () => {
+  it("searches the field selected for Layer labels, including decimal Step values", () => {
+    const target = { name: "Metal Layer", step: "25.1" };
+    expect(layerMatchesQuery(target, "step", "25.1")).toBe(true);
+    expect(layerMatchesQuery(target, "step", "metal")).toBe(false);
+    expect(layerMatchesQuery(target, "name", "metal")).toBe(true);
+    expect(layerMatchesQuery(target, "name", "25.1")).toBe(false);
+  });
   it("recognizes only same_group members as splittable merged layers", () => {
     const raw = graph();
     expect(isMergedLayer(raw, "a")).toBe(true);
@@ -228,17 +241,16 @@ describe("geometry", () => {
 });
 
 describe("group relation expansion", () => {
-  it("expands individual to group without removing duplicate combinations", () => {
+  it("blocks incoming relations to merged layers", () => {
     const raw = graph();
-    const expanded = expandRelationCandidates(raw, { parent_layer_id: "d", child_layer_id: "a" });
-    expect(expanded.map((row) => row.child_layer_id)).toEqual(["a", "b"]);
+    expect(() => expandRelationCandidates(raw, { parent_layer_id: "d", child_layer_id: "a" })).toThrow("Merge된 Layer");
     expect(expandRelationCandidates(raw, { parent_layer_id: "a", child_layer_id: "c" }).map((row) => [row.parent_layer_id, row.child_layer_id])).toEqual([["a", "c"], ["b", "c"]]);
   });
   it("expands group to individual and blocks group to group", () => {
     const raw = graph();
     expect(expandRelationCandidates(raw, { parent_layer_id: "a", child_layer_id: "d" }).map((row) => [row.parent_layer_id, row.child_layer_id])).toEqual([["a", "d"], ["b", "d"]]);
     raw.relations.push(relation("g2", "c", "d", "H"));
-    expect(() => expandRelationCandidates(raw, { parent_layer_id: "a", child_layer_id: "c" })).toThrow("그룹 간 관계");
+    expect(() => expandRelationCandidates(raw, { parent_layer_id: "a", child_layer_id: "c" })).toThrow("Merge된 Layer");
   });
   it("removes self relations", () => expect(expandRelationCandidates(graph(), { parent_layer_id: "c", child_layer_id: "c" })).toEqual([]));
   it("resolves a relation-line connection to its final target before expanding the merged source", () => {

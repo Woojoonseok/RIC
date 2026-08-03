@@ -10,7 +10,7 @@ const {
 
 <template>
   <div class="canvas-pane">
-    <div class="canvas-float"><button @click="fit">Fit</button><button @click="zoom(.9)">＋</button><button @click="zoom(1.1)">－</button><input v-model="query" placeholder="Layer 검색" @keydown.enter="focusSearch"><button @click="focusSearch">찾기</button><label><input v-model="snapEnabled" type="checkbox">20px Snap</label></div>
+    <div class="canvas-float"><button @click="fit">Fit</button><button @click="zoom(.9)">＋</button><button @click="zoom(1.1)">－</button><input v-model="query" :placeholder="app.labelField === 'step' ? 'Step 검색' : 'Layer 검색'" @keydown.enter="focusSearch"><button @click="focusSearch">찾기</button><label><input v-model="snapEnabled" type="checkbox">20px Snap</label></div>
     <svg ref="svg" class="canvas" :class="`${app.mode}-mode`" :viewBox="viewBoxString" @pointerdown="canvasDown" @pointermove="pointerMove" @pointerup="pointerUp" @pointercancel="pointerUp" @wheel="wheel">
       <defs><pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M 20 0 L 0 0 0 20" fill="none" stroke="#e9edf3" stroke-width="1"/></pattern><marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 Z" fill="context-stroke"/></marker></defs>
       <rect :x="viewBox.x" :y="viewBox.y" :width="viewBox.width" :height="viewBox.height" fill="url(#grid)"/>

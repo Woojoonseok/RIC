@@ -5,7 +5,7 @@ import { parseTsv, toTsv } from "../../domain/tsv";
 
 export interface GridOption { value: string; label: string }
 export interface GridColumn { key: string; label: string; width?: number; readonly?: boolean; options?: GridOption[]; defaultValue?: unknown; action?: boolean; sticky?: boolean; highlightEmpty?: boolean }
-const props = defineProps<{ columns: GridColumn[]; rows: Array<Record<string, unknown>>; rowKey?: string; selectedRows?: string[]; emptyHint?: string; autoCommit?: boolean; readonly?: boolean }>();
+const props = defineProps<{ columns: GridColumn[]; rows: Array<Record<string, unknown>>; rowKey?: string; selectedRows?: string[]; selectAllRows?: boolean; emptyHint?: string; autoCommit?: boolean; readonly?: boolean }>();
 const emit = defineEmits<{ commit: [rows: Array<Record<string, unknown>>]; rowSelect: [id: string, additive: boolean]; rowSelection: [ids: string[]]; cellAction: [row: Record<string, unknown>, key: string]; addRow: [] }>();
 const draft = ref<Array<Record<string, unknown>>>(cloneJson(props.rows));
 const active = ref({ row: 0, col: 0 });
@@ -24,6 +24,16 @@ const selected = computed(() => ({
   r1: Math.min(active.value.row, anchor.value.row), r2: Math.max(active.value.row, anchor.value.row),
   c1: Math.min(active.value.col, anchor.value.col), c2: Math.max(active.value.col, anchor.value.col),
 }));
+const selectableRowIds = computed(() => draft.value
+  .map((row) => String(row[props.rowKey ?? "id"] ?? ""))
+  .filter(Boolean));
+const selectedVisibleCount = computed(() => {
+  const current = new Set(props.selectedRows ?? []);
+  return selectableRowIds.value.filter((id) => current.has(id)).length;
+});
+const allRowsSelected = computed(() => Boolean(
+  selectableRowIds.value.length && selectedVisibleCount.value === selectableRowIds.value.length,
+));
 const gridColumns = computed(() => `64px ${props.columns.map((column) => `${widths.value[column.key] ?? column.width ?? 150}px`).join(" ")}`);
 function stickyLeft(colIndex: number) {
   return 64 + props.columns.slice(0, colIndex).reduce(
@@ -69,6 +79,7 @@ function toggleRow(row: number) {
   lastSelectedRow.value = row;
 }
 function selectAll() { anchor.value = { row: 0, col: 0 }; active.value = { row: Math.max(0, draft.value.length - 1), col: Math.max(0, props.columns.length - 1) } }
+function toggleAllRows() { emit("rowSelection", allRowsSelected.value ? [] : selectableRowIds.value) }
 function move(rowDelta: number, colDelta: number, extend = false) {
   activate(Math.max(0, Math.min(draft.value.length - 1, active.value.row + rowDelta)), Math.max(0, Math.min(props.columns.length - 1, active.value.col + colDelta)), extend);
 }
@@ -155,7 +166,19 @@ onBeforeUnmount(stopCellDrag);
 <template>
   <div class="sheet" tabindex="0" @keydown="onKey">
     <div class="sheet-row sheet-header" :style="{ gridTemplateColumns: gridColumns }">
-      <div class="sheet-head row-number" @click="selectAll">#</div>
+      <div class="sheet-head row-number" @click="selectAll">
+        <button
+          v-if="selectAllRows"
+          type="button"
+          class="sheet-select-all"
+          title="전체 행 선택"
+          aria-label="전체 행 선택"
+          :aria-checked="allRowsSelected ? 'true' : selectedVisibleCount ? 'mixed' : 'false'"
+          role="checkbox"
+          @click.stop="toggleAllRows"
+        ><span class="row-check" :class="{ checked: allRowsSelected || selectedVisibleCount }">{{ allRowsSelected ? '✓' : selectedVisibleCount ? '−' : '' }}</span></button>
+        <template v-else>#</template>
+      </div>
       <div v-for="(column, colIndex) in columns" :key="column.key" class="sheet-head" :class="{ 'sticky-column': column.sticky }" :style="column.sticky ? { left: `${stickyLeft(colIndex)}px` } : undefined" @click="selectColumn(colIndex)" @dblclick="autoFit(column)">
         {{ column.label }}<span class="column-resizer" @pointerdown.stop="resize(column, $event)" />
       </div>

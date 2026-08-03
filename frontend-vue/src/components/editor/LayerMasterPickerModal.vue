@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
+import { layerMasterMatchesQuery } from "../../domain/layerMaster";
 import { useGraphStore } from "../../stores/graph";
 import { useReferenceStore } from "../../stores/reference";
 import type { LayerMaster } from "../../types";
@@ -15,7 +16,7 @@ const importedIds = computed(() => new Set(
 ));
 const filtered = computed(() => reference.layerMasters.filter(
   (master) => !importedIds.value.has(master.id)
-    && master.name.toLowerCase().includes(search.value.toLowerCase()),
+    && layerMasterMatchesQuery(master, search.value),
 ));
 const allFilteredSelected = computed(() => (
   filtered.value.length > 0
@@ -52,7 +53,7 @@ onMounted(load);
   <div v-if="open" class="paste-overlay" @click="emit('close')">
     <section class="panel paste-panel layer-select-panel" @click.stop>
       <div class="panel-heading"><h2>Layer 정보에서 가져오기</h2><button @click="emit('close')">취소</button></div>
-      <input v-model="search" autofocus class="layer-select-search" placeholder="Layer명 검색...">
+      <input v-model="search" autofocus class="layer-select-search" placeholder="Layer명 또는 번호 검색...">
       <div class="layer-select-tools">
         <span>가져올 수 있는 Layer {{ filtered.length }}개</span>
         <button type="button" :disabled="!filtered.length" @click="toggleAllFiltered">

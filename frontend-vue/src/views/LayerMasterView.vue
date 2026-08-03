@@ -230,6 +230,7 @@ watch(
         :columns="basicColumns"
         :rows="rows"
         :selected-rows="selected"
+        select-all-rows
         :readonly="!project.canEdit"
         :auto-commit="true"
         empty-hint="Layer를 추가하세요."
@@ -245,6 +246,7 @@ watch(
         :columns="priorityColumns"
         :rows="priorityRows"
         :selected-rows="selected"
+        select-all-rows
         :readonly="!project.canEdit"
         :auto-commit="true"
         empty-hint="Key Layout Type을 추가하면 우선순위 열이 표시됩니다."

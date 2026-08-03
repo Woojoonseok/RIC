@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { layerMatchesQuery } from "../../domain/graph";
 import { useAppStore } from "../../stores/app";
 import { useGraphStore } from "../../stores/graph";
 
@@ -7,7 +8,7 @@ const app = useAppStore();
 const graph = useGraphStore();
 const emit = defineEmits<{ collapse: [] }>();
 const query = ref("");
-const layers = computed(() => graph.displayGraph?.layers.filter((row) => row.name.toLowerCase().includes(query.value.toLowerCase())) ?? []);
+const layers = computed(() => graph.displayGraph?.layers.filter((row) => layerMatchesQuery(row, app.labelField, query.value)) ?? []);
 
 function selectLayer(id: string, additive: boolean) {
   app.select({ kind: "layer", id }, additive);
@@ -25,7 +26,7 @@ function selectIssue(issue: { layer_id?: string | null; relation_id?: string | n
       <span>LAYERS</span>
       <div><b>{{ layers.length }}</b><button class="panel-collapse-button" aria-label="Layers 패널 닫기" title="Layers 패널 닫기" @click="emit('collapse')">‹</button></div>
     </div>
-    <input v-model="query" class="side-search" placeholder="Layer 검색">
+    <input v-model="query" class="side-search" :placeholder="app.labelField === 'step' ? 'Step 검색' : 'Layer 검색'">
     <button v-for="layer in layers" :key="layer.id" class="layer-item" :class="{ active: app.selection.some((row) => row.kind === 'layer' && row.id === layer.id) }" @click="selectLayer(layer.id, $event.ctrlKey || $event.metaKey || $event.shiftKey)">
       <span class="layer-dot"/><span><strong>{{ layer.name.replaceAll('\n', ' · ') }}</strong><small>{{ layer.step || 'Step 미지정' }}</small></span><em v-if="graph.groupSizeByLayerId[layer.id]">{{ graph.groupSizeByLayerId[layer.id] }}</em>
     </button>
