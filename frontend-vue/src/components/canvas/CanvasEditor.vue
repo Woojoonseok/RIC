@@ -28,7 +28,18 @@ const {
       >
         <polyline class="relation-hit" :points="path.polyline" @pointerdown="relationPointerDown($event, path.relation)"/>
         <polyline class="relation-line" :class="{ selected: selectedRelation === path.relation.id }" :points="path.polyline" fill="none" :stroke="path.appearance.stroke" :stroke-width="path.appearance.strokeWidth" :stroke-dasharray="path.appearance.strokeDasharray" :marker-end="path.appearance.markerEnd"/>
-        <template v-if="selectedRelation === path.relation.id && !path.relation.attached_relation_id"><circle v-for="(point, index) in (previewWaypoints[path.relation.id] || path.relation.waypoints || [])" :key="index" class="waypoint" :cx="point.x" :cy="point.y" r="7" @pointerdown="waypointDown($event, path.relation, index)" @dblclick.stop="deleteWaypoint($event, path.relation, index)"/></template>
+        <template v-if="selectedRelation === path.relation.id && !path.relation.attached_relation_id">
+          <circle
+            v-for="(point, index) in (previewWaypoints[path.relation.id] || path.relation.waypoints || [])"
+            :key="index"
+            class="waypoint"
+            :cx="point.x"
+            :cy="point.y"
+            r="7"
+            @pointerdown="waypointDown($event, path.relation, index)"
+            @dblclick.stop="deleteWaypoint($event, path.relation, index)"
+          />
+        </template>
       </g>
       <polyline v-if="connect" class="connect-preview" :points="`${connect.start.x},${connect.start.y} ${portSnap?.point.x ?? relationSnap?.point.x ?? pointer.x},${portSnap?.point.y ?? relationSnap?.point.y ?? pointer.y}`"/>
       <circle v-if="portSnap || relationSnap" class="snap-dot" :cx="portSnap?.point.x ?? relationSnap!.point.x" :cy="portSnap?.point.y ?? relationSnap!.point.y" r="9"/>

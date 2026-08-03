@@ -4,10 +4,10 @@ import { describeErrorDetail } from "../src/api/client";
 import { auditActorName, auditEventChanges, auditEventTitle, isChangeAuditEvent } from "../src/domain/audit";
 import { cloneJson } from "../src/domain/clone";
 import {
-  closestPointOnPath, facingPorts, getClosestPointOnSegment, intersects, orthogonalWaypoints, portHandlePoint, portPoint, relationGeometry, relationStroke, snap,
+  attachmentPort, closestPointOnPath, facingPorts, getClosestPointOnSegment, intersects, orthogonalWaypoints, portHandlePoint, portPoint, relationGeometry, relationStroke, snap,
 } from "../src/domain/geometry";
 import { computeDisplayGraph, expandRelationCandidates, isMergedLayer, layerMatchesQuery, relationGroupById, relationTargetLayerId } from "../src/domain/graph";
-import { layerMasterBaseColumns, layerMasterColumns, layerMasterMatchesQuery, layerMasterPayload, layerMasterPriorityColumns, layerMasterRows } from "../src/domain/layerMaster";
+import { layerImportPositions, layerMasterBaseColumns, layerMasterColumns, layerMasterMatchesQuery, layerMasterPayload, layerMasterPriorityColumns, layerMasterRows } from "../src/domain/layerMaster";
 import { parseTsv } from "../src/domain/tsv";
 import type { AuditEvent, Graph, Layout, Relation } from "../src/types";
 
@@ -101,6 +101,38 @@ describe("shared Layer information grid", () => {
     expect(layerMasterMatchesQuery(master, "metal")).toBe(true);
     expect(layerMasterMatchesQuery(master, "25.1")).toBe(true);
     expect(layerMasterMatchesQuery(master, "26")).toBe(false);
+  });
+  it("stacks imported Layers near the most recently changed Layer", () => {
+    const layers = [
+      { id: "older", created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-02T00:00:00Z" },
+      { id: "latest", created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-03T00:00:00Z" },
+    ];
+    const layouts = [layout("older", 100, 200), layout("latest", 600, 400)];
+    expect(layerImportPositions(layers, layouts, 3)).toEqual([
+      { x: 732, y: 400 },
+      { x: 760, y: 428 },
+      { x: 788, y: 456 },
+    ]);
+    expect(layerImportPositions([], [], 2)).toEqual([
+      { x: 120, y: 100 },
+      { x: 148, y: 128 },
+    ]);
+    expect(layerImportPositions(layers, layouts, 1, "older")).toEqual([
+      { x: 232, y: 200 },
+    ]);
+  });
+  it("moves an imported Layer stack into nearby empty canvas space", () => {
+    const layers = [{ id: "anchor", created_at: "", updated_at: "" }];
+    const layouts = [
+      layout("anchor", 100, 100),
+      { ...layout("blocker", 232, 100), width: 220, height: 180 },
+    ];
+    const positions = layerImportPositions(layers, layouts, 3, "anchor", { width: 180, height: 72 }, [
+      { x: 200, y: 300, width: 300, height: 80 },
+    ]);
+    const stack = { x: positions[0].x, y: positions[0].y, width: 236, height: 128 };
+    for (const obstacle of layouts) expect(intersects(stack, obstacle)).toBe(false);
+    expect(intersects(stack, { x: 200, y: 300, width: 300, height: 80 })).toBe(false);
   });
   it("includes Group in the canonical Layer information format", () => {
     const layouts = [{ id: "layout", name: "Scribe", scribe_lane_rows: 2, sort_order: 0 }];
@@ -211,6 +243,18 @@ describe("geometry", () => {
     ]);
     expect(orthogonalWaypoints({ x: 100, y: 40 }, "right", { x: 300, y: 40 }, "left")).toEqual([]);
   });
+  it("keeps every bend orthogonal and enters through the requested target side", () => {
+    const start = { x: 100, y: 40 };
+    const end = { x: 300, y: 160 };
+    const path = [start, ...orthogonalWaypoints(start, "right", end, "bottom"), end];
+    expect(path.every((point, index) => index === 0 || point.x === path[index - 1].x || point.y === path[index - 1].y)).toBe(true);
+    expect(path.at(-2)!.y).toBeGreaterThan(end.y);
+  });
+  it("approaches a relation segment perpendicularly from the source side", () => {
+    expect(attachmentPort({ x: 200, y: 20 }, { x: 200, y: 100 }, { x: 100, y: 100 }, { x: 300, y: 100 })).toBe("top");
+    expect(attachmentPort({ x: 200, y: 180 }, { x: 200, y: 100 }, { x: 100, y: 100 }, { x: 300, y: 100 })).toBe("bottom");
+    expect(attachmentPort({ x: 20, y: 200 }, { x: 100, y: 200 }, { x: 100, y: 100 }, { x: 100, y: 300 })).toBe("left");
+  });
   it("calculates relation stroke attributes", () => {
     expect(relationStroke({ id: "s", name: "ref", stroke_color: "#123456", stroke_width: 3, line_pattern: "reference", marker_type: "none", sort_order: 0 })).toEqual({
       stroke: "#123456", strokeWidth: 3, strokeDasharray: "10 4 2 4", markerEnd: undefined,
@@ -231,6 +275,18 @@ describe("geometry", () => {
     const branch = { ...relation("branch", "c", null), attached_relation_id: "base" };
     const relations = new Map([[base.id, base], [branch.id, branch]]);
     expect(relationGeometry(branch, layouts, relations)).toHaveLength(2);
+  });
+  it("uses the stored attachment waypoint as an anchor without duplicating the arrow endpoint", () => {
+    const layouts = new Map([["a", layout("a", 0)], ["b", layout("b", 300)], ["c", layout("c", -200, 100)]]);
+    const base = relation("base", "a", "b");
+    const branch = {
+      ...relation("branch", "c", "b"),
+      attached_relation_id: "base",
+      waypoints: [{ x: 200, y: 25 }],
+    };
+    const points = relationGeometry(branch, layouts, new Map([[base.id, base], [branch.id, branch]]));
+    expect(points).toEqual([{ x: -100, y: 125 }, { x: 200, y: 25 }]);
+    expect(points.at(-2)).not.toEqual(points.at(-1));
   });
   it("does not render unresolved or cyclic attached relations", () => {
     const layouts = new Map([["a", layout("a", 0)]]);

@@ -1,6 +1,6 @@
 import { computed, ref, watch } from "vue";
 import { api } from "../api/client";
-import { closestPointOnPath, facingPorts, findRelationSnap, intersects, orthogonalWaypoints, portHandlePoint, portPoint, relationGeometry, relationStroke, snap } from "../domain/geometry";
+import { attachmentPort, closestPointOnPath, facingPorts, findRelationSnap, intersects, orthogonalWaypoints, portHandlePoint, portPoint, relationGeometry, relationStroke, snap } from "../domain/geometry";
 import { layerMatchesQuery, relationTargetLayerId } from "../domain/graph";
 import { useAppStore } from "../stores/app";
 import { useGraphStore } from "../stores/graph";
@@ -14,7 +14,7 @@ export type CanvasDragState =
   | { type: "move"; start: Point; layerIds: string[]; textIds: string[]; layerOrigins: Record<string, Layout>; textOrigins: Record<string, TextBox> }
   | { type: "resize-layer"; id: string; start: Point; layout: Layout }
   | { type: "resize-text"; id: string; start: Point; text: TextBox }
-  | { type: "drag-waypoint"; id: string; index: number; pending: boolean; moved: boolean; startClient: Point };
+  | { type: "drag-waypoint"; id: string; index: number };
 
 export function useCanvasEditor() {
   const app = useAppStore();
@@ -106,6 +106,26 @@ export function useCanvasEditor() {
     const sourceLayout = layouts.value.get(sourceLayerId);
     if (!sourceLayout) return [];
     return orthogonalWaypoints(portPoint(sourceLayout, sourcePort), sourcePort, target, targetPort);
+  }
+
+  function attachmentRoute(
+    sourceLayerId: string,
+    sourcePort: PortName,
+    target: NonNullable<ReturnType<typeof findRelationSnap>>,
+  ) {
+    const sourceLayout = layouts.value.get(sourceLayerId);
+    const targetPath = relationPaths.value.find((path) => path.relationId === target.relationId)?.points;
+    const segmentStart = targetPath?.[target.segmentIndex];
+    const segmentEnd = targetPath?.[target.segmentIndex + 1];
+    if (!sourceLayout || !segmentStart || !segmentEnd) return null;
+    const targetPort = attachmentPort(portPoint(sourceLayout, sourcePort), target.point, segmentStart, segmentEnd);
+    return {
+      targetPort,
+      waypoints: [
+        ...pointConnectionWaypoints(sourceLayerId, sourcePort, target.point, targetPort, true),
+        target.point,
+      ],
+    };
   }
 
   function nodePointerDown(event: PointerEvent, id: string, resize = false) {
@@ -252,10 +272,6 @@ export function useCanvasEditor() {
       return;
     }
     if (active.type === "drag-waypoint") {
-      if (active.pending && !active.moved) {
-        active.moved = Math.hypot(event.clientX - active.startClient.x, event.clientY - active.startClient.y) > 4;
-        if (!active.moved) return;
-      }
       const row = relations.value.get(active.id);
       if (!row) return;
       const next = [...(row.waypoints ?? [])];
@@ -341,10 +357,6 @@ export function useCanvasEditor() {
         await graphStore.mutateGraph("텍스트 크기 저장", () => api.updateText(project.projectId, active.id, { width, height }));
       } finally { previewTexts.value = {} }
     } else if (active.type === "drag-waypoint" && previewWaypoints.value[active.id]) {
-      if (active.pending && !active.moved) {
-        previewWaypoints.value = {};
-        return;
-      }
       const waypoints = previewWaypoints.value[active.id];
       try {
         await graphStore.mutateGraph("Waypoint 저장", () => api.updateRelation(project.projectId, active.id, { waypoints }));
@@ -414,14 +426,12 @@ export function useCanvasEditor() {
     } else if (source && target && raw.value) {
       const targetLayerId = relationTargetLayerId(raw.value, target.relationId);
       if (!targetLayerId) { app.status = "관계선의 Target Layer를 찾을 수 없습니다."; return }
-      const targetRelation = raw.value.relations.find((row) => row.id === target.relationId);
+      const route = attachmentRoute(source.layerId, source.port, target);
+      if (!route) { app.status = "관계선 접속 경로를 계산할 수 없습니다."; return }
       await graphStore.createRelationExpanded({
         parent_layer_id: source.layerId, child_layer_id: targetLayerId, source_port: source.port,
-        target_port: targetRelation?.target_port ?? "top", attached_relation_id: target.relationId,
-        waypoints: [
-          ...pointConnectionWaypoints(source.layerId, source.port, target.point, targetRelation?.target_port ?? "top", orthogonal),
-          target.point,
-        ], relation_style_id: reference.selectedRelationStyleId || null,
+        target_port: route.targetPort, attached_relation_id: target.relationId,
+        waypoints: route.waypoints, relation_style_id: reference.selectedRelationStyleId || null,
       });
     }
   }
@@ -430,27 +440,8 @@ export function useCanvasEditor() {
     event.stopPropagation();
     const source = connect.value;
     if (!source) {
-      const alreadySelected = selectedRelation.value === relation.id;
       const additive = event.ctrlKey || event.metaKey || event.shiftKey;
       app.select({ kind: "relation", id: relation.id }, additive);
-      if (alreadySelected && !additive && project.canEdit && !relation.attached_relation_id) {
-        const path = relationGeometry(relations.value.get(relation.id) ?? relation, layouts.value, relations.value);
-        const insertion = closestPointOnPath(clientPoint(event), path);
-        if (insertion) {
-          const next = [...(relation.waypoints ?? [])];
-          next.splice(insertion.segmentIndex, 0, insertion.point);
-          previewWaypoints.value = { ...previewWaypoints.value, [relation.id]: next };
-          drag.value = {
-            type: "drag-waypoint",
-            id: relation.id,
-            index: insertion.segmentIndex,
-            pending: true,
-            moved: false,
-            startClient: { x: event.clientX, y: event.clientY },
-          };
-          capture(event);
-        }
-      }
       return;
     }
     connect.value = null;
@@ -461,17 +452,19 @@ export function useCanvasEditor() {
     if (!raw.value) return;
     const targetLayerId = relationTargetLayerId(raw.value, relation.id);
     if (!targetLayerId) { app.status = "관계선의 Target Layer를 찾을 수 없습니다."; return }
-    const attachPoint = clientPoint(event);
+    const targetPath = relationGeometry(relations.value.get(relation.id) ?? relation, layouts.value, relations.value);
+    const insertion = closestPointOnPath(clientPoint(event), targetPath);
+    if (!insertion) { app.status = "관계선 접속 위치를 찾을 수 없습니다."; return }
+    const target = { relationId: relation.id, ...insertion };
+    const route = attachmentRoute(source.layerId, source.port, target);
+    if (!route) { app.status = "관계선 접속 경로를 계산할 수 없습니다."; return }
     await graphStore.createRelationExpanded({
       parent_layer_id: source.layerId,
       child_layer_id: targetLayerId,
       source_port: source.port,
-      target_port: relation.target_port,
+      target_port: route.targetPort,
       attached_relation_id: relation.id,
-      waypoints: [
-        ...pointConnectionWaypoints(source.layerId, source.port, attachPoint, relation.target_port, event.shiftKey),
-        attachPoint,
-      ],
+      waypoints: route.waypoints,
       relation_style_id: reference.selectedRelationStyleId || null,
     });
   }
@@ -483,26 +476,22 @@ export function useCanvasEditor() {
   }
   async function addWaypoint(event: MouseEvent, relation: Relation) {
     event.stopPropagation();
-    if (!project.canEdit) return;
+    if (!project.canEdit || relation.attached_relation_id) return;
     const path = relationGeometry(relations.value.get(relation.id) ?? relation, layouts.value, relations.value);
     const insertion = closestPointOnPath(clientPoint(event as unknown as PointerEvent), path);
     if (!insertion) return;
+    const point = snapEnabled.value
+      ? { x: snap(insertion.point.x), y: snap(insertion.point.y) }
+      : insertion.point;
     const waypoints = [...(relation.waypoints ?? [])];
-    waypoints.splice(insertion.segmentIndex, 0, insertion.point);
+    waypoints.splice(insertion.segmentIndex, 0, point);
     app.select({ kind: "relation", id: relation.id });
     await graphStore.mutateGraph("Waypoint 추가", () => api.updateRelation(project.projectId, relation.id, { waypoints }));
   }
   function waypointDown(event: PointerEvent, relation: Relation, index: number) {
     event.stopPropagation();
     if (!project.canEdit) return;
-    drag.value = {
-      type: "drag-waypoint",
-      id: relation.id,
-      index,
-      pending: false,
-      moved: true,
-      startClient: { x: event.clientX, y: event.clientY },
-    };
+    drag.value = { type: "drag-waypoint", id: relation.id, index };
     app.select({ kind: "relation", id: relation.id });
     capture(event);
   }
@@ -542,7 +531,7 @@ export function useCanvasEditor() {
     app, graphStore, project, svg, viewBox, snapEnabled, query, pointer, drag, marquee, previewLayouts, previewTexts,
     previewWaypoints, connect, portSnap, relationSnap, relationPaths, graph, raw, layouts, styles, relationStyles, selectedLayers,
     selectedRelation, selectedTexts, ports, viewBoxString, portPoint, portHandlePoint, layerLabel, nodePointerDown, textPointerDown, canvasDown,
-    pointerMove, pointerUp, wheel, startConnect, relationPointerDown, relationAppearance, addWaypoint,
-    waypointDown, deleteWaypoint, focusSearch, editLayer, fit, zoom,
+    pointerMove, pointerUp, wheel, startConnect, relationPointerDown, relationAppearance,
+    addWaypoint, waypointDown, deleteWaypoint, focusSearch, editLayer, fit, zoom,
   };
 }

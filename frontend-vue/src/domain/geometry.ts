@@ -59,7 +59,11 @@ function compactOrthogonalPoints(start: Point, candidates: Point[], end: Point):
     const previous = points[index - 1];
     const current = points[index];
     const next = points[index + 1];
-    if ((previous.x === current.x && current.x === next.x) || (previous.y === current.y && current.y === next.y)) {
+    const verticalAndForward = previous.x === current.x && current.x === next.x
+      && (current.y - previous.y) * (next.y - current.y) >= 0;
+    const horizontalAndForward = previous.y === current.y && current.y === next.y
+      && (current.x - previous.x) * (next.x - current.x) >= 0;
+    if (verticalAndForward || horizontalAndForward) {
       points.splice(index, 1);
     }
   }
@@ -70,8 +74,18 @@ export function orthogonalWaypoints(start: Point, sourcePort: PortName, end: Poi
   const sourceHorizontal = horizontalPort(sourcePort);
   const targetHorizontal = horizontalPort(targetPort);
   if (sourceHorizontal !== targetHorizontal) {
-    const corner = sourceHorizontal ? { x: end.x, y: start.y } : { x: start.x, y: end.y };
-    return compactOrthogonalPoints(start, [corner], end);
+    const offset = (point: Point, port: PortName): Point => {
+      if (port === "top") return { x: point.x, y: point.y - 40 };
+      if (port === "right") return { x: point.x + 40, y: point.y };
+      if (port === "bottom") return { x: point.x, y: point.y + 40 };
+      return { x: point.x - 40, y: point.y };
+    };
+    const sourceStub = offset(start, sourcePort);
+    const targetStub = offset(end, targetPort);
+    const corner = sourceHorizontal
+      ? { x: targetStub.x, y: sourceStub.y }
+      : { x: sourceStub.x, y: targetStub.y };
+    return compactOrthogonalPoints(start, [sourceStub, corner, targetStub], end);
   }
   if (sourceHorizontal) {
     const bendX = sourcePort === targetPort
@@ -117,6 +131,12 @@ export function closestPointOnPath(point: Point, path: Point[]) {
   return best;
 }
 
+export function attachmentPort(source: Point, target: Point, segmentStart: Point, segmentEnd: Point): PortName {
+  const segmentIsHorizontal = Math.abs(segmentEnd.x - segmentStart.x) >= Math.abs(segmentEnd.y - segmentStart.y);
+  if (segmentIsHorizontal) return source.y <= target.y ? "top" : "bottom";
+  return source.x <= target.x ? "left" : "right";
+}
+
 export function relationGeometry(
   relation: Relation,
   layouts: Map<string, Layout>,
@@ -133,6 +153,7 @@ export function relationGeometry(
     const targetRelation = relations.get(relation.attached_relation_id);
     const targetPath = targetRelation ? relationGeometry(targetRelation, layouts, relations, nextVisited) : [];
     if (targetPath.length < 2) return [];
+    const storedWaypoints = relation.waypoints ?? [];
     const probe = points.at(-1)!;
     let closest: ReturnType<typeof getClosestPointOnSegment> | null = null;
     for (let index = 0; index < targetPath.length - 1; index += 1) {
@@ -140,7 +161,12 @@ export function relationGeometry(
       if (!closest || candidate.distance < closest.distance) closest = candidate;
     }
     if (!closest) return [];
-    return [...points, { x: closest.x, y: closest.y }];
+    const routedPoints = storedWaypoints.length ? points.slice(0, -1) : points;
+    const attachment = { x: closest.x, y: closest.y };
+    const previous = routedPoints.at(-1);
+    return previous?.x === attachment.x && previous.y === attachment.y
+      ? routedPoints
+      : [...routedPoints, attachment];
   }
 
   if (!relation.child_layer_id) return [];
@@ -151,12 +177,12 @@ export function relationGeometry(
 export const relationPoints = relationGeometry;
 
 export function findRelationSnap(point: Point, paths: Array<{ relationId: string; points: Point[] }>, threshold = 24) {
-  let best: { relationId: string; point: Point; distance: number } | null = null;
+  let best: { relationId: string; point: Point; distance: number; segmentIndex: number } | null = null;
   for (const path of paths) {
     for (let index = 0; index < path.points.length - 1; index += 1) {
       const candidate = getClosestPointOnSegment(point, path.points[index], path.points[index + 1]);
       if (candidate.distance <= threshold && (!best || candidate.distance < best.distance)) {
-        best = { relationId: path.relationId, point: { x: candidate.x, y: candidate.y }, distance: candidate.distance };
+        best = { relationId: path.relationId, point: { x: candidate.x, y: candidate.y }, distance: candidate.distance, segmentIndex: index };
       }
     }
   }

@@ -1,5 +1,5 @@
 import type { GridColumn } from "../components/grid/SpreadsheetGrid.vue";
-import type { BoxPreset, KeyLayoutType, LayerMaster, LayerMasterCreate } from "../types";
+import type { BoxPreset, KeyLayoutType, Layer, LayerMaster, LayerMasterCreate, Layout, Point } from "../types";
 
 export type LayerMasterGridRow = Record<string, unknown>;
 
@@ -7,6 +7,86 @@ export function layerMasterMatchesQuery(master: Pick<LayerMaster, "name" | "laye
   const needle = query.trim().toLowerCase();
   return master.name.toLowerCase().includes(needle)
     || (master.layer_number ?? "").toLowerCase().includes(needle);
+}
+
+export function layerImportPositions(
+  layers: Pick<Layer, "id" | "created_at" | "updated_at">[],
+  layouts: Pick<Layout, "layer_id" | "x" | "y" | "width" | "height">[],
+  count: number,
+  preferredLayerId?: string,
+  importedSize: Pick<Layout, "width" | "height"> = { width: 180, height: 72 },
+  extraObstacles: Array<Pick<Layout, "x" | "y" | "width" | "height">> = [],
+): Point[] {
+  const layoutByLayerId = new Map(layouts.map((layout) => [layout.layer_id, layout]));
+  let anchor: Pick<Layout, "x" | "y" | "width" | "height"> | undefined = preferredLayerId
+    ? layoutByLayerId.get(preferredLayerId)
+    : undefined;
+  let anchorTime = Number.NEGATIVE_INFINITY;
+
+  for (const layer of anchor ? [] : layers) {
+    const layout = layoutByLayerId.get(layer.id);
+    if (!layout) continue;
+    const parsedTime = Date.parse(layer.updated_at || layer.created_at || "");
+    const time = Number.isFinite(parsedTime) ? parsedTime : Number.NEGATIVE_INFINITY;
+    if (!anchor || time >= anchorTime) {
+      anchor = layout;
+      anchorTime = time;
+    }
+  }
+
+  const overlapOffset = 28;
+  const margin = 16;
+  const stackWidth = importedSize.width + Math.max(0, count - 1) * overlapOffset;
+  const stackHeight = importedSize.height + Math.max(0, count - 1) * overlapOffset;
+  const obstacles = [...layouts, ...extraObstacles];
+  const preferredStart = anchor
+    ? { x: anchor.x + anchor.width + 32, y: anchor.y }
+    : { x: 120, y: 100 };
+  const isOpen = (point: Point) => obstacles.every((obstacle) => (
+    point.x + stackWidth + margin <= obstacle.x
+    || point.x >= obstacle.x + obstacle.width + margin
+    || point.y + stackHeight + margin <= obstacle.y
+    || point.y >= obstacle.y + obstacle.height + margin
+  ));
+
+  let start = preferredStart;
+  const searchStep = 40;
+  for (let radius = 0; radius <= 80; radius += 1) {
+    const offsets: Point[] = [];
+    for (let y = -radius; y <= radius; y += 1) {
+      for (let x = -radius; x <= radius; x += 1) {
+        if (Math.max(Math.abs(x), Math.abs(y)) === radius) offsets.push({ x, y });
+      }
+    }
+    offsets.sort((left, right) => {
+      const leftDistance = Math.hypot(left.x, left.y);
+      const rightDistance = Math.hypot(right.x, right.y);
+      if (leftDistance !== rightDistance) return leftDistance - rightDistance;
+      if ((left.y >= 0) !== (right.y >= 0)) return left.y >= 0 ? -1 : 1;
+      return right.x - left.x;
+    });
+    const found = offsets
+      .map((offset) => ({
+        x: Math.max(20, preferredStart.x + offset.x * searchStep),
+        y: Math.max(20, preferredStart.y + offset.y * searchStep),
+      }))
+      .find(isOpen);
+    if (found) {
+      start = found;
+      break;
+    }
+  }
+
+  if (!isOpen(start)) {
+    start = {
+      x: Math.max(120, ...obstacles.map((obstacle) => obstacle.x + obstacle.width + margin)),
+      y: Math.max(20, preferredStart.y),
+    };
+  }
+  return Array.from({ length: Math.max(0, count) }, (_unused, index) => ({
+    x: start.x + index * overlapOffset,
+    y: start.y + index * overlapOffset,
+  }));
 }
 
 function baseColumns(presets: BoxPreset[]): GridColumn[] {
