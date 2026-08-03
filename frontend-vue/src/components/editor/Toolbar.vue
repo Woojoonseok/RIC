@@ -20,6 +20,7 @@ import {
 import { api } from "../../api/client";
 import { exportPptx, exportSvg } from "../../domain/export";
 import { isMergedLayer } from "../../domain/graph";
+import { layerImportPositions } from "../../domain/layerMaster";
 import { useAppStore } from "../../stores/app";
 import { useGraphStore } from "../../stores/graph";
 import { useProjectStore } from "../../stores/project";
@@ -37,17 +38,24 @@ const splitLayerId = computed(() => {
   return layerId && graph.rawGraph && isMergedLayer(graph.rawGraph, layerId) ? layerId : null;
 });
 async function addLayers(masters: LayerMaster[]) {
-  const startIndex = graph.rawGraph?.layers.length ?? 0;
+  const selectedPreset = reference.boxPresets.find((preset) => preset.id === reference.selectedBoxPresetId);
+  const positions = layerImportPositions(
+    graph.rawGraph?.layers ?? [],
+    graph.rawGraph?.layouts ?? [],
+    masters.length,
+    app.selectedLayerIds.at(-1),
+    { width: selectedPreset?.width ?? 180, height: selectedPreset?.height ?? 72 },
+    graph.rawGraph?.text_boxes ?? [],
+  );
   await graph.mutateGraph(`Layer 정보 ${masters.length}개 가져오기`, async () => {
     let saved;
     for (const [offset, master] of masters.entries()) {
-      const index = startIndex + offset;
       saved = await api.createLayer(project.projectId, {
         name: master.name,
         step: master.layer_number,
         layer_master_id: master.id,
-        x: 120 + (index % 5) * 220,
-        y: 100 + Math.floor(index / 5) * 130,
+        x: positions[offset].x,
+        y: positions[offset].y,
         box_preset_id: reference.selectedBoxPresetId || null,
       });
     }
