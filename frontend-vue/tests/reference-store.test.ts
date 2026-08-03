@@ -1,7 +1,7 @@
 import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it } from "vitest";
 import { useReferenceStore } from "../src/stores/reference";
-import type { LayerMaster } from "../src/types";
+import type { KeyLayoutType, LayerMaster } from "../src/types";
 
 function layer(id: string, name: string): LayerMaster {
   return {
@@ -34,5 +34,21 @@ describe("Layer Master ordering", () => {
 
     expect(store.layerMasters.map((row) => row.id)).toEqual(["1", "2", "3"]);
     expect(store.layerMasters[0].name).toBe("Layer 1 edited");
+  });
+});
+
+describe("Reference ordering", () => {
+  it("appends a newly saved reference row without moving existing rows", () => {
+    const store = useReferenceStore();
+    const layout = (id: string, name: string): KeyLayoutType => ({
+      id, name, scribe_lane_rows: null, sort_order: 0,
+    });
+    store.keyLayoutTypes = [layout("1", "Layout 1"), layout("2", "Layout 2")];
+
+    store.syncReferenceRow("key-layout-types", layout("1", "Layout 1 edited"));
+    store.syncReferenceRow("key-layout-types", layout("3", "Layout 3"));
+
+    expect(store.keyLayoutTypes.map((row) => row.id)).toEqual(["1", "2", "3"]);
+    expect(store.keyLayoutTypes[0].name).toBe("Layout 1 edited");
   });
 });

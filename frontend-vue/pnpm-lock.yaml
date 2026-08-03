@@ -23,9 +23,9 @@ importers:
       vue-router:
         specifier: 4.5.1
         version: 4.5.1(vue@3.5.39(typescript@5.9.3))
-      xlsx:
-        specifier: ^0.18.5
-        version: 0.18.5
+      xlsx-js-style:
+        specifier: 1.2.0
+        version: 1.2.0
     devDependencies:
       '@vitejs/plugin-vue':
         specifier: ^6.0.0
@@ -468,6 +468,11 @@ packages:
   '@vue/shared@3.5.39':
     resolution: {integrity: sha512-l1rrBtBfTnmxvtsvdQDXltUUy8S1Y+ZaqdfUzmAnJkTd8Z8rv5v/ytW+TKiqEOWyHPoqtPlNFSs0lhRmYVSHVA==}
 
+  adler-32@1.2.0:
+    resolution: {integrity: sha512-/vUqU/UY4MVeFsg+SsK6c+/05RZXIHZMGJA+PX5JyWI0ZRcBpupnRuPLU/NXXoFwMYCPCoxIfElM2eS+DUXCqQ==}
+    engines: {node: '>=0.8'}
+    hasBin: true
+
   adler-32@1.3.1:
     resolution: {integrity: sha512-ynZ4w/nUUv5rrsR8UUGoe1VC9hZj6V5hU9Qw1HlMDJGEJw5S7TfTErWTjMys6M7vr0YWcPqs3qAr4ss0nDfP+A==}
     engines: {node: '>=0.8'}
@@ -498,9 +503,16 @@ packages:
     resolution: {integrity: sha512-PAJdDJusoxnwm1VwW07VWwUN1sl7smmC3OKggvndJFadxxDRyFJBX/ggnu/KE4kQAB7a3Dp8f/YXC1FlUprWmA==}
     engines: {node: '>= 16'}
 
-  codepage@1.15.0:
-    resolution: {integrity: sha512-3g6NUTPd/YtuuGrhMnOMRjFc+LJw/bnMp3+0r/Wcz3IXUuCosKRJvMphm5+Q+bvTVGcJJuRvVLuYba+WojaFaA==}
+  codepage@1.14.0:
+    resolution: {integrity: sha512-iz3zJLhlrg37/gYRWgEPkaFTtzmnEv1h+r7NgZum2lFElYQPi0/5bnmuDfODHxfp0INEfnRqyfyeIJDbb7ahRw==}
     engines: {node: '>=0.8'}
+    hasBin: true
+
+  commander@2.14.1:
+    resolution: {integrity: sha512-+YR16o3rK53SmWHU3rEM3tPAh2rwb1yPcQX5irVn7mb0gXbwuCCrnkbV5+PBfETdfg1vui07nM6PCG1zndcjQw==}
+
+  commander@2.17.1:
+    resolution: {integrity: sha512-wPMUt6FnH2yzG95SA6mzjQOEKUU3aLaDEmzs1ti+1E9h+CsrZghRlqEM/EJ4KscsQVG8uNN4uVreUeT8+drlgg==}
 
   copy-anything@4.0.5:
     resolution: {integrity: sha512-7Vv6asjS4gMOuILabD3l739tsaxFQmC+a7pLZm02zyvs8p977bL3zEgq3yDk5rn9B0PbYgIv++jmHcuUab4RhA==}
@@ -548,6 +560,10 @@ packages:
   estree-walker@3.0.3:
     resolution: {integrity: sha512-7RUKfXgSMMkzt6ZuXmqapOurLGPPfgj6l9uRZ7lRGolvk0y2yocc35LdcxKC5PQZdn2DMqioAQ2NoWcrTKmm6g==}
 
+  exit-on-epipe@1.0.1:
+    resolution: {integrity: sha512-h2z5mrROTxce56S+pnvAV890uu7ls7f1kEvVGJbw1OlFH3/mlJ5bkXu0KRyW94v37zzHPiUd55iLn3DA7TjWpw==}
+    engines: {node: '>=0.8'}
+
   expect-type@1.4.0:
     resolution: {integrity: sha512-KfYbmpRm0VbLjEvVa9yGwCi9GI34xvi7A/HXYWQO65CSD2u3MczUJSuwXKFIxlGsgBQizV9q5J9NHj4VG0n+pA==}
     engines: {node: '>=12.0.0'}
@@ -560,6 +576,9 @@ packages:
     peerDependenciesMeta:
       picomatch:
         optional: true
+
+  fflate@0.3.11:
+    resolution: {integrity: sha512-Rr5QlUeGN1mbOHlaqcSYMKVpPbgLy0AWT/W0EHxA6NGI12yO1jpoui2zBBvU2G824ltM6Ut8BFgfHSBGfkmS0A==}
 
   frac@1.1.2:
     resolution: {integrity: sha512-w/XBfkibaTl3YDqASwfDUqkna4Z2p9cFSr1aHDt0WoMTECnRfBOv2WArlZILlqgWlmdIlALXGpM2AOhEk5W3IA==}
@@ -661,6 +680,11 @@ packages:
 
   pptxgenjs@4.0.1:
     resolution: {integrity: sha512-TeJISr8wouAuXw4C1F/mC33xbZs/FuEG6nH9FG1Zj+nuPcGMP5YRHl6X+j3HSUnS1f3at6k75ZZXPMZlA5Lj9A==}
+
+  printj@1.1.2:
+    resolution: {integrity: sha512-zA2SmoLaxZyArQTOPj5LXecR+RagfPSU5Kw1qP+jkWeNlrq+eJZyY2oS68SU1Z/7/myXM4lo9716laOFAVStCQ==}
+    engines: {node: '>=0.8'}
+    hasBin: true
 
   process-nextick-args@2.0.1:
     resolution: {integrity: sha512-3ouUOpQhtgrbOa17J7+uxOTpITYWaGP7/AhoR3+A+/1e9skrzelGi/dXzEYyvbxubEF6Wn2ypscTKiKJFFn1ag==}
@@ -857,8 +881,8 @@ packages:
     resolution: {integrity: sha512-OELeY0Q61OXpdUfTp+oweA/vtLVg5VDOXh+3he3PNzLGG/y0oylSOC1xRVj0+l4vQ3tj/bB1HVHv1ocXkQceFA==}
     engines: {node: '>=0.8'}
 
-  xlsx@0.18.5:
-    resolution: {integrity: sha512-dmg3LCjBPHZnQp5/F/+nnTa+miPJxUXB6vtk42YjBBKayDNagxGEeIdWApkYPOf3Z3pm3k62Knjzp7lMeTEtFQ==}
+  xlsx-js-style@1.2.0:
+    resolution: {integrity: sha512-DDT4FXFSWfT4DXMSok/m3TvmP1gvO3dn0Eu/c+eXHW5Kzmp7IczNkxg/iEPnImbG9X0Vb8QhROda5eatSR/97Q==}
     engines: {node: '>=0.8'}
     hasBin: true
 
@@ -1195,6 +1219,11 @@ snapshots:
 
   '@vue/shared@3.5.39': {}
 
+  adler-32@1.2.0:
+    dependencies:
+      exit-on-epipe: 1.0.1
+      printj: 1.1.2
+
   adler-32@1.3.1: {}
 
   alien-signals@3.2.1: {}
@@ -1220,7 +1249,14 @@ snapshots:
 
   check-error@2.1.3: {}
 
-  codepage@1.15.0: {}
+  codepage@1.14.0:
+    dependencies:
+      commander: 2.14.1
+      exit-on-epipe: 1.0.1
+
+  commander@2.14.1: {}
+
+  commander@2.17.1: {}
 
   copy-anything@4.0.5:
     dependencies:
@@ -1277,11 +1313,15 @@ snapshots:
     dependencies:
       '@types/estree': 1.0.9
 
+  exit-on-epipe@1.0.1: {}
+
   expect-type@1.4.0: {}
 
   fdir@6.5.0(picomatch@4.0.5):
     optionalDependencies:
       picomatch: 4.0.5
+
+  fflate@0.3.11: {}
 
   frac@1.1.2: {}
 
@@ -1364,6 +1404,8 @@ snapshots:
       https: 1.0.0
       image-size: 1.2.1
       jszip: 3.10.1
+
+  printj@1.1.2: {}
 
   process-nextick-args@2.0.1: {}
 
@@ -1571,12 +1613,15 @@ snapshots:
 
   word@0.3.0: {}
 
-  xlsx@0.18.5:
+  xlsx-js-style@1.2.0:
     dependencies:
-      adler-32: 1.3.1
+      adler-32: 1.2.0
       cfb: 1.2.2
-      codepage: 1.15.0
+      codepage: 1.14.0
+      commander: 2.17.1
       crc-32: 1.2.2
+      exit-on-epipe: 1.0.1
+      fflate: 0.3.11
       ssf: 0.11.2
       wmf: 1.0.2
       word: 0.3.0

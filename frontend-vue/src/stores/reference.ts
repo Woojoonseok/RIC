@@ -18,7 +18,7 @@ export const useReferenceStore = defineStore("reference", () => {
 
   function replaceById<T extends { id: string }>(rows: T[], row: T) {
     const index = rows.findIndex((item) => item.id === row.id);
-    return index < 0 ? [row, ...rows] : rows.map((item, itemIndex) => itemIndex === index ? row : item);
+    return index < 0 ? [...rows, row] : rows.map((item, itemIndex) => itemIndex === index ? row : item);
   }
 
   function syncReferenceRow<K extends ReferenceResource>(resource: K, row: ReferenceReadMap[K]) {

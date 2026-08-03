@@ -5,6 +5,8 @@ import type { Graph, LayerMaster, Relation } from "../src/types";
 const relation = (id: string, createdAt: string): Relation => ({
   id,
   project_id: "project",
+  parent_endpoint_type: "layer",
+  child_endpoint_type: "layer",
   parent_layer_id: "layer-38",
   child_layer_id: "layer-39",
   key_layout_type_id: "layout",
@@ -114,5 +116,36 @@ describe("final table", () => {
     expect(matrix[3].slice(-2)).toEqual(["38.0", "39.0"]);
     expect(matrix[4].slice(-2)).toEqual(["CUSTOM", ""]);
     expect(matrix[5].slice(-2)).toEqual(["O", "X"]);
+  });
+
+  it("creates Overlay Key rows for spare endpoints and keeps spare duplicates", () => {
+    const spareGraph: Graph = {
+      ...graph,
+      relations: [
+        { ...relation("layer-spare", "2026-01-01"), child_endpoint_type: "spare", child_layer_id: null },
+        { ...relation("spare-layer", "2026-01-02"), parent_endpoint_type: "spare", parent_layer_id: null },
+        {
+          ...relation("spare-spare-1", "2026-01-03"),
+          parent_endpoint_type: "spare",
+          child_endpoint_type: "spare",
+          parent_layer_id: null,
+          child_layer_id: null,
+        },
+        {
+          ...relation("spare-spare-2", "2026-01-04"),
+          parent_endpoint_type: "spare",
+          child_endpoint_type: "spare",
+          parent_layer_id: null,
+          child_layer_id: null,
+        },
+      ],
+    };
+    const table = buildFinalTable(spareGraph, masters, [], []);
+    expect(table.rows.map((row) => [row.keyName, row.inner, row.outer])).toEqual([
+      ["380toSPARE", "38.0", "SPARE"],
+      ["SPAREto390", "SPARE", "39.0"],
+      ["SPAREtoSPARE", "SPARE", "SPARE"],
+      ["SPAREtoSPARE2", "SPARE", "SPARE"],
+    ]);
   });
 });

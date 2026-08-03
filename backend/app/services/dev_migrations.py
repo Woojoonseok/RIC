@@ -251,6 +251,8 @@ def _rebuild_scoped_tables(target_engine: Engine) -> None:
             models.LayerRelation,
             {
                 "align_tree_id",
+                "parent_endpoint_type",
+                "child_endpoint_type",
                 "key_layout_type_id",
                 "key_drawing_type_id",
                 "relation_style_id",

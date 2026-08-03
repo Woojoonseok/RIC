@@ -282,6 +282,12 @@ class LayerRelation(Base, TimestampMixin):
     )
     # Nullable so "Add Row" can create a blank relation the user fills in by
     # typing layer names, instead of requiring a valid pair up front.
+    parent_endpoint_type: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="layer", server_default="layer"
+    )
+    child_endpoint_type: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="layer", server_default="layer"
+    )
     parent_layer_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("layers.id", ondelete="CASCADE"), nullable=True, index=True)
     child_layer_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("layers.id", ondelete="CASCADE"), nullable=True, index=True)
     key_layout_type_id: Mapped[uuid.UUID | None] = mapped_column(

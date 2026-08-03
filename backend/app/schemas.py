@@ -290,6 +290,11 @@ class StyleBatchUpdate(StyleUpdate):
     layer_id: uuid.UUID
 
 
+class LayerPresetBatchUpdate(BaseModel):
+    layer_id: uuid.UUID
+    box_preset_id: uuid.UUID
+
+
 class StyleRead(OrmModel):
     id: uuid.UUID
     project_id: uuid.UUID
@@ -494,6 +499,8 @@ class RelationExtraRead(OrmModel, RelationExtraCreate):
 class RelationBase(BaseModel):
     # Optional so a blank "Add Row" relation can be created before the user
     # has typed in a parent/child layer name.
+    parent_endpoint_type: Literal["layer", "spare"] = "layer"
+    child_endpoint_type: Literal["layer", "spare"] = "layer"
     parent_layer_id: uuid.UUID | None = None
     child_layer_id: uuid.UUID | None = None
     key_layout_type_id: uuid.UUID | None = None
@@ -524,6 +531,8 @@ class RelationCreate(RelationBase):
 
 
 class RelationUpdate(BaseModel):
+    parent_endpoint_type: Literal["layer", "spare"] | None = None
+    child_endpoint_type: Literal["layer", "spare"] | None = None
     parent_layer_id: uuid.UUID | None = None
     child_layer_id: uuid.UUID | None = None
     key_layout_type_id: uuid.UUID | None = None
@@ -621,6 +630,7 @@ class GraphUpdate(BaseModel):
 
 
 class GraphBatchUpdate(BaseModel):
+    layer_presets: list[LayerPresetBatchUpdate] = Field(default_factory=list)
     layouts: list[LayoutBatchUpdate] = Field(default_factory=list)
     styles: list[StyleBatchUpdate] = Field(default_factory=list)
     text_boxes: list[TextBoxBatchUpdate] = Field(default_factory=list)

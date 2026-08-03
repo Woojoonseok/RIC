@@ -1,6 +1,24 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import {
+  ChevronDown,
+  FileImage,
+  Layers3,
+  Link2,
+  Merge,
+  MoreHorizontal,
+  MousePointer2,
+  Presentation,
+  Redo2,
+  RefreshCw,
+  Split,
+  Trash2,
+  Type,
+  Undo2,
+  WandSparkles,
+} from "@lucide/vue";
 import { api } from "../../api/client";
+import { exportPptx, exportSvg } from "../../domain/export";
 import { isMergedLayer } from "../../domain/graph";
 import { useAppStore } from "../../stores/app";
 import { useGraphStore } from "../../stores/graph";
@@ -37,7 +55,6 @@ async function addLayers(masters: LayerMaster[]) {
   });
   layerPickerOpen.value = false;
 }
-async function addText() { await graph.mutateGraph("텍스트 추가", () => api.createText(project.projectId, { text: "Text", x: 180, y: 160 })) }
 function selectAll() { app.selection = graph.displayGraph?.layers.map((layer) => ({ kind: "layer" as const, id: layer.id })) ?? [] }
 async function mergeSelected() {
   const layerIds = [...app.selectedLayerIds];
@@ -55,32 +72,32 @@ async function splitSelected() {
 
 <template>
   <div class="editor-toolbar">
-    <select v-model="reference.selectedRelationStyleId" class="toolbar-style-select" aria-label="Arrow style" title="연결선 스타일"><option v-for="style in reference.relationStyles" :key="style.id" :value="style.id">{{ style.name }}</option></select>
-    <span class="divider"/>
-    <div class="tool-group">
-      <button :disabled="!project.canEdit || !graph.undoStack.length" @click="graph.undo">Undo</button>
-      <button :disabled="!project.canEdit || !graph.redoStack.length" @click="graph.redo">Redo</button>
+    <div class="tool-group toolbar-history" aria-label="편집 기록">
+      <button class="toolbar-icon-button" :disabled="!project.canEdit || !graph.undoStack.length" title="실행 취소" aria-label="실행 취소" @click="graph.undo"><Undo2 :size="17"/></button>
+      <button class="toolbar-icon-button" :disabled="!project.canEdit || !graph.redoStack.length" title="다시 실행" aria-label="다시 실행" @click="graph.redo"><Redo2 :size="17"/></button>
     </div>
     <span class="divider"/>
-    <select v-model="reference.selectedBoxPresetId" class="toolbar-preset-select" aria-label="Box preset" title="박스 프리셋"><option v-for="preset in reference.boxPresets" :key="preset.id" :value="preset.id">{{ preset.name }}</option></select>
-    <label class="toolbar-field">Label<select v-model="app.labelField"><option value="name">Layer</option><option value="step">Step</option></select></label>
+    <label class="toolbar-field"><span>표시</span><select v-model="app.labelField" aria-label="Layer 표시 기준"><option value="name">Layer</option><option value="step">Step</option></select></label>
     <div class="tool-group mode-switch" aria-label="Editor mode">
-      <button v-for="item in (['select','connect','text'] as const)" :key="item" :class="{ active: app.mode === item }" :disabled="item !== 'select' && !project.canEdit" @click="app.mode = item">{{ item[0].toUpperCase() + item.slice(1) }}</button>
+      <button :class="{ active: app.mode === 'select' }" title="선택" @click="app.mode = 'select'"><MousePointer2 :size="16"/><span>선택</span></button>
+      <button :class="{ active: app.mode === 'connect' }" :disabled="!project.canEdit" title="연결" @click="app.mode = 'connect'"><Link2 :size="16"/><span>연결</span></button>
+      <button :class="{ active: app.mode === 'text' }" :disabled="!project.canEdit" title="텍스트" @click="app.mode = 'text'"><Type :size="16"/><span>텍스트</span></button>
     </div>
     <span class="divider"/>
-    <div class="tool-group">
-      <button :disabled="!project.canEdit" @click="layerPickerOpen = true">Layer에서 가져오기</button>
-      <button :disabled="!project.canEdit || app.selectedLayerIds.length < 2" title="선택한 Layer를 첫 번째 Layer 크기로 묶습니다" @click="mergeSelected">Merge</button>
-      <button v-if="splitLayerId" :disabled="!project.canEdit" title="병합 그룹을 원래 Layer로 분리합니다" @click="splitSelected">Split</button>
-      <button class="danger" :disabled="!project.canEdit || !app.selection.length" @click="graph.deleteSelection">Delete</button>
+    <button class="toolbar-command" :disabled="!project.canEdit" @click="layerPickerOpen = true"><Layers3 :size="16"/><span>Layer 가져오기</span></button>
+    <div class="tool-group toolbar-selection-actions">
+      <button :disabled="!project.canEdit || app.selectedLayerIds.length < 2" title="선택한 Layer 병합" @click="mergeSelected"><Merge :size="16"/><span>병합</span></button>
+      <button v-if="splitLayerId" :disabled="!project.canEdit" title="병합 그룹 분리" @click="splitSelected"><Split :size="16"/><span>분리</span></button>
+      <button class="danger toolbar-icon-button" :disabled="!project.canEdit || !app.selection.length" title="선택 항목 삭제" aria-label="선택 항목 삭제" @click="graph.deleteSelection"><Trash2 :size="17"/></button>
     </div>
     <details class="toolbar-more">
-      <summary>More <span aria-hidden="true">⌄</span></summary>
+      <summary aria-label="더보기" title="더보기"><MoreHorizontal :size="18"/><ChevronDown :size="13"/></summary>
       <div>
-        <button :disabled="!project.canEdit" @click="addText">Add Text</button>
-        <button :disabled="!graph.displayGraph?.layers.length" @click="selectAll">Select All</button>
-        <button :disabled="!project.canEdit" @click="graph.mutateGraph('자동 배치', () => api.autoLayout(project.projectId))">Auto Layout</button>
-        <button @click="graph.reloadGraph">Refresh</button>
+        <button :disabled="!graph.displayGraph" @click="exportSvg(graph.displayGraph!)"><FileImage :size="15"/>SVG 내보내기</button>
+        <button :disabled="!graph.displayGraph" @click="exportPptx(graph.displayGraph!)"><Presentation :size="15"/>PowerPoint 내보내기</button>
+        <button :disabled="!graph.displayGraph?.layers.length" @click="selectAll"><MousePointer2 :size="15"/>전체 선택</button>
+        <button :disabled="!project.canEdit" @click="graph.mutateGraph('자동 배치', () => api.autoLayout(project.projectId))"><WandSparkles :size="15"/>자동 배치</button>
+        <button @click="graph.reloadGraph"><RefreshCw :size="15"/>새로고침</button>
       </div>
     </details>
   </div>

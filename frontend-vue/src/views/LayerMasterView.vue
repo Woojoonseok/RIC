@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
-import * as XLSX from "xlsx";
+import { computed, nextTick, ref, watch } from "vue";
+import { ChevronDown, ClipboardPaste, Download, Plus, Trash2, Users } from "@lucide/vue";
+import * as XLSX from "xlsx-js-style";
 import { api } from "../api/client";
 import SpreadsheetGrid from "../components/grid/SpreadsheetGrid.vue";
-import { layerMasterColumns, layerMasterPayload, layerMasterRows } from "../domain/layerMaster";
+import { layerMasterBaseColumns, layerMasterColumns, layerMasterPayload, layerMasterPriorityColumns, layerMasterRows } from "../domain/layerMaster";
 import { parseTsv } from "../domain/tsv";
 import { useAppStore } from "../stores/app";
 import { useProjectStore } from "../stores/project";
@@ -15,15 +16,30 @@ const project = useProjectStore();
 const reference = useReferenceStore();
 const selected = ref<string[]>([]);
 const grid = ref<InstanceType<typeof SpreadsheetGrid> | null>(null);
-const upload = ref<HTMLInputElement | null>(null);
 const pasteOpen = ref(false);
 const pasteText = ref("");
 const busy = ref(false);
 const status = ref("준비");
+const activeTab = ref<"basic" | "priorities">("basic");
+const priorityQuery = ref("");
 const persistedRows = new Map<string, string>();
 let writeQueue: Promise<void> = Promise.resolve();
-const columns = computed(() => layerMasterColumns(reference.keyLayoutTypes, reference.boxPresets));
+const basicColumns = computed(() => layerMasterBaseColumns(reference.boxPresets));
+const priorityColumns = computed(() => layerMasterPriorityColumns(reference.keyLayoutTypes));
+const importColumns = computed(() => layerMasterColumns(reference.keyLayoutTypes, reference.boxPresets));
 const rows = computed<Row[]>(() => layerMasterRows(reference.layerMasters, reference.keyLayoutTypes, reference.boxPresets));
+const priorityRows = computed(() => {
+  const needle = priorityQuery.value.trim().toLowerCase();
+  if (!needle) return rows.value;
+  return rows.value.filter((row) => (
+    String(row.layer_number ?? "").toLowerCase().includes(needle)
+    || String(row.name ?? "").toLowerCase().includes(needle)
+  ));
+});
+const priorityValueCount = computed(() => rows.value.reduce((total, row) => (
+  total + reference.keyLayoutTypes.filter((layout) => String(row[`priority:${layout.id}`] ?? "").trim()).length
+), 0));
+const priorityCellCount = computed(() => rows.value.length * reference.keyLayoutTypes.length);
 
 function rowSignature(row: Row) {
   return JSON.stringify(layerMasterPayload(row, reference.keyLayoutTypes));
@@ -48,6 +64,15 @@ function selectRow(id: string, additive: boolean) {
     : [...selected.value, id];
 }
 function setSelectedRows(ids: string[]) { selected.value = ids }
+async function addLayerRow() {
+  activeTab.value = "basic";
+  await nextTick();
+  grid.value?.addDraftRow();
+}
+function openPriorities(row: Row) {
+  priorityQuery.value = String(row.layer_number || row.name || "");
+  activeTab.value = "priorities";
+}
 async function commit(nextRows: Row[]) {
   if (!project.canEdit) return;
   busy.value = true;
@@ -132,7 +157,7 @@ async function removeSelected() {
   }
 }
 function rowsFromMatrix(matrix: unknown[][]): Row[] {
-  const keys = columns.value.map((column) => column.key);
+  const keys = importColumns.value.map((column) => column.key);
   return matrix
     .filter((row) => row.some((cell) => String(cell ?? "").trim()))
     .map((row) => Object.fromEntries(keys.map((key, index) => [key, row[index] ?? ""])));
@@ -142,15 +167,23 @@ async function applyPaste() {
   pasteOpen.value = false;
   pasteText.value = "";
 }
-async function uploadFile(event: Event) {
-  const file = (event.target as HTMLInputElement).files?.[0];
-  if (!file) return;
-  const workbook = XLSX.read(await file.arrayBuffer());
-  const matrix = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[workbook.SheetNames[0]], { header: 1, defval: "" });
-  await commit(rowsFromMatrix(matrix.slice(1)));
-  (event.target as HTMLInputElement).value = "";
+function downloadTemplate() {
+  const worksheet = XLSX.utils.aoa_to_sheet([
+    importColumns.value.map((column) => column.label),
+  ]);
+  worksheet["!cols"] = importColumns.value.map((column) => ({
+    wch: Math.max(14, Math.round((column.width ?? 120) / 8)),
+  }));
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Layer Information");
+  XLSX.writeFile(workbook, "RIC_Layer_Information_Template.xlsx");
+  app.status = "Layer 정보 템플릿을 다운로드했습니다.";
 }
-onMounted(load);
+watch(
+  () => project.currentProjectId,
+  (projectId) => { if (projectId) void load() },
+  { immediate: true },
+);
 </script>
 
 <template>
@@ -160,28 +193,61 @@ onMounted(load);
       <span class="status-pill" :class="{ busy }">{{ !project.canEdit ? '보기 전용' : busy ? '처리 중…' : status }}</span>
     </div>
     <div class="layer-master-summary panel">
-      <div><b>{{ reference.layerMasters.length }}</b><span>등록 Layer</span></div>
-      <div><b>{{ reference.keyLayoutTypes.length }}</b><span>우선순위 기준</span></div>
-      <div><b>{{ selected.length }}</b><span>선택 행</span></div>
-      <div class="button-strip">
-        <button class="primary" :disabled="busy || !project.canEdit" @click="grid?.addDraftRow()">새 Layer 정보</button>
-        <button :disabled="selected.length < 2 || busy || !project.canEdit" @click="groupSelected">Group ({{ selected.length }})</button>
-        <button class="danger" :disabled="!selected.length || busy || !project.canEdit" @click="removeSelected">선택 삭제</button>
-        <button :disabled="busy || !project.canEdit" @click="upload?.click()">Excel Upload</button>
-        <button :disabled="busy || !project.canEdit" @click="pasteOpen = true">Clipboard Paste</button>
+      <div class="layer-master-metrics">
+        <div><b>{{ reference.layerMasters.length }}</b><span>등록 Layer</span></div>
+        <div><b>{{ reference.keyLayoutTypes.length }}</b><span>우선순위 기준</span></div>
+        <div><b>{{ selected.length }}</b><span>선택 행</span></div>
+      </div>
+      <div class="layer-master-actions">
+        <button class="primary layer-add-button" :disabled="busy || !project.canEdit" @click="addLayerRow"><Plus :size="16"/>Layer 추가</button>
+        <div class="layer-action-group" aria-label="선택 항목 작업">
+          <button :disabled="selected.length < 2 || busy || !project.canEdit" @click="groupSelected"><Users :size="15"/>그룹 설정 <span v-if="selected.length">{{ selected.length }}</span></button>
+          <button class="danger ghost" :disabled="!selected.length || busy || !project.canEdit" @click="removeSelected"><Trash2 :size="15"/>삭제</button>
+        </div>
+        <span class="layer-action-divider"/>
+        <details class="action-menu">
+          <summary>데이터 도구<ChevronDown :size="14"/></summary>
+          <div>
+            <button type="button" :disabled="busy" @click="downloadTemplate"><Download :size="15"/>템플릿 다운로드</button>
+            <button type="button" :disabled="busy || !project.canEdit" @click="pasteOpen = true"><ClipboardPaste :size="15"/>표 붙여넣기</button>
+          </div>
+        </details>
       </div>
     </div>
+    <nav class="resource-tabs layer-master-tabs" aria-label="Layer 정보 보기">
+      <button :class="{ active: activeTab === 'basic' }" @click="activeTab = 'basic'; priorityQuery = ''">
+        <span>Layer 기본정보</span><b>{{ rows.length }}</b>
+      </button>
+      <button :class="{ active: activeTab === 'priorities' }" @click="activeTab = 'priorities'">
+        <span>Key 우선순위</span><b>{{ priorityValueCount }}/{{ priorityCellCount }}</b>
+      </button>
+      <input v-if="activeTab === 'priorities'" v-model="priorityQuery" class="layer-priority-search" placeholder="Layer 번호 또는 이름 검색">
+    </nav>
     <div class="sheet-help">셀 선택 후 바로 입력 또는 Enter/F2로 편집 · Ctrl+C / Ctrl+V로 Excel 범위 복사·붙여넣기 · 행 번호를 클릭해 선택</div>
-    <input ref="upload" hidden type="file" accept=".xlsx,.xls,.csv,.tsv" @change="uploadFile">
-    <div class="panel data-panel">
+    <div v-if="activeTab === 'basic'" class="panel data-panel">
       <SpreadsheetGrid
         ref="grid"
-        :columns="columns"
+        :columns="basicColumns"
         :rows="rows"
         :selected-rows="selected"
         :readonly="!project.canEdit"
         :auto-commit="true"
-        empty-hint="새 Layer 정보를 추가하세요."
+        empty-hint="Layer를 추가하세요."
+        @row-select="selectRow"
+        @row-selection="setSelectedRows"
+        @cell-action="openPriorities"
+        @commit="commit"
+      />
+    </div>
+    <div v-else class="panel data-panel priority-matrix-panel">
+      <SpreadsheetGrid
+        ref="grid"
+        :columns="priorityColumns"
+        :rows="priorityRows"
+        :selected-rows="selected"
+        :readonly="!project.canEdit"
+        :auto-commit="true"
+        empty-hint="Key Layout Type을 추가하면 우선순위 열이 표시됩니다."
         @row-select="selectRow"
         @row-selection="setSelectedRows"
         @commit="commit"

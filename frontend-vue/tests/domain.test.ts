@@ -7,7 +7,7 @@ import {
   closestPointOnPath, facingPorts, getClosestPointOnSegment, intersects, orthogonalWaypoints, portHandlePoint, portPoint, relationGeometry, relationStroke, snap,
 } from "../src/domain/geometry";
 import { computeDisplayGraph, expandRelationCandidates, isMergedLayer, relationGroupById, relationTargetLayerId } from "../src/domain/graph";
-import { layerMasterColumns, layerMasterPayload, layerMasterRows } from "../src/domain/layerMaster";
+import { layerMasterBaseColumns, layerMasterColumns, layerMasterPayload, layerMasterPriorityColumns, layerMasterRows } from "../src/domain/layerMaster";
 import { parseTsv } from "../src/domain/tsv";
 import type { AuditEvent, Graph, Layout, Relation } from "../src/types";
 
@@ -15,7 +15,8 @@ const project = { id: "p", name: "P", description: null, created_at: "", updated
 const layer = (id: string, name: string) => ({ id, project_id: "p", name, step: null, layer_property: null, align: null, align_side: null, description: null, metadata_json: {}, box_preset_id: null, pending_group: null, created_at: "", updated_at: "" });
 const layout = (id: string, x: number, y = 0): Layout => ({ id: `l${id}`, project_id: "p", layer_id: id, x, y, width: 100, height: 50, z_index: 0 });
 const relation = (id: string, parent: string | null, child: string | null, sameGroup: string | null = null): Relation => ({
-  id, project_id: "p", parent_layer_id: parent, child_layer_id: child,
+  id, project_id: "p", parent_endpoint_type: "layer", child_endpoint_type: "layer",
+  parent_layer_id: parent, child_layer_id: child,
   key_layout_type_id: null, key_drawing_type_id: null, relation_type: "parent_child", relation_style_id: null,
   parent_drawing_type_id: null, child_drawing_type_id: null, comment: null,
   key_priority: null, priority_rule: null, source_port: "right", target_port: "left",
@@ -102,6 +103,14 @@ describe("shared Layer information grid", () => {
     expect(layerMasterColumns(layouts, presets).map((column) => column.key)).toContain("group");
     const row = layerMasterRows([master], layouts, presets)[0];
     expect(layerMasterPayload(row, layouts)).toMatchObject({ name: "M1", group: "Front", priorities: { layout: "1" } });
+    expect(layerMasterBaseColumns(presets).map((column) => column.key)).not.toContain("priority:layout");
+    expect(layerMasterBaseColumns(presets).map((column) => column.key)).toContain("priority_summary");
+    expect(layerMasterPriorityColumns(layouts).map((column) => column.key)).toEqual([
+      "layer_number",
+      "name",
+      "priority:layout",
+    ]);
+    expect(row.priority_summary).toBe("1/1 설정");
   });
 });
 
@@ -132,6 +141,25 @@ describe("display graph", () => {
     expect(display.relations.map((row) => row.id)).toEqual(["r1"]);
     expect(raw.relations).toHaveLength(2);
     expect(relationGroupById(raw, "r2").map((row) => row.id)).toEqual(["r1", "r2"]);
+  });
+  it("keeps spare relations out of the editor display graph", () => {
+    const raw = graph();
+    raw.relations.push(
+      { ...relation("layer-spare", "a", null), child_endpoint_type: "spare" },
+      { ...relation("spare-layer", null, "c"), parent_endpoint_type: "spare" },
+      {
+        ...relation("spare-spare", null, null),
+        parent_endpoint_type: "spare",
+        child_endpoint_type: "spare",
+      },
+    );
+    const display = computeDisplayGraph(raw);
+    expect(display.relations.map((row) => row.id)).not.toEqual(expect.arrayContaining([
+      "layer-spare",
+      "spare-layer",
+      "spare-spare",
+    ]));
+    expect(raw.relations).toHaveLength(6);
   });
   it("keeps attached relations in the display graph", () => {
     const raw = graph();

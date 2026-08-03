@@ -22,7 +22,13 @@ const canSplitLayer = computed(() => Boolean(
 ));
 const layout = computed(() => layer.value ? graph.rawGraph?.layouts.find((row) => row.layer_id === layer.value!.id) : null);
 const style = computed(() => layer.value ? graph.rawGraph?.styles.find((row) => row.layer_id === layer.value!.id) : null);
-const selectedRelation = computed(() => item.value?.kind === "relation" ? graph.rawGraph?.relations.find((row) => row.id === item.value!.id) : null);
+const selectedRelation = computed(() => item.value?.kind === "relation"
+  ? graph.rawGraph?.relations.find((row) => (
+      row.id === item.value!.id
+      && row.parent_endpoint_type !== "spare"
+      && row.child_endpoint_type !== "spare"
+    ))
+  : null);
 const relationGroup = computed(() => (
   graph.rawGraph && selectedRelation.value
     ? relationGroupById(graph.rawGraph, selectedRelation.value.id)
@@ -59,10 +65,15 @@ async function updateSelectedStyles(body: StyleUpdate) {
 async function updateSelectedLayouts(body: LayoutUpdate) {
   await graph.mutateGraph("다중 배치 저장", () => api.batchGraph(project.projectId, { layouts: selectedLayers.value.map((row) => ({ layer_id: row.id, ...body })) }));
 }
-async function updateSelectedLayers(body: LayerUpdate) {
-  await graph.mutateGraph("다중 Layer 저장", async () => {
-    for (const row of selectedLayers.value) await api.updateLayer(project.projectId, row.id, body);
-  });
+async function applyBoxPreset(event: Event) {
+  const presetId = value(event);
+  const preset = reference.boxPresets.find((row) => row.id === presetId);
+  if (!preset || !selectedLayers.value.length) return;
+  const layers = [...selectedLayers.value];
+  reference.selectedBoxPresetId = preset.id;
+  await graph.mutateGraph("Box Type 적용", () => api.batchGraph(project.projectId, {
+    layer_presets: layers.map((row) => ({ layer_id: row.id, box_preset_id: preset.id })),
+  }));
 }
 function selectedPort(event: Event): PortName {
   const value = (event.target as HTMLSelectElement).value;
@@ -104,33 +115,55 @@ onMounted(() => reference.loadAll());
     <fieldset class="property-fieldset" :disabled="!project.canEdit">
     <div v-if="selectedLayers.length > 1" class="property-form multi-property">
       <div class="property-title"><div><strong>{{ selectedLayers.length }} Layers</strong><small>다중 편집</small></div></div>
-      <label>Fill<input type="color" value="#dbeafe" @change="updateSelectedStyles({ fill_color: value($event) })"></label>
-      <div class="color-swatches"><button v-for="color in COLOR_SWATCHES" :key="color" class="color-swatch" :style="{ background: color }" @click="updateSelectedStyles({ fill_color: color })"/></div>
-      <label>Stroke<input type="color" value="#2563eb" @change="updateSelectedStyles({ stroke_color: value($event) })"></label>
-      <label>Text<input type="color" value="#111827" @change="updateSelectedStyles({ text_color: value($event) })"></label>
-      <label>Font size<input type="number" min="8" max="72" value="16" @change="updateSelectedStyles({ font_size: numberValue($event) })"></label>
-      <label>Width<input type="number" min="60" value="180" @change="updateSelectedLayouts({ width: numberValue($event) })"></label>
-      <label>Height<input type="number" min="36" value="72" @change="updateSelectedLayouts({ height: numberValue($event) })"></label>
-      <label>Align<input @change="updateSelectedLayers({ align: value($event) || null })"></label>
-      <div class="property-split"/>
+      <section class="property-section">
+        <h3>위치 및 크기</h3>
+        <div class="property-grid">
+          <label>Width<input type="number" min="60" value="180" @change="updateSelectedLayouts({ width: numberValue($event) })"></label>
+          <label>Height<input type="number" min="36" value="72" @change="updateSelectedLayouts({ height: numberValue($event) })"></label>
+        </div>
+      </section>
+      <section class="property-section">
+        <h3>스타일</h3>
+        <label>Box Type<select :value="selectedLayers.every((row) => row.box_preset_id === selectedLayers[0]?.box_preset_id) ? selectedLayers[0]?.box_preset_id || '' : ''" @change="applyBoxPreset"><option value="" disabled>{{ selectedLayers.every((row) => row.box_preset_id === selectedLayers[0]?.box_preset_id) ? '선택' : '여러 Box Type' }}</option><option v-for="preset in reference.boxPresets" :key="preset.id" :value="preset.id">{{ preset.name }}</option></select></label>
+        <label class="property-color-row">Fill<span class="property-color-control"><input class="property-color-input" type="color" value="#dbeafe" aria-label="Fill color" @change="updateSelectedStyles({ fill_color: value($event) })"><code>#DBEAFE</code></span></label>
+        <div class="color-swatches"><button v-for="color in COLOR_SWATCHES" :key="color" type="button" class="color-swatch" :style="{ background: color }" :aria-label="`Fill ${color}`" :title="color" @click="updateSelectedStyles({ fill_color: color })"/></div>
+        <label class="property-color-row">Stroke<span class="property-color-control"><input class="property-color-input" type="color" value="#2563eb" aria-label="Stroke color" @change="updateSelectedStyles({ stroke_color: value($event) })"><code>#2563EB</code></span></label>
+        <label class="property-color-row">Text<span class="property-color-control"><input class="property-color-input" type="color" value="#111827" aria-label="Text color" @change="updateSelectedStyles({ text_color: value($event) })"><code>#111827</code></span></label>
+        <div class="property-grid">
+          <label>Font size<input type="number" min="8" max="72" value="16" @change="updateSelectedStyles({ font_size: numberValue($event) })"></label>
+        </div>
+      </section>
       <button @click="graph.mutateGraph('Layer 병합', () => api.merge(project.projectId, { layer_ids: selectedLayers.map(row => row.id) }))">Merge Layers</button>
     </div>
     <div v-else-if="layer" class="property-form">
       <div class="property-title"><span class="layer-dot"/><div><strong>{{ layer.name }}</strong><small>Layer</small></div></div>
-      <label>이름<input :value="layer.name" @change="updateLayer({ name: value($event) })"></label>
-      <label>Step<input :value="layer.step" @change="updateLayer({ step: value($event) || null })"></label>
-      <label>Property<input :value="layer.layer_property" @change="updateLayer({ layer_property: value($event) || null })"></label>
-      <label>Align<input :value="layer.align" @change="updateLayer({ align: value($event) || null })"></label>
-      <label>Align Side<input :value="layer.align_side" @change="updateLayer({ align_side: value($event) || null })"></label>
-      <label>Description<textarea :value="layer.description" @change="updateLayer({ description: value($event) || null })"/></label>
-      <label>Group<input :value="layer.pending_group" @change="graph.mutateGraph('그룹 저장', () => api.updateGroup(project.projectId, layer!.id, value($event) || null))"></label>
-      <div class="property-split"/>
-      <label v-if="layout">X<input type="number" :value="layout.x" @change="updateLayout({ x: numberValue($event) })"></label><label v-if="layout">Y<input type="number" :value="layout.y" @change="updateLayout({ y: numberValue($event) })"></label>
-      <label v-if="layout">Width<input type="number" min="60" :value="layout.width" @change="updateLayout({ width: numberValue($event) })"></label><label v-if="layout">Height<input type="number" min="36" :value="layout.height" @change="updateLayout({ height: numberValue($event) })"></label>
-      <div class="property-split"/>
-      <label v-if="style">Fill<input type="color" :value="style.fill_color" @change="updateStyle({ fill_color: value($event) })"></label><div v-if="style" class="color-swatches"><button v-for="color in COLOR_SWATCHES" :key="color" class="color-swatch" :style="{ background: color }" @click="updateStyle({ fill_color: color })"/></div>
-      <label v-if="style">Stroke<input type="color" :value="style.stroke_color" @change="updateStyle({ stroke_color: value($event) })"></label><label v-if="style">Text<input type="color" :value="style.text_color" @change="updateStyle({ text_color: value($event) })"></label>
-      <label v-if="style">Font size<input type="number" min="8" max="72" :value="style.font_size" @change="updateStyle({ font_size: numberValue($event) })"></label><label v-if="style">Stroke width<input type="number" min="1" max="12" :value="style.stroke_width" @change="updateStyle({ stroke_width: numberValue($event) })"></label>
+      <section class="property-section">
+        <h3>기본 정보</h3>
+        <label>이름<input :value="layer.name" @change="updateLayer({ name: value($event) })"></label>
+        <label>Step<input :value="layer.step" @change="updateLayer({ step: value($event) || null })"></label>
+        <label>Group<input :value="layer.pending_group" @change="graph.mutateGraph('그룹 저장', () => api.updateGroup(project.projectId, layer!.id, value($event) || null))"></label>
+      </section>
+      <section v-if="layout" class="property-section">
+        <h3>위치 및 크기</h3>
+        <div class="property-grid">
+          <label>X<input type="number" :value="layout.x" @change="updateLayout({ x: numberValue($event) })"></label>
+          <label>Y<input type="number" :value="layout.y" @change="updateLayout({ y: numberValue($event) })"></label>
+          <label>Width<input type="number" min="60" :value="layout.width" @change="updateLayout({ width: numberValue($event) })"></label>
+          <label>Height<input type="number" min="36" :value="layout.height" @change="updateLayout({ height: numberValue($event) })"></label>
+        </div>
+      </section>
+      <section v-if="style" class="property-section">
+        <h3>스타일</h3>
+        <label>Box Type<select :value="layer.box_preset_id || ''" @change="applyBoxPreset"><option value="" disabled>선택</option><option v-for="preset in reference.boxPresets" :key="preset.id" :value="preset.id">{{ preset.name }}</option></select></label>
+        <label class="property-color-row">Fill<span class="property-color-control"><input class="property-color-input" type="color" :value="style.fill_color" aria-label="Fill color" @change="updateStyle({ fill_color: value($event) })"><code>{{ style.fill_color.toUpperCase() }}</code></span></label>
+        <div class="color-swatches"><button v-for="color in COLOR_SWATCHES" :key="color" type="button" class="color-swatch" :class="{ active: style.fill_color.toLowerCase() === color }" :style="{ background: color }" :aria-label="`Fill ${color}`" :title="color" @click="updateStyle({ fill_color: color })"/></div>
+        <label class="property-color-row">Stroke<span class="property-color-control"><input class="property-color-input" type="color" :value="style.stroke_color" aria-label="Stroke color" @change="updateStyle({ stroke_color: value($event) })"><code>{{ style.stroke_color.toUpperCase() }}</code></span></label>
+        <label class="property-color-row">Text<span class="property-color-control"><input class="property-color-input" type="color" :value="style.text_color" aria-label="Text color" @change="updateStyle({ text_color: value($event) })"><code>{{ style.text_color.toUpperCase() }}</code></span></label>
+        <div class="property-grid">
+          <label>Font size<input type="number" min="8" max="72" :value="style.font_size" @change="updateStyle({ font_size: numberValue($event) })"></label>
+          <label>Stroke width<input type="number" min="1" max="12" :value="style.stroke_width" @change="updateStyle({ stroke_width: numberValue($event) })"></label>
+        </div>
+      </section>
       <button v-if="canSplitLayer" @click="graph.mutateGraph('Layer 분할', () => api.split(project.projectId, layer!.id))">Split Layer</button>
     </div>
     <div v-else-if="selectedRelation" class="property-form relation-properties">

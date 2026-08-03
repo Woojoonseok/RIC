@@ -124,6 +124,27 @@ def _validate_relation_references(
             _project_reference_or_404(db, model, project_id, data[field], label)
 
 
+def _normalize_relation_endpoints(
+    data: dict[str, Any],
+    relation: models.LayerRelation | None = None,
+) -> tuple[tuple[str, uuid.UUID | None], tuple[str, uuid.UUID | None]]:
+    endpoints: list[tuple[str, uuid.UUID | None]] = []
+    for side in ("parent", "child"):
+        type_field = f"{side}_endpoint_type"
+        id_field = f"{side}_layer_id"
+        current_type = getattr(relation, type_field, "layer") if relation is not None else "layer"
+        current_id = getattr(relation, id_field, None) if relation is not None else None
+        if id_field in data and data[id_field] is not None and type_field not in data:
+            data[type_field] = "layer"
+        endpoint_type = data.get(type_field, current_type) or current_type
+        if type_field in data:
+            data[type_field] = endpoint_type
+        if endpoint_type == "spare":
+            data[id_field] = None
+        endpoints.append((endpoint_type, data.get(id_field, current_id)))
+    return endpoints[0], endpoints[1]
+
+
 def _replace_relation_extras(
     db: Session,
     project_id: uuid.UUID,
@@ -252,6 +273,8 @@ def _dump_layer(layer: models.Layer, layout: models.GraphLayout | None, style: m
 def _dump_relation(relation: models.LayerRelation) -> dict[str, Any]:
     return {
         "id": str(relation.id),
+        "parent_endpoint_type": relation.parent_endpoint_type,
+        "child_endpoint_type": relation.child_endpoint_type,
         "parent_layer_id": str(relation.parent_layer_id) if relation.parent_layer_id else None,
         "child_layer_id": str(relation.child_layer_id) if relation.child_layer_id else None,
         "key_layout_type_id": str(relation.key_layout_type_id) if relation.key_layout_type_id else None,
@@ -426,6 +449,8 @@ def restore_graph(
             id=relation.id,
             project_id=project_id,
             align_tree_id=align_tree_id,
+            parent_endpoint_type=relation.parent_endpoint_type,
+            child_endpoint_type=relation.child_endpoint_type,
             parent_layer_id=relation.parent_layer_id,
             child_layer_id=relation.child_layer_id,
             key_layout_type_id=(
@@ -1751,6 +1776,80 @@ def batch_update_graph(
     db: Session = Depends(get_db),
 ) -> schemas.GraphRead:
     crud.get_align_tree_or_404(db, project_id, align_tree_id)
+    for preset_update in payload.layer_presets:
+        layer = crud.get_layer_or_404(db, project_id, align_tree_id, preset_update.layer_id)
+        preset = crud.get_box_preset_or_404(db, project_id, preset_update.box_preset_id)
+        current_layout = (
+            db.query(models.GraphLayout)
+            .filter(
+                models.GraphLayout.project_id == project_id,
+                models.GraphLayout.align_tree_id == align_tree_id,
+                models.GraphLayout.layer_id == layer.id,
+            )
+            .one_or_none()
+        )
+        current_style = (
+            db.query(models.ShapeStyle)
+            .filter(
+                models.ShapeStyle.project_id == project_id,
+                models.ShapeStyle.align_tree_id == align_tree_id,
+                models.ShapeStyle.layer_id == layer.id,
+            )
+            .one_or_none()
+        )
+        before = {
+            "box_preset_id": _audit_value(layer.box_preset_id),
+            "width": current_layout.width if current_layout else None,
+            "height": current_layout.height if current_layout else None,
+            "fill_color": current_style.fill_color if current_style else None,
+            "stroke_color": current_style.stroke_color if current_style else None,
+            "text_color": current_style.text_color if current_style else None,
+            "font_size": current_style.font_size if current_style else None,
+            "stroke_width": current_style.stroke_width if current_style else None,
+        }
+        layout = upsert_layout(
+            db,
+            project_id,
+            align_tree_id,
+            layer.id,
+            schemas.LayoutUpdate(width=preset.width, height=preset.height),
+        )
+        style = upsert_style(
+            db,
+            project_id,
+            align_tree_id,
+            layer.id,
+            schemas.StyleUpdate(
+                fill_color=preset.fill_color,
+                stroke_color=preset.stroke_color,
+                text_color=preset.text_color,
+                font_size=preset.font_size,
+                stroke_width=preset.stroke_width,
+            ),
+        )
+        layer.box_preset_id = preset.id
+        after = {
+            "box_preset_id": _audit_value(layer.box_preset_id),
+            "width": layout.width,
+            "height": layout.height,
+            "fill_color": style.fill_color,
+            "stroke_color": style.stroke_color,
+            "text_color": style.text_color,
+            "font_size": style.font_size,
+            "stroke_width": style.stroke_width,
+        }
+        if before != after:
+            _audit_graph_mutation(
+                db,
+                context,
+                project_id,
+                align_tree_id,
+                event_type="box_preset.applied",
+                target_type="layer",
+                target_id=layer.id,
+                summary=f"Applied box preset {preset.name}",
+                details={"before": before, "after": after},
+            )
     for layout_update in payload.layouts:
         fields = sorted(layout_update.model_dump(exclude={"layer_id"}, exclude_unset=True))
         current = (
@@ -1906,13 +2005,13 @@ def create_relation(
     db: Session = Depends(get_db),
 ) -> models.LayerRelation:
     crud.get_align_tree_or_404(db, project_id, align_tree_id)
-    if payload.parent_layer_id is not None:
-        crud.get_layer_or_404(db, project_id, align_tree_id, payload.parent_layer_id)
-    if payload.child_layer_id is not None:
-        crud.get_layer_or_404(db, project_id, align_tree_id, payload.child_layer_id)
+    data = payload.model_dump(exclude={"extras"})
+    parent_endpoint, child_endpoint = _normalize_relation_endpoints(data)
+    for endpoint_type, layer_id in (parent_endpoint, child_endpoint):
+        if endpoint_type == "layer" and layer_id is not None:
+            crud.get_layer_or_404(db, project_id, align_tree_id, layer_id)
     if payload.attached_relation_id is not None:
         crud.get_relation_or_404(db, project_id, align_tree_id, payload.attached_relation_id)
-    data = payload.model_dump(exclude={"extras"})
     _validate_relation_references(db, project_id, data)
     if data.get("relation_style_id") is None:
         data["relation_style_id"] = default_relation_style_id(db, project_id)
@@ -1938,6 +2037,8 @@ def create_relation(
             target_id=relation.id,
             summary="Created layer relation",
             details={"values": {
+                "parent_endpoint_type": relation.parent_endpoint_type,
+                "child_endpoint_type": relation.child_endpoint_type,
                 "parent_layer_id": str(relation.parent_layer_id) if relation.parent_layer_id else None,
                 "child_layer_id": str(relation.child_layer_id) if relation.child_layer_id else None,
                 "relation_type": relation.relation_type,
@@ -1964,10 +2065,11 @@ def update_relation(
     relation = crud.get_relation_or_404(db, project_id, align_tree_id, relation_id)
     data = payload.model_dump(exclude_unset=True)
     extras = data.pop("extras", None)
+    parent_endpoint, child_endpoint = _normalize_relation_endpoints(data, relation)
     changed_fields = sorted(data)
     before = _audit_field_values(relation, changed_fields)
-    for layer_id in (payload.parent_layer_id, payload.child_layer_id):
-        if layer_id is not None:
+    for endpoint_type, layer_id in (parent_endpoint, child_endpoint):
+        if endpoint_type == "layer" and layer_id is not None:
             crud.get_layer_or_404(db, project_id, align_tree_id, layer_id)
     _validate_relation_references(db, project_id, data)
     if data.get("relation_style_id") is not None:
@@ -2023,6 +2125,8 @@ def delete_relation(
     snapshot = _audit_field_values(
         relation,
         [
+            "parent_endpoint_type",
+            "child_endpoint_type",
             "parent_layer_id",
             "child_layer_id",
             "key_layout_type_id",

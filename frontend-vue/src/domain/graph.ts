@@ -52,6 +52,7 @@ export function computeDisplayGraph(raw: Graph): Graph {
   const relations: Relation[] = [];
   for (const relation of raw.relations) {
     if (relation.same_group) continue;
+    if (relation.parent_endpoint_type === "spare" || relation.child_endpoint_type === "spare") continue;
     const parent = relation.parent_layer_id
       ? (anchorById.get(relation.parent_layer_id) ?? relation.parent_layer_id)
       : null;

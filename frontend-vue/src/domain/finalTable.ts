@@ -49,6 +49,12 @@ function keyNumber(value: string): string {
   return value.replace(/\./g, "");
 }
 
+function endpointKey(relation: Relation, side: "parent" | "child"): string {
+  return relation[`${side}_endpoint_type`] === "spare"
+    ? "spare"
+    : relation[`${side}_layer_id`] ?? "";
+}
+
 function relationOrder(left: Relation, right: Relation): number {
   const created = String(left.created_at || "").localeCompare(String(right.created_at || ""));
   return created || left.id.localeCompare(right.id);
@@ -95,12 +101,23 @@ export function buildFinalTable(
 
   const duplicateCounts = new Map<string, number>();
   const rows = graph.relations
-    .filter((relation) => !relation.same_group && relation.parent_layer_id && relation.child_layer_id)
+    .filter((relation) => {
+      if (relation.same_group) return false;
+      const parentValid = relation.parent_endpoint_type === "spare" || Boolean(relation.parent_layer_id);
+      const childValid = relation.child_endpoint_type === "spare" || Boolean(relation.child_layer_id);
+      return parentValid && childValid;
+    })
     .sort(relationOrder)
     .map((relation) => {
-      const inner = numberForLayer(layerById.get(relation.parent_layer_id!));
-      const outer = numberForLayer(layerById.get(relation.child_layer_id!));
-      const pair = `${relation.parent_layer_id}\u0000${relation.child_layer_id}`;
+      const parentKey = endpointKey(relation, "parent");
+      const childKey = endpointKey(relation, "child");
+      const inner = relation.parent_endpoint_type === "spare"
+        ? "SPARE"
+        : numberForLayer(layerById.get(relation.parent_layer_id!));
+      const outer = relation.child_endpoint_type === "spare"
+        ? "SPARE"
+        : numberForLayer(layerById.get(relation.child_layer_id!));
+      const pair = `${parentKey}\u0000${childKey}`;
       const count = (duplicateCounts.get(pair) ?? 0) + 1;
       duplicateCounts.set(pair, count);
       const baseName = inner && outer ? `${keyNumber(inner)}to${keyNumber(outer)}` : "";

@@ -135,7 +135,7 @@ async function add() {
   try {
     const saved = await enqueueWrite(() => api.createReference(resource, normalize(row, resource) as never));
     const savedRow = cloneJson(saved) as unknown as Row;
-    drafts.value[resource].unshift(savedRow);
+    drafts.value[resource].push(savedRow);
     reference.syncReferenceRow(resource, saved as never);
     if (savedRow.id) persistedRows.set(savedRow.id, JSON.stringify(normalize(savedRow, resource)));
     status.value = "새 항목이 추가되었습니다";
