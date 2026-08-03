@@ -4,7 +4,7 @@ import { describeErrorDetail } from "../src/api/client";
 import { auditActorName, auditEventChanges, auditEventTitle, isChangeAuditEvent } from "../src/domain/audit";
 import { cloneJson } from "../src/domain/clone";
 import {
-  attachmentPort, closestPointOnPath, facingPorts, getClosestPointOnSegment, intersects, orthogonalWaypoints, portHandlePoint, portPoint, relationGeometry, relationStroke, snap,
+  attachmentPort, closestPointOnPath, facingPorts, getClosestPointOnSegment, intersects, orthogonalWaypoints, portHandlePoint, portPoint, relationBendWaypoints, relationGeometry, relationStroke, snap,
 } from "../src/domain/geometry";
 import { computeDisplayGraph, expandRelationCandidates, isMergedLayer, layerMatchesQuery, relationGroupById, relationTargetLayerId } from "../src/domain/graph";
 import { layerImportPositions, layerMasterBaseColumns, layerMasterColumns, layerMasterMatchesQuery, layerMasterPayload, layerMasterPriorityColumns, layerMasterRows } from "../src/domain/layerMaster";
@@ -287,6 +287,15 @@ describe("geometry", () => {
     const points = relationGeometry(branch, layouts, new Map([[base.id, base], [branch.id, branch]]));
     expect(points).toEqual([{ x: -100, y: 125 }, { x: 200, y: 25 }]);
     expect(points.at(-2)).not.toEqual(points.at(-1));
+  });
+  it("keeps an attached relation anchor hidden from bend editing", () => {
+    const branch = {
+      ...relation("branch", "a", "b"),
+      attached_relation_id: "base",
+      waypoints: [{ x: 100, y: 40 }, { x: 200, y: 80 }],
+    };
+    expect(relationBendWaypoints(branch)).toEqual([{ x: 100, y: 40 }]);
+    expect(relationBendWaypoints(relation("plain", "a", "b"))).toEqual([]);
   });
   it("does not render unresolved or cyclic attached relations", () => {
     const layouts = new Map([["a", layout("a", 0)]]);

@@ -4,7 +4,7 @@ const {
   app, svg, viewBox, snapEnabled, query, pointer, marquee, previewTexts, previewWaypoints, connect, portSnap, relationSnap,
   graph, relationPaths, layouts, styles, selectedLayers, selectedRelation, selectedTexts, ports, viewBoxString, portPoint, portHandlePoint, layerLabel,
   nodePointerDown, textPointerDown, canvasDown, pointerMove, pointerUp, wheel, startConnect, relationPointerDown,
-  addWaypoint, waypointDown, deleteWaypoint, focusSearch, editLayer, fit, zoom,
+  editableWaypoints, addWaypoint, waypointDown, deleteWaypoint, focusSearch, editLayer, fit, zoom,
 } = useCanvasEditor();
 </script>
 
@@ -28,9 +28,9 @@ const {
       >
         <polyline class="relation-hit" :points="path.polyline" @pointerdown="relationPointerDown($event, path.relation)"/>
         <polyline class="relation-line" :class="{ selected: selectedRelation === path.relation.id }" :points="path.polyline" fill="none" :stroke="path.appearance.stroke" :stroke-width="path.appearance.strokeWidth" :stroke-dasharray="path.appearance.strokeDasharray" :marker-end="path.appearance.markerEnd"/>
-        <template v-if="selectedRelation === path.relation.id && !path.relation.attached_relation_id">
+        <template v-if="selectedRelation === path.relation.id">
           <circle
-            v-for="(point, index) in (previewWaypoints[path.relation.id] || path.relation.waypoints || [])"
+            v-for="(point, index) in editableWaypoints(path.relation)"
             :key="index"
             class="waypoint"
             :cx="point.x"
@@ -45,7 +45,7 @@ const {
       <circle v-if="portSnap || relationSnap" class="snap-dot" :cx="portSnap?.point.x ?? relationSnap!.point.x" :cy="portSnap?.point.y ?? relationSnap!.point.y" r="9"/>
       <g v-for="layer in graph?.layers" :key="layer.id" class="layer-node" :class="{ selected: selectedLayers.has(layer.id), 'connect-source': connect?.layerId === layer.id, 'connect-candidate': app.mode === 'connect' && Boolean(connect) && connect?.layerId !== layer.id }" @pointerdown="nodePointerDown($event, layer.id)" @dblclick.stop="editLayer(layer.id)">
         <template v-if="layouts.get(layer.id)"><rect :x="layouts.get(layer.id)!.x" :y="layouts.get(layer.id)!.y" :width="layouts.get(layer.id)!.width" :height="layouts.get(layer.id)!.height" rx="12" :fill="styles.get(layer.id)?.fill_color || '#fff'" :stroke="styles.get(layer.id)?.stroke_color || '#175cd3'" :stroke-width="styles.get(layer.id)?.stroke_width || 2"/><text :x="layouts.get(layer.id)!.x + layouts.get(layer.id)!.width / 2" :y="layouts.get(layer.id)!.y + layouts.get(layer.id)!.height / 2" text-anchor="middle" dominant-baseline="middle" :fill="styles.get(layer.id)?.text_color || '#101828'" :font-size="styles.get(layer.id)?.font_size || 14"><tspan v-for="(line, index) in layerLabel(layer).split('\n')" :key="index" :x="layouts.get(layer.id)!.x + layouts.get(layer.id)!.width / 2" :dy="index ? 18 : -(layerLabel(layer).split('\n').length - 1) * 9">{{ line }}</tspan></text>
-          <template v-if="selectedLayers.has(layer.id)"><g v-for="port in ports" :key="port"><line class="port-stem" :x1="portPoint(layouts.get(layer.id)!, port).x" :y1="portPoint(layouts.get(layer.id)!, port).y" :x2="portHandlePoint(layouts.get(layer.id)!, port).x" :y2="portHandlePoint(layouts.get(layer.id)!, port).y"/><circle class="port" :cx="portHandlePoint(layouts.get(layer.id)!, port).x" :cy="portHandlePoint(layouts.get(layer.id)!, port).y" r="8" @pointerdown="startConnect($event, layer.id, port)"/></g></template>
+          <template v-if="selectedLayers.has(layer.id) || app.mode === 'connect'"><g v-for="port in ports" :key="port"><line class="port-stem" :x1="portPoint(layouts.get(layer.id)!, port).x" :y1="portPoint(layouts.get(layer.id)!, port).y" :x2="portHandlePoint(layouts.get(layer.id)!, port).x" :y2="portHandlePoint(layouts.get(layer.id)!, port).y"/><circle class="port" :class="{ connectable: Boolean(connect) && connect?.layerId !== layer.id }" :cx="portHandlePoint(layouts.get(layer.id)!, port).x" :cy="portHandlePoint(layouts.get(layer.id)!, port).y" r="8" @pointerdown="startConnect($event, layer.id, port)"/></g></template>
           <rect v-if="selectedLayers.has(layer.id) && app.mode === 'select'" class="resize-handle" :x="layouts.get(layer.id)!.x + layouts.get(layer.id)!.width - 6" :y="layouts.get(layer.id)!.y + layouts.get(layer.id)!.height - 6" width="12" height="12" @pointerdown="nodePointerDown($event, layer.id, true)"/>
         </template>
       </g>
