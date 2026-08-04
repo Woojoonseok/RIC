@@ -1,6 +1,6 @@
 # RIC Align Tree Editor
 
-반도체 공정의 Align Tree를 설계·편집·검증하고 Excel, SVG, PPTX로 내보내는 웹 애플리케이션이다. 최신 UI는 Vue 3로 구현하며, 초기 React UI는 비교와 회귀 참고를 위해 `frontend/`에 유지한다.
+Align Tree를 설계·편집·검증하고 Excel, SVG, PPTX로 내보내는 웹 애플리케이션이다. 최신 UI는 Vue 3로 구현하며, 초기 React UI는 비교와 회귀 참고를 위해 `frontend/`에 유지한다.
 
 ## 구조
 
