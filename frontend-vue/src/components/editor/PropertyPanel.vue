@@ -35,6 +35,7 @@ const relationGroup = computed(() => (
     : []
 ));
 const text = computed(() => item.value?.kind === "text" ? graph.rawGraph?.text_boxes.find((row) => row.id === item.value!.id) : null);
+const isDecorativeShape = computed(() => Boolean(text.value && (text.value.shape_type ?? "text") !== "text"));
 async function updateLayer(body: LayerUpdate) { if (layer.value) await graph.mutateGraph("Layer 저장", () => api.updateLayer(project.projectId, layer.value!.id, body)) }
 async function updateLayout(body: LayoutUpdate) { if (layer.value) await graph.mutateGraph("배치 저장", () => api.updateLayout(project.projectId, layer.value!.id, body)) }
 async function updateStyle(body: StyleUpdate) { if (layer.value) await graph.mutateGraph("스타일 저장", () => api.updateStyle(project.projectId, layer.value!.id, body)) }
@@ -199,11 +200,13 @@ onMounted(() => reference.loadAll());
       </details>
     </div>
     <div v-else-if="text" class="property-form">
-      <div class="property-title"><strong>Text Box</strong></div><label>텍스트<textarea :value="text.text" @change="updateText({ text: value($event) })"/></label>
+      <div class="property-title"><strong>{{ isDecorativeShape ? '배경 도형' : 'Text Box' }}</strong></div>
+      <label v-if="isDecorativeShape">도형<select :value="text.shape_type" @change="updateText({ shape_type: value($event) === 'ellipse' ? 'ellipse' : 'rectangle' })"><option value="rectangle">사각형</option><option value="ellipse">원</option></select></label>
+      <label v-else>텍스트<textarea :value="text.text" @change="updateText({ text: value($event) })"/></label>
       <label>X<input type="number" :value="text.x" @change="updateText({ x: numberValue($event) })"></label><label>Y<input type="number" :value="text.y" @change="updateText({ y: numberValue($event) })"></label>
       <label>Width<input type="number" min="40" :value="text.width" @change="updateText({ width: numberValue($event) })"></label><label>Height<input type="number" min="24" :value="text.height" @change="updateText({ height: numberValue($event) })"></label>
-      <label>Font Size<input type="number" min="8" max="96" :value="text.font_size" @change="updateText({ font_size: numberValue($event) })"></label><label>Text Color<input type="color" :value="text.text_color" @change="updateText({ text_color: value($event) })"></label>
-      <label>Background<input type="color" :value="text.background_color" @change="updateText({ background_color: value($event) })"></label><label>Border<input type="color" :value="text.border_color" @change="updateText({ border_color: value($event) })"></label>
+      <label v-if="!isDecorativeShape">Font Size<input type="number" min="8" max="96" :value="text.font_size" @change="updateText({ font_size: numberValue($event) })"></label><label v-if="!isDecorativeShape">Text Color<input type="color" :value="text.text_color" @change="updateText({ text_color: value($event) })"></label>
+      <label>{{ isDecorativeShape ? 'Fill' : 'Background' }}<input type="color" :value="text.background_color" @change="updateText({ background_color: value($event) })"></label><label>Border<input type="color" :value="text.border_color" @change="updateText({ border_color: value($event) })"></label>
       <label>Locked<input type="checkbox" :checked="text.locked" @change="updateText({ locked: ($event.target as HTMLInputElement).checked })"></label>
     </div>
     <div v-else class="property-empty"><div class="empty-icon">◇</div><b>선택된 객체가 없습니다.</b><p>Canvas에서 Layer, 관계선 또는 Text Box를 선택하세요.</p></div>

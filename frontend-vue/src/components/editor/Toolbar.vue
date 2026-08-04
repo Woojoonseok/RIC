@@ -2,15 +2,19 @@
 import { computed, ref } from "vue";
 import {
   ChevronDown,
+  Circle,
   FileImage,
   Layers3,
   Link2,
   Merge,
   MoreHorizontal,
   MousePointer2,
+  Palette,
   Presentation,
   Redo2,
   RefreshCw,
+  Route,
+  Square,
   Split,
   Trash2,
   Type,
@@ -39,13 +43,15 @@ const splitLayerId = computed(() => {
 });
 async function addLayers(masters: LayerMaster[]) {
   const selectedPreset = reference.boxPresets.find((preset) => preset.id === reference.selectedBoxPresetId);
+  const importedSize = { width: selectedPreset?.width ?? 180, height: selectedPreset?.height ?? 72 };
   const positions = layerImportPositions(
     graph.rawGraph?.layers ?? [],
     graph.rawGraph?.layouts ?? [],
     masters.length,
     app.selectedLayerIds.at(-1),
-    { width: selectedPreset?.width ?? 180, height: selectedPreset?.height ?? 72 },
+    importedSize,
     graph.rawGraph?.text_boxes ?? [],
+    app.lastCanvasActivity,
   );
   await graph.mutateGraph(`Layer 정보 ${masters.length}개 가져오기`, async () => {
     let saved;
@@ -60,6 +66,11 @@ async function addLayers(masters: LayerMaster[]) {
       });
     }
     return saved;
+  });
+  const lastPosition = positions.at(-1);
+  if (lastPosition) app.markCanvasActivity({
+    x: lastPosition.x + importedSize.width / 2,
+    y: lastPosition.y + importedSize.height / 2,
   });
   layerPickerOpen.value = false;
 }
@@ -90,6 +101,13 @@ async function splitSelected() {
       <button :class="{ active: app.mode === 'select' }" title="선택" @click="app.mode = 'select'"><MousePointer2 :size="16"/><span>선택</span></button>
       <button :class="{ active: app.mode === 'connect' }" :disabled="!project.canEdit" title="연결" @click="app.mode = 'connect'"><Link2 :size="16"/><span>연결</span></button>
       <button :class="{ active: app.mode === 'text' }" :disabled="!project.canEdit" title="텍스트" @click="app.mode = 'text'"><Type :size="16"/><span>텍스트</span></button>
+      <button :class="{ active: app.mode === 'shape-rectangle' }" :disabled="!project.canEdit" title="배경 사각형" @click="app.mode = 'shape-rectangle'"><Square :size="16"/><span>사각형</span></button>
+      <button :class="{ active: app.mode === 'shape-ellipse' }" :disabled="!project.canEdit" title="배경 원" @click="app.mode = 'shape-ellipse'"><Circle :size="16"/><span>원</span></button>
+    </div>
+    <span class="divider"/>
+    <div class="tool-group legend-switches" aria-label="기준정보 표시">
+      <button :class="{ active: app.showBoxPresetLegend }" title="Box Preset 표시" @click="app.setLegendVisibility('box', !app.showBoxPresetLegend)"><Palette :size="16"/><span>Box Preset</span></button>
+      <button :class="{ active: app.showArrowLegend }" title="Arrow Legend 표시" @click="app.setLegendVisibility('arrow', !app.showArrowLegend)"><Route :size="16"/><span>Arrow Legend</span></button>
     </div>
     <span class="divider"/>
     <button class="toolbar-command" :disabled="!project.canEdit" @click="layerPickerOpen = true"><Layers3 :size="16"/><span>Layer 가져오기</span></button>

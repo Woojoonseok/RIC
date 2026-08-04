@@ -1,5 +1,5 @@
 export type PortName = "top" | "right" | "bottom" | "left";
-export type EditorMode = "select" | "connect" | "text";
+export type EditorMode = "select" | "connect" | "text" | "shape-rectangle" | "shape-ellipse";
 export type AppView = "home" | "reference" | "layer-master" | "projects" | "data" | "editor" | "validation" | "export";
 export type SelectionItem = { kind: "layer" | "relation" | "text"; id: string };
 export type Point = { x: number; y: number };
@@ -206,8 +206,9 @@ export interface BoxPreset { id: string; name: string; fill_color: string; strok
 export type BoxPresetCreate = Omit<BoxPreset, "id">;
 export type BoxPresetUpdate = Partial<BoxPresetCreate>;
 
-export interface TextBox { id: string; project_id: string; text: string; x: number; y: number; width: number; height: number; text_color: string; font_size: number; background_color: string; border_color: string; locked: boolean }
-export interface TextBoxCreate { text?: string; x?: number; y?: number; width?: number; height?: number; text_color?: string; font_size?: number; background_color?: string; border_color?: string; locked?: boolean }
+export type CanvasObjectType = "text" | "rectangle" | "ellipse";
+export interface TextBox { id: string; project_id: string; text: string; shape_type: CanvasObjectType; x: number; y: number; width: number; height: number; text_color: string; font_size: number; background_color: string; border_color: string; locked: boolean }
+export interface TextBoxCreate { text?: string; shape_type?: CanvasObjectType; x?: number; y?: number; width?: number; height?: number; text_color?: string; font_size?: number; background_color?: string; border_color?: string; locked?: boolean }
 export interface TextBoxUpdate extends TextBoxCreate {}
 export interface TextBoxBatchUpdate extends TextBoxUpdate { id: string }
 

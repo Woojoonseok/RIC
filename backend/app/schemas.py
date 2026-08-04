@@ -568,6 +568,7 @@ class RelationRead(OrmModel, RelationBase):
 
 class TextBoxBase(BaseModel):
     text: str = "Text"
+    shape_type: Literal["text", "rectangle", "ellipse"] = "text"
     x: float = 120
     y: float = 120
     width: float = 180
@@ -585,6 +586,7 @@ class TextBoxCreate(TextBoxBase):
 
 class TextBoxUpdate(BaseModel):
     text: str | None = None
+    shape_type: Literal["text", "rectangle", "ellipse"] | None = None
     x: float | None = None
     y: float | None = None
     width: float | None = Field(default=None, ge=40)

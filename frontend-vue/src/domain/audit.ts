@@ -65,6 +65,7 @@ const fieldLabels: Record<string, string> = {
   role: "권한",
   priorities: "우선순위",
   background_color: "배경 색상",
+  shape_type: "도형 유형",
   border_color: "테두리 색상",
   locked: "잠금",
 };

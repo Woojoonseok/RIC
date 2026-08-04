@@ -1,8 +1,69 @@
 import PptxGenJS from "pptxgenjs";
 import * as XLSX from "xlsx-js-style";
 
-import { relationPoints } from "./geometry";
-import type { Graph } from "../types";
+import { relationPoints, relationStroke } from "./geometry";
+import type { Graph, Point } from "../types";
+
+const PPTX_WIDTH = 13.333;
+const PPTX_HEIGHT = 7.5;
+const PPTX_MARGIN = 0.35;
+
+export interface PptxCanvasTransform {
+  minX: number;
+  minY: number;
+  width: number;
+  height: number;
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+}
+
+export function pptxCanvasTransform(graph: Graph): PptxCanvasTransform {
+  const layouts = new Map(graph.layouts.map((row) => [row.layer_id, row]));
+  const relations = new Map(graph.relations.map((row) => [row.id, row]));
+  const points: Point[] = [];
+  for (const layout of graph.layouts) {
+    points.push({ x: layout.x, y: layout.y }, { x: layout.x + layout.width, y: layout.y + layout.height });
+  }
+  for (const row of graph.text_boxes) {
+    points.push({ x: row.x, y: row.y }, { x: row.x + row.width, y: row.y + row.height });
+  }
+  for (const relation of graph.relations) points.push(...relationPoints(relation, layouts, relations));
+
+  if (!points.length) points.push({ x: 0, y: 0 }, { x: 1600, y: 1000 });
+  const minX = Math.min(...points.map((point) => point.x));
+  const minY = Math.min(...points.map((point) => point.y));
+  const maxX = Math.max(...points.map((point) => point.x));
+  const maxY = Math.max(...points.map((point) => point.y));
+  const width = Math.max(maxX - minX, 1);
+  const height = Math.max(maxY - minY, 1);
+  const scale = Math.min((PPTX_WIDTH - PPTX_MARGIN * 2) / width, (PPTX_HEIGHT - PPTX_MARGIN * 2) / height);
+  return {
+    minX, minY, width, height, scale,
+    offsetX: (PPTX_WIDTH - width * scale) / 2,
+    offsetY: (PPTX_HEIGHT - height * scale) / 2,
+  };
+}
+
+function pptxPoint(point: Point, transform: PptxCanvasTransform): Point {
+  return {
+    x: transform.offsetX + (point.x - transform.minX) * transform.scale,
+    y: transform.offsetY + (point.y - transform.minY) * transform.scale,
+  };
+}
+
+export function pptxLinePosition(start: Point, end: Point, transform: PptxCanvasTransform) {
+  const source = pptxPoint(start, transform);
+  const target = pptxPoint(end, transform);
+  return {
+    x: Math.min(source.x, target.x),
+    y: Math.min(source.y, target.y),
+    w: Math.abs(target.x - source.x),
+    h: Math.abs(target.y - source.y),
+    flipH: target.x < source.x,
+    flipV: target.y < source.y,
+  };
+}
 
 function download(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
@@ -59,6 +120,11 @@ export function graphSvg(graph: Graph) {
   const styles = new Map(graph.styles.map((row) => [row.layer_id, row]));
   const relationStyles = new Map(graph.relation_styles.map((row) => [row.id, row]));
   const escape = (value: string) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const backgroundMarkup = graph.text_boxes.filter((row) => (row.shape_type ?? "text") !== "text").map((row) => (
+    row.shape_type === "ellipse"
+      ? `<ellipse cx="${row.x + row.width / 2}" cy="${row.y + row.height / 2}" rx="${row.width / 2}" ry="${row.height / 2}" fill="${row.background_color}" stroke="${row.border_color}" stroke-width="2"/>`
+      : `<rect x="${row.x}" y="${row.y}" width="${row.width}" height="${row.height}" fill="${row.background_color}" stroke="${row.border_color}" stroke-width="2"/>`
+  )).join("");
   const relationMarkup = graph.relations.map((relation) => {
     const points = relationPoints(relation, layouts, relations);
     const style = relation.relation_style_id ? relationStyles.get(relation.relation_style_id) : undefined;
@@ -70,7 +136,10 @@ export function graphSvg(graph: Graph) {
     const lines = layer.name.split("\n");
     return `<g><rect x="${layout.x}" y="${layout.y}" width="${layout.width}" height="${layout.height}" rx="12" fill="${style?.fill_color ?? "#fff"}" stroke="${style?.stroke_color ?? "#175cd3"}" stroke-width="${style?.stroke_width ?? 2}"/>${lines.map((line, index) => `<text x="${layout.x + layout.width / 2}" y="${layout.y + layout.height / 2 + (index - (lines.length - 1) / 2) * 18}" text-anchor="middle" dominant-baseline="middle" font-family="Arial" font-size="${style?.font_size ?? 14}" fill="${style?.text_color ?? "#101828"}">${escape(line)}</text>`).join("")}</g>`;
   }).join("");
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000"><defs><marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 Z" fill="#344054"/></marker></defs><rect width="1600" height="1000" fill="white"/>${relationMarkup}${layerMarkup}</svg>`;
+  const textMarkup = graph.text_boxes.filter((row) => (row.shape_type ?? "text") === "text").map((row) => (
+    `<g><rect x="${row.x}" y="${row.y}" width="${row.width}" height="${row.height}" fill="${row.background_color}" stroke="${row.border_color}"/><text x="${row.x + 8}" y="${row.y + row.height / 2}" dominant-baseline="middle" font-family="Arial" font-size="${row.font_size}" fill="${row.text_color}">${escape(row.text)}</text></g>`
+  )).join("");
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000"><defs><marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 Z" fill="#344054"/></marker></defs><rect width="1600" height="1000" fill="white"/>${backgroundMarkup}${relationMarkup}${layerMarkup}${textMarkup}</svg>`;
 }
 
 export function exportSvg(graph: Graph) { download(new Blob([graphSvg(graph)], { type: "image/svg+xml" }), `${exportBaseName(graph)}.svg`) }
@@ -81,18 +150,44 @@ export async function exportPptx(graph: Graph) {
   pptx.author = "RIC Align Tree Editor";
   const slide = pptx.addSlide();
   slide.background = { color: "FFFFFF" };
-  const scaleX = 13.33 / 1600;
-  const scaleY = 7.5 / 1000;
+  const transform = pptxCanvasTransform(graph);
+  const position = (x: number, y: number, width: number, height: number) => ({
+    x: transform.offsetX + (x - transform.minX) * transform.scale,
+    y: transform.offsetY + (y - transform.minY) * transform.scale,
+    w: width * transform.scale,
+    h: height * transform.scale,
+  });
+  const fontScale = Math.max(0.5, Math.min(2, transform.scale / (PPTX_WIDTH / 1600)));
   const layouts = new Map(graph.layouts.map((row) => [row.layer_id, row]));
   const relations = new Map(graph.relations.map((row) => [row.id, row]));
   const styles = new Map(graph.styles.map((row) => [row.layer_id, row]));
+  const relationStyles = new Map(graph.relation_styles.map((row) => [row.id, row]));
+  for (const row of graph.text_boxes.filter((item) => (item.shape_type ?? "text") !== "text")) {
+    slide.addShape(row.shape_type === "ellipse" ? pptx.ShapeType.ellipse : pptx.ShapeType.rect, {
+      ...position(row.x, row.y, row.width, row.height),
+      fill: { color: row.background_color.replace("#", "") },
+      line: { color: row.border_color.replace("#", ""), width: 1.5 },
+    });
+  }
   for (const relation of graph.relations) {
     const points = relationPoints(relation, layouts, relations);
+    const relationStyle = relation.relation_style_id ? relationStyles.get(relation.relation_style_id) : undefined;
+    const stroke = relationStroke(relationStyle, relation.relation_type, relation.same_group);
+    const dashType = relationStyle?.line_pattern === "dashed" ? "dash"
+      : relationStyle?.line_pattern === "dotted" ? "sysDot"
+        : relationStyle?.line_pattern === "reference" ? "dashDot"
+          : stroke.strokeDasharray?.includes("2 5") ? "sysDot"
+            : stroke.strokeDasharray ? "dashDot" : "solid";
     points.slice(0, -1).forEach((point, index) => {
       const end = points[index + 1];
       slide.addShape(pptx.ShapeType.line, {
-        x: point.x * scaleX, y: point.y * scaleY, w: (end.x - point.x) * scaleX, h: (end.y - point.y) * scaleY,
-        line: { color: "344054", width: 1.5, endArrowType: index === points.length - 2 ? "triangle" : "none" },
+        ...pptxLinePosition(point, end, transform),
+        line: {
+          color: stroke.stroke.replace("#", ""),
+          width: stroke.strokeWidth,
+          dashType,
+          endArrowType: index === points.length - 2 && stroke.markerEnd ? "triangle" : "none",
+        },
       });
     });
   }
@@ -100,11 +195,19 @@ export async function exportPptx(graph: Graph) {
     const layout = layouts.get(layer.id); if (!layout) continue;
     const style = styles.get(layer.id);
     slide.addText(layer.name, {
-      x: layout.x * scaleX, y: layout.y * scaleY, w: layout.width * scaleX, h: layout.height * scaleY,
+      ...position(layout.x, layout.y, layout.width, layout.height),
       shape: pptx.ShapeType.roundRect, margin: 0.06, align: "center", valign: "middle",
-      color: (style?.text_color ?? "#101828").replace("#", ""), fontSize: style?.font_size ?? 14,
+      color: (style?.text_color ?? "#101828").replace("#", ""), fontSize: (style?.font_size ?? 14) * fontScale,
       fill: { color: (style?.fill_color ?? "#FFFFFF").replace("#", "") },
       line: { color: (style?.stroke_color ?? "#175CD3").replace("#", ""), width: style?.stroke_width ?? 2 },
+    });
+  }
+  for (const row of graph.text_boxes.filter((item) => (item.shape_type ?? "text") === "text")) {
+    slide.addText(row.text, {
+      ...position(row.x, row.y, row.width, row.height),
+      margin: 0.06, color: row.text_color.replace("#", ""), fontSize: row.font_size * fontScale,
+      fill: { color: row.background_color.replace("#", "") },
+      line: { color: row.border_color.replace("#", ""), width: 1 },
     });
   }
   await pptx.writeFile({ fileName: `${exportBaseName(graph)}.pptx` });
