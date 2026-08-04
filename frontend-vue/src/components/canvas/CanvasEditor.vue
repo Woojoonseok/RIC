@@ -1,8 +1,10 @@
 <script setup lang="ts">
+import ReferenceLegends from "./ReferenceLegends.vue";
 import { useCanvasEditor } from "../../composables/useCanvasEditor";
 const {
   app, svg, viewBox, snapEnabled, query, pointer, marquee, previewTexts, previewWaypoints, connect, portSnap, relationSnap,
   graph, relationPaths, layouts, styles, selectedLayers, selectedRelation, selectedTexts, ports, viewBoxString, portPoint, portHandlePoint, layerLabel,
+  decorativeShapes, annotationTexts, shapePreview,
   nodePointerDown, textPointerDown, canvasDown, pointerMove, pointerUp, wheel, startConnect, relationPointerDown,
   editableWaypoints, addWaypoint, waypointDown, deleteWaypoint, focusSearch, editLayer, fit, zoom,
 } = useCanvasEditor();
@@ -14,6 +16,11 @@ const {
     <svg ref="svg" class="canvas" :class="`${app.mode}-mode`" :viewBox="viewBoxString" @pointerdown="canvasDown" @pointermove="pointerMove" @pointerup="pointerUp" @pointercancel="pointerUp" @wheel="wheel">
       <defs><pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M 20 0 L 0 0 0 20" fill="none" stroke="#e9edf3" stroke-width="1"/></pattern><marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 Z" fill="context-stroke"/></marker></defs>
       <rect :x="viewBox.x" :y="viewBox.y" :width="viewBox.width" :height="viewBox.height" fill="url(#grid)"/>
+      <g v-for="shape in decorativeShapes" :key="shape.id" class="background-shape" :class="{ selected: selectedTexts.has(shape.id), locked: shape.locked }" @pointerdown="textPointerDown($event, previewTexts[shape.id] || shape)">
+        <ellipse v-if="shape.shape_type === 'ellipse'" class="shape-body" :cx="(previewTexts[shape.id] || shape).x + (previewTexts[shape.id] || shape).width / 2" :cy="(previewTexts[shape.id] || shape).y + (previewTexts[shape.id] || shape).height / 2" :rx="(previewTexts[shape.id] || shape).width / 2" :ry="(previewTexts[shape.id] || shape).height / 2" :fill="shape.background_color" :stroke="shape.border_color"/>
+        <rect v-else class="shape-body" :x="(previewTexts[shape.id] || shape).x" :y="(previewTexts[shape.id] || shape).y" :width="(previewTexts[shape.id] || shape).width" :height="(previewTexts[shape.id] || shape).height" :fill="shape.background_color" :stroke="shape.border_color"/>
+        <rect v-if="selectedTexts.has(shape.id) && !shape.locked" class="resize-handle" :x="(previewTexts[shape.id] || shape).x + (previewTexts[shape.id] || shape).width - 6" :y="(previewTexts[shape.id] || shape).y + (previewTexts[shape.id] || shape).height - 6" width="12" height="12" @pointerdown.stop="textPointerDown($event, previewTexts[shape.id] || shape, true)"/>
+      </g>
       <g
         v-for="path in relationPaths"
         :key="path.relation.id"
@@ -49,10 +56,13 @@ const {
           <rect v-if="selectedLayers.has(layer.id) && app.mode === 'select'" class="resize-handle" :x="layouts.get(layer.id)!.x + layouts.get(layer.id)!.width - 6" :y="layouts.get(layer.id)!.y + layouts.get(layer.id)!.height - 6" width="12" height="12" @pointerdown="nodePointerDown($event, layer.id, true)"/>
         </template>
       </g>
-      <g v-for="text in graph?.text_boxes" :key="text.id" class="text-box" :class="{ selected: selectedTexts.has(text.id) }" @pointerdown="textPointerDown($event, previewTexts[text.id] || text)"><rect :x="(previewTexts[text.id] || text).x" :y="(previewTexts[text.id] || text).y" :width="(previewTexts[text.id] || text).width" :height="(previewTexts[text.id] || text).height" :fill="text.background_color" :stroke="text.border_color"/><text :x="(previewTexts[text.id] || text).x + 8" :y="(previewTexts[text.id] || text).y + (previewTexts[text.id] || text).height / 2" dominant-baseline="middle" :fill="text.text_color" :font-size="text.font_size">{{ text.text }}</text><rect v-if="selectedTexts.has(text.id) && !text.locked" class="resize-handle" :x="(previewTexts[text.id] || text).x + (previewTexts[text.id] || text).width - 6" :y="(previewTexts[text.id] || text).y + (previewTexts[text.id] || text).height - 6" width="12" height="12" @pointerdown.stop="textPointerDown($event, previewTexts[text.id] || text, true)"/></g>
+      <g v-for="text in annotationTexts" :key="text.id" class="text-box" :class="{ selected: selectedTexts.has(text.id) }" @pointerdown="textPointerDown($event, previewTexts[text.id] || text)"><rect :x="(previewTexts[text.id] || text).x" :y="(previewTexts[text.id] || text).y" :width="(previewTexts[text.id] || text).width" :height="(previewTexts[text.id] || text).height" :fill="text.background_color" :stroke="text.border_color"/><text :x="(previewTexts[text.id] || text).x + 8" :y="(previewTexts[text.id] || text).y + (previewTexts[text.id] || text).height / 2" dominant-baseline="middle" :fill="text.text_color" :font-size="text.font_size">{{ text.text }}</text><rect v-if="selectedTexts.has(text.id) && !text.locked" class="resize-handle" :x="(previewTexts[text.id] || text).x + (previewTexts[text.id] || text).width - 6" :y="(previewTexts[text.id] || text).y + (previewTexts[text.id] || text).height - 6" width="12" height="12" @pointerdown.stop="textPointerDown($event, previewTexts[text.id] || text, true)"/></g>
+      <ellipse v-if="shapePreview?.shapeType === 'ellipse'" class="shape-draw-preview" :cx="shapePreview.x + shapePreview.width / 2" :cy="shapePreview.y + shapePreview.height / 2" :rx="shapePreview.width / 2" :ry="shapePreview.height / 2"/>
+      <rect v-else-if="shapePreview" class="shape-draw-preview" :x="shapePreview.x" :y="shapePreview.y" :width="shapePreview.width" :height="shapePreview.height"/>
       <rect v-if="marquee" class="marquee" :x="Math.min(marquee.start.x, marquee.end.x)" :y="Math.min(marquee.start.y, marquee.end.y)" :width="Math.abs(marquee.end.x - marquee.start.x)" :height="Math.abs(marquee.end.y - marquee.start.y)"/>
     </svg>
     <svg v-if="graph" class="minimap" viewBox="0 0 1600 1000"><rect width="1600" height="1000" fill="#f8fafc"/><rect v-for="layout in graph.layouts" :key="layout.id" :x="layout.x" :y="layout.y" :width="layout.width" :height="layout.height" rx="8" fill="#84adff"/><rect :x="viewBox.x" :y="viewBox.y" :width="viewBox.width" :height="viewBox.height" fill="none" stroke="#175cd3" stroke-width="10"/></svg>
+    <ReferenceLegends/>
     <div class="canvas-hint">Connect: Source 박스 클릭 → Target 박스 클릭 · Shift + 연결: 직각선 · Alt + 드래그 이동 · 휠 확대/축소</div>
   </div>
 </template>

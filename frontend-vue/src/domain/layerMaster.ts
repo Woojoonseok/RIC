@@ -16,6 +16,7 @@ export function layerImportPositions(
   preferredLayerId?: string,
   importedSize: Pick<Layout, "width" | "height"> = { width: 180, height: 72 },
   extraObstacles: Array<Pick<Layout, "x" | "y" | "width" | "height">> = [],
+  lastActivity?: Point | null,
 ): Point[] {
   const layoutByLayerId = new Map(layouts.map((layout) => [layout.layer_id, layout]));
   let anchor: Pick<Layout, "x" | "y" | "width" | "height"> | undefined = preferredLayerId
@@ -39,9 +40,11 @@ export function layerImportPositions(
   const stackWidth = importedSize.width + Math.max(0, count - 1) * overlapOffset;
   const stackHeight = importedSize.height + Math.max(0, count - 1) * overlapOffset;
   const obstacles = [...layouts, ...extraObstacles];
-  const preferredStart = anchor
-    ? { x: anchor.x + anchor.width + 32, y: anchor.y }
-    : { x: 120, y: 100 };
+  const preferredStart = lastActivity
+    ? { x: lastActivity.x + 32, y: lastActivity.y + 32 }
+    : anchor
+      ? { x: anchor.x + anchor.width + 32, y: anchor.y }
+      : { x: 120, y: 100 };
   const isOpen = (point: Point) => obstacles.every((obstacle) => (
     point.x + stackWidth + margin <= obstacle.x
     || point.x >= obstacle.x + obstacle.width + margin

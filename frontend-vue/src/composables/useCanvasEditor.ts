@@ -6,7 +6,7 @@ import { useAppStore } from "../stores/app";
 import { useGraphStore } from "../stores/graph";
 import { useProjectStore } from "../stores/project";
 import { useReferenceStore } from "../stores/reference";
-import type { Layout, Point, PortName, Relation, TextBox } from "../types";
+import type { CanvasObjectType, Layout, Point, PortName, Relation, TextBox } from "../types";
 
 export type CanvasDragState =
   | { type: "pan"; startClient: Point; origin: Point }
@@ -14,6 +14,7 @@ export type CanvasDragState =
   | { type: "move"; start: Point; layerIds: string[]; textIds: string[]; layerOrigins: Record<string, Layout>; textOrigins: Record<string, TextBox> }
   | { type: "resize-layer"; id: string; start: Point; layout: Layout }
   | { type: "resize-text"; id: string; start: Point; text: TextBox }
+  | { type: "draw-shape"; shapeType: Exclude<CanvasObjectType, "text">; start: Point; end: Point }
   | { type: "drag-waypoint"; id: string; index: number };
 
 export function useCanvasEditor() {
@@ -59,6 +60,19 @@ export function useCanvasEditor() {
   const selectedRelation = computed(() => app.selection.find((row) => row.kind === "relation")?.id ?? null);
   const selectedTexts = computed(() => new Set(app.selection.filter((row) => row.kind === "text").map((row) => row.id)));
   const marquee = computed(() => drag.value?.type === "marquee" ? drag.value : null);
+  const shapePreview = computed(() => {
+    const active = drag.value?.type === "draw-shape" ? drag.value : null;
+    if (!active) return null;
+    return {
+      shapeType: active.shapeType,
+      x: Math.min(active.start.x, active.end.x),
+      y: Math.min(active.start.y, active.end.y),
+      width: Math.abs(active.end.x - active.start.x),
+      height: Math.abs(active.end.y - active.start.y),
+    };
+  });
+  const decorativeShapes = computed(() => graph.value?.text_boxes.filter((row) => (row.shape_type ?? "text") !== "text") ?? []);
+  const annotationTexts = computed(() => graph.value?.text_boxes.filter((row) => (row.shape_type ?? "text") === "text") ?? []);
   const ports: PortName[] = ["top", "right", "bottom", "left"];
   const viewBoxString = computed(() => `${viewBox.value.x} ${viewBox.value.y} ${viewBox.value.width} ${viewBox.value.height}`);
 
@@ -129,6 +143,7 @@ export function useCanvasEditor() {
   }
 
   function nodePointerDown(event: PointerEvent, id: string, resize = false) {
+    app.markCanvasActivity(clientPoint(event));
     if (app.mode === "connect") {
       event.preventDefault(); event.stopPropagation();
       if (!project.canEdit) { app.mode = "select"; return }
@@ -181,13 +196,13 @@ export function useCanvasEditor() {
   }
 
   function textPointerDown(event: PointerEvent, row: TextBox, resize = false) {
-    if (row.locked) return;
+    app.markCanvasActivity(clientPoint(event));
     event.preventDefault();
     event.stopPropagation();
     const additive = event.ctrlKey || event.metaKey || event.shiftKey;
     const alreadySelected = app.selection.some((item) => item.kind === "text" && item.id === row.id);
     if (!alreadySelected || additive) app.select({ kind: "text", id: row.id }, additive);
-    if (!project.canEdit) return;
+    if (!project.canEdit || row.locked) return;
     const start = clientPoint(event);
     if (resize) drag.value = { type: "resize-text", id: row.id, start, text: { ...row } };
     else {
@@ -210,6 +225,7 @@ export function useCanvasEditor() {
   function canvasDown(event: PointerEvent) {
     event.preventDefault();
     const point = clientPoint(event);
+    app.markCanvasActivity(point);
     pointer.value = point;
     if (connect.value && !connect.value.pressed) {
       connect.value = null;
@@ -219,6 +235,14 @@ export function useCanvasEditor() {
     }
     if (event.altKey || event.button === 1) {
       drag.value = { type: "pan", startClient: { x: event.clientX, y: event.clientY }, origin: { x: viewBox.value.x, y: viewBox.value.y } };
+    } else if (app.mode === "shape-rectangle" || app.mode === "shape-ellipse") {
+      if (!project.canEdit) { app.mode = "select"; return }
+      drag.value = {
+        type: "draw-shape",
+        shapeType: app.mode === "shape-ellipse" ? "ellipse" : "rectangle",
+        start: point,
+        end: point,
+      };
     } else if (app.mode === "text") {
       // Text placement is a one-shot tool. Leave text mode before starting the
       // request so additional clicks cannot enqueue duplicate text boxes.
@@ -264,6 +288,7 @@ export function useCanvasEditor() {
     const active = drag.value;
     if (!active) return;
     if (active.type === "marquee") { active.end = point; return }
+    if (active.type === "draw-shape") { active.end = point; return }
     if (active.type === "pan") {
       const scaleX = viewBox.value.width / Math.max(1, svg.value?.clientWidth ?? 1);
       const scaleY = viewBox.value.height / Math.max(1, svg.value?.clientHeight ?? 1);
@@ -293,6 +318,7 @@ export function useCanvasEditor() {
 
   async function pointerUp(event: PointerEvent) {
     const point = clientPoint(event);
+    app.markCanvasActivity(point);
     release(event);
     if (connect.value?.pressed) {
       if (connect.value.moved && (portSnap.value || relationSnap.value)) await finishConnect(point, event.shiftKey);
@@ -302,6 +328,26 @@ export function useCanvasEditor() {
     const active = drag.value;
     drag.value = null;
     if (!active || active.type === "pan") return;
+    if (active.type === "draw-shape") {
+      app.mode = "select";
+      const draggedWidth = Math.abs(active.end.x - active.start.x);
+      const draggedHeight = Math.abs(active.end.y - active.start.y);
+      const width = draggedWidth > 8 ? Math.max(40, draggedWidth) : 220;
+      const height = draggedHeight > 8 ? Math.max(24, draggedHeight) : 120;
+      const x = draggedWidth > 8 ? Math.min(active.start.x, active.end.x) : active.start.x;
+      const y = draggedHeight > 8 ? Math.min(active.start.y, active.end.y) : active.start.y;
+      await graphStore.mutateGraph("배경 도형 추가", () => api.createText(project.projectId, {
+        text: "",
+        shape_type: active.shapeType,
+        x: snapEnabled.value ? snap(x) : x,
+        y: snapEnabled.value ? snap(y) : y,
+        width: snapEnabled.value ? Math.max(40, snap(width)) : width,
+        height: snapEnabled.value ? Math.max(24, snap(height)) : height,
+        background_color: "#f2f4f7",
+        border_color: "#98a2b3",
+      }));
+      return;
+    }
     if (active.type === "marquee") {
       const bounds = {
         x: Math.min(active.start.x, active.end.x), y: Math.min(active.start.y, active.end.y),
@@ -378,6 +424,7 @@ export function useCanvasEditor() {
   async function startConnect(event: PointerEvent, layerId: string, port: PortName) {
     event.preventDefault();
     event.stopPropagation();
+    app.markCanvasActivity(clientPoint(event));
     if (!project.canEdit) { app.mode = "select"; return }
     const layout = layouts.value.get(layerId);
     if (!layout) return;
@@ -438,6 +485,7 @@ export function useCanvasEditor() {
   async function relationPointerDown(event: PointerEvent, relation: Relation) {
     event.preventDefault();
     event.stopPropagation();
+    app.markCanvasActivity(clientPoint(event));
     const source = connect.value;
     if (!source) {
       const additive = event.ctrlKey || event.metaKey || event.shiftKey;
@@ -480,6 +528,7 @@ export function useCanvasEditor() {
   async function addWaypoint(event: MouseEvent, relation: Relation) {
     event.stopPropagation();
     if (!project.canEdit) return;
+    app.markCanvasActivity(clientPoint(event as unknown as PointerEvent));
     const path = relationGeometry(relations.value.get(relation.id) ?? relation, layouts.value, relations.value);
     const insertion = closestPointOnPath(clientPoint(event as unknown as PointerEvent), path);
     if (!insertion) return;
@@ -495,6 +544,7 @@ export function useCanvasEditor() {
   function waypointDown(event: PointerEvent, relation: Relation, index: number) {
     event.stopPropagation();
     if (!project.canEdit) return;
+    app.markCanvasActivity(clientPoint(event));
     drag.value = { type: "drag-waypoint", id: relation.id, index };
     app.select({ kind: "relation", id: relation.id });
     capture(event);
@@ -534,6 +584,7 @@ export function useCanvasEditor() {
   return {
     app, graphStore, project, svg, viewBox, snapEnabled, query, pointer, drag, marquee, previewLayouts, previewTexts,
     previewWaypoints, connect, portSnap, relationSnap, relationPaths, graph, raw, layouts, styles, relationStyles, selectedLayers,
+    decorativeShapes, annotationTexts, shapePreview,
     selectedRelation, selectedTexts, ports, viewBoxString, portPoint, portHandlePoint, layerLabel, nodePointerDown, textPointerDown, canvasDown,
     pointerMove, pointerUp, wheel, startConnect, relationPointerDown, relationAppearance,
     editableWaypoints, addWaypoint, waypointDown, deleteWaypoint, focusSearch, editLayer, fit, zoom,

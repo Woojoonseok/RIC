@@ -40,6 +40,7 @@ export const useGraphStore = defineStore("graph", () => {
     undoStack.value = [];
     redoStack.value = [];
     app.clearSelection();
+    app.clearCanvasActivity();
   }
 
   function remember(previous: Graph | null) {
@@ -58,6 +59,7 @@ export const useGraphStore = defineStore("graph", () => {
     setGraph(loaded);
     undoStack.value = [];
     redoStack.value = [];
+    app.clearCanvasActivity();
   }
 
   async function reloadGraph() {

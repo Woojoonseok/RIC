@@ -129,6 +129,39 @@ def create_tree(client: TestClient, project_id: str, name: str) -> str:
     return response.json()["id"]
 
 
+def test_decorative_canvas_shape_round_trip(client: TestClient) -> None:
+    project_id = create_project(client)
+    tree_id = default_tree_id(client, project_id)
+    base = graph_base(client, project_id, tree_id)
+    created = client.post(
+        f"{base}/text-boxes",
+        json={
+            "text": "",
+            "shape_type": "rectangle",
+            "x": 40,
+            "y": 60,
+            "width": 320,
+            "height": 180,
+            "background_color": "#f2f4f7",
+            "border_color": "#98a2b3",
+        },
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["shape_type"] == "rectangle"
+
+    updated = client.put(
+        f"{base}/text-boxes/{created.json()['id']}",
+        json={"shape_type": "ellipse"},
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["shape_type"] == "ellipse"
+
+    loaded = client.get(base)
+    assert loaded.status_code == 200, loaded.text
+    shape = next(row for row in loaded.json()["text_boxes"] if row["id"] == created.json()["id"])
+    assert shape["shape_type"] == "ellipse"
+
+
 def current_actor(client: TestClient) -> tuple[str, str]:
     response = client.get("/api/me")
     assert response.status_code == 200, response.text

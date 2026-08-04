@@ -1,8 +1,9 @@
 import { computed, ref } from "vue";
 import { defineStore } from "pinia";
-import type { AppView, EditorMode, SelectionItem } from "../types";
+import type { AppView, EditorMode, Point, SelectionItem } from "../types";
 
 export const useAppStore = defineStore("app", () => {
+  const storedVisibility = (key: string) => typeof localStorage === "undefined" || localStorage.getItem(key) !== "0";
   const view = ref<AppView>("home");
   const mode = ref<EditorMode>("select");
   const status = ref("준비");
@@ -11,6 +12,9 @@ export const useAppStore = defineStore("app", () => {
   const labelField = ref<"name" | "step">("name");
   const focusRequest = ref<{ layerId: string; nonce: number } | null>(null);
   const layerMasterPickerOpen = ref(false);
+  const lastCanvasActivity = ref<Point | null>(null);
+  const showBoxPresetLegend = ref(storedVisibility("ric-editor-box-preset-legend"));
+  const showArrowLegend = ref(storedVisibility("ric-editor-arrow-legend"));
 
   const selectedLayerIds = computed(() => selection.value.filter((item) => item.kind === "layer").map((item) => item.id));
   const selectedSplitLayerId = computed(() => selectedLayerIds.value.length === 1 ? selectedLayerIds.value[0] : null);
@@ -38,9 +42,22 @@ export const useAppStore = defineStore("app", () => {
   }
 
   function clearSelection() { selection.value = [] }
+  function markCanvasActivity(point: Point) { lastCanvasActivity.value = { ...point } }
+  function clearCanvasActivity() { lastCanvasActivity.value = null }
+  function setLegendVisibility(legend: "box" | "arrow", visible: boolean) {
+    if (legend === "box") showBoxPresetLegend.value = visible;
+    else showArrowLegend.value = visible;
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem(
+        legend === "box" ? "ric-editor-box-preset-legend" : "ric-editor-arrow-legend",
+        visible ? "1" : "0",
+      );
+    }
+  }
 
   return {
-    view, mode, status, busy, selection, labelField, focusRequest, layerMasterPickerOpen,
-    selectedLayerIds, selectedSplitLayerId, run, select, clearSelection,
+    view, mode, status, busy, selection, labelField, focusRequest, layerMasterPickerOpen, lastCanvasActivity,
+    showBoxPresetLegend, showArrowLegend, selectedLayerIds, selectedSplitLayerId, run, select, clearSelection,
+    markCanvasActivity, clearCanvasActivity, setLegendVisibility,
   };
 });

@@ -139,6 +139,20 @@ def _add_align_tree_columns(target_engine: Engine) -> None:
             )
 
 
+def _add_text_box_columns(target_engine: Engine) -> None:
+    if not target_engine.url.drivername.startswith("sqlite"):
+        return
+    inspector = inspect(target_engine)
+    if "text_boxes" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("text_boxes")}
+    if "shape_type" not in columns:
+        with target_engine.begin() as connection:
+            connection.execute(
+                text("ALTER TABLE text_boxes ADD COLUMN shape_type VARCHAR(20) NOT NULL DEFAULT 'text'")
+            )
+
+
 def _unique_columns(target_engine: Engine, table_name: str) -> set[tuple[str, ...]]:
     return {
         tuple(constraint.get("column_names") or ())
@@ -283,7 +297,7 @@ def _rebuild_scoped_tables(target_engine: Engine) -> None:
         ),
         (models.GraphLayout, {"align_tree_id"}, ("align_tree_id", "layer_id"), None),
         (models.ShapeStyle, {"align_tree_id"}, ("align_tree_id", "layer_id"), None),
-        (models.TextBox, {"align_tree_id"}, None, None),
+        (models.TextBox, {"align_tree_id", "shape_type"}, None, None),
     )
     for model, columns, expected_unique, nullable_columns in graph_specs:
         table_name = model.__table__.name
@@ -472,6 +486,7 @@ def run_local_dev_migrations(target_engine: Engine | None = None) -> None:
     _add_actor_columns(active_engine)
     _add_project_columns(active_engine)
     _add_align_tree_columns(active_engine)
+    _add_text_box_columns(active_engine)
     _rebuild_scoped_tables(active_engine)
     models.Base.metadata.create_all(bind=active_engine)
     _migrate_project_rows(active_engine)

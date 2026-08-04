@@ -421,6 +421,7 @@ def restore_graph(
             project_id=project_id,
             align_tree_id=align_tree_id,
             text=text_box.text,
+            shape_type=text_box.shape_type,
             x=text_box.x,
             y=text_box.y,
             width=text_box.width,
@@ -2183,7 +2184,7 @@ def create_text_box(
         summary="Created text box",
         details={"values": _audit_field_values(
             text_box,
-            ["text", "x", "y", "width", "height", "text_color", "font_size"],
+            ["text", "shape_type", "x", "y", "width", "height", "text_color", "font_size"],
         )},
     )
     db.commit()
@@ -2232,7 +2233,7 @@ def delete_text_box(
     text_box = crud.get_text_box_or_404(db, project_id, align_tree_id, text_box_id)
     snapshot = _audit_field_values(
         text_box,
-        ["text", "x", "y", "width", "height", "text_color", "font_size"],
+        ["text", "shape_type", "x", "y", "width", "height", "text_color", "font_size"],
     )
     db.delete(text_box)
     _audit_graph_mutation(

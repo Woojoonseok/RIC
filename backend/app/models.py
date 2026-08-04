@@ -541,6 +541,7 @@ class TextBox(Base, TimestampMixin):
         ForeignKey("align_trees.id", ondelete="CASCADE"), nullable=True, index=True
     )
     text: Mapped[str] = mapped_column(Text, default="Text")
+    shape_type: Mapped[str] = mapped_column(String(20), default="text", server_default="text")
     x: Mapped[float] = mapped_column(Float, default=0)
     y: Mapped[float] = mapped_column(Float, default=0)
     width: Mapped[float] = mapped_column(Float, default=180)

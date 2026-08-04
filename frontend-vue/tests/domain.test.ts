@@ -3,6 +3,7 @@ import { isReactive, reactive } from "vue";
 import { describeErrorDetail } from "../src/api/client";
 import { auditActorName, auditEventChanges, auditEventTitle, isChangeAuditEvent } from "../src/domain/audit";
 import { cloneJson } from "../src/domain/clone";
+import { graphSvg, pptxCanvasTransform, pptxLinePosition } from "../src/domain/export";
 import {
   attachmentPort, closestPointOnPath, facingPorts, getClosestPointOnSegment, intersects, orthogonalWaypoints, portHandlePoint, portPoint, relationBendWaypoints, relationGeometry, relationStroke, snap,
 } from "../src/domain/geometry";
@@ -120,6 +121,9 @@ describe("shared Layer information grid", () => {
     expect(layerImportPositions(layers, layouts, 1, "older")).toEqual([
       { x: 232, y: 200 },
     ]);
+    expect(layerImportPositions(layers, layouts, 1, "older", { width: 180, height: 72 }, [], { x: 900, y: 700 })).toEqual([
+      { x: 932, y: 732 },
+    ]);
   });
   it("moves an imported Layer stack into nearby empty canvas space", () => {
     const layers = [{ id: "anchor", created_at: "", updated_at: "" }];
@@ -149,6 +153,44 @@ describe("shared Layer information grid", () => {
       "priority:layout",
     ]);
     expect(row.priority_summary).toBe("1/1 설정");
+  });
+});
+
+describe("canvas exports", () => {
+  it("renders decorative shapes behind relations and Layers", () => {
+    const source = graph();
+    source.text_boxes = [{
+      id: "shape", project_id: "p", text: "", shape_type: "ellipse",
+      x: 20, y: 30, width: 200, height: 100, text_color: "#111111", font_size: 16,
+      background_color: "#eeeeee", border_color: "#999999", locked: false,
+    }];
+    const svg = graphSvg(source);
+    expect(svg).toContain('<ellipse cx="120" cy="80" rx="100" ry="50"');
+    expect(svg.indexOf("<ellipse")).toBeLessThan(svg.indexOf("<polyline"));
+  });
+
+  it("fits the complete canvas content into the PowerPoint slide", () => {
+    const source = graph();
+    source.layouts = [layout("a", -300, -200), layout("b", 2100, 1300)];
+    source.layers = [layer("a", "A"), layer("b", "B")];
+    source.relations = [{ ...relation("r", "a", "b"), waypoints: [{ x: 2600, y: 600 }] }];
+    const transform = pptxCanvasTransform(source);
+    expect(transform.minX).toBe(-300);
+    expect(transform.minY).toBe(-200);
+    expect(transform.width).toBe(2900);
+    expect(transform.height).toBe(1550);
+    expect(transform.offsetX).toBeCloseTo(0.35, 8);
+    expect(transform.offsetY).toBeGreaterThan(0.35);
+  });
+
+  it("preserves each PowerPoint line segment direction without negative sizes", () => {
+    const transform = { minX: 0, minY: 0, width: 100, height: 100, scale: 0.1, offsetX: 1, offsetY: 1 };
+    expect(pptxLinePosition({ x: 80, y: 20 }, { x: 20, y: 70 }, transform)).toMatchObject({
+      x: 3, y: 3, w: 6, h: 5, flipH: true, flipV: false,
+    });
+    expect(pptxLinePosition({ x: 20, y: 70 }, { x: 80, y: 20 }, transform)).toMatchObject({
+      x: 3, y: 3, w: 6, h: 5, flipH: false, flipV: true,
+    });
   });
 });
 
