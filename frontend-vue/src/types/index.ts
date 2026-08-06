@@ -170,6 +170,46 @@ export interface RelationExtra {
   key_drawing_type_id: string;
   sort_order: number;
 }
+
+export interface LayerImpactNode { id: string; name: string; step: string | null }
+export interface LayerImpactRelation {
+  id: string;
+  label: string;
+  relation_type: string;
+  attached_relation_id: string | null;
+  will_be_deleted: boolean;
+}
+export interface LayerImpactRule {
+  id: string;
+  name: string;
+  target_type: "layer" | "relation";
+  severity: "error" | "warning";
+  rule_type: ValidationRuleType;
+  field_name: string;
+}
+export interface LayerImpactReport {
+  layer: LayerImpactNode;
+  upstream_layers: LayerImpactNode[];
+  downstream_layers: LayerImpactNode[];
+  direct_relations: LayerImpactRelation[];
+  attachment_relations: LayerImpactRelation[];
+  validation_rules: LayerImpactRule[];
+  overlay_key_count: number;
+  export_row_count: number;
+  saved_table_value_count: number;
+}
+export interface RelationImpactReport {
+  relation: LayerImpactRelation;
+  upstream_layers: LayerImpactNode[];
+  downstream_layers: LayerImpactNode[];
+  direct_relations: LayerImpactRelation[];
+  attachment_relations: LayerImpactRelation[];
+  validation_rules: LayerImpactRule[];
+  overlay_key_count: number;
+  export_row_count: number;
+  saved_table_value_count: number;
+}
+export type DeleteImpactReport = LayerImpactReport | RelationImpactReport;
 export interface RelationExtraCreate {
   layer_master_id: string;
   key_drawing_type_id: string;
@@ -237,7 +277,26 @@ export interface TextBoxCreate { text?: string; shape_type?: CanvasObjectType; x
 export interface TextBoxUpdate extends TextBoxCreate {}
 export interface TextBoxBatchUpdate extends TextBoxUpdate { id: string }
 
-export interface ValidationIssue { code: string; severity: "error" | "warning"; message: string; relation_id?: string | null; layer_id?: string | null }
+export type ValidationRuleTarget = "layer" | "relation" | "align_tree";
+export type ValidationRuleType = "required" | "allowed_values" | "unique";
+export interface ValidationRuleInput {
+  name: string;
+  target_type: ValidationRuleTarget;
+  rule_type: ValidationRuleType;
+  field_name: string;
+  expected_values: string[];
+  severity: "error" | "warning";
+  message: string | null;
+  enabled: boolean;
+  sort_order: number;
+}
+export interface ValidationRule extends ValidationRuleInput {
+  id: string;
+  project_id: string;
+  created_at: string;
+  updated_at: string;
+}
+export interface ValidationIssue { code: string; severity: "error" | "warning"; message: string; relation_id?: string | null; layer_id?: string | null; rule_id?: string | null; rule_name?: string | null }
 export interface ValidationReport { ok: boolean; issues: ValidationIssue[] }
 export interface Graph { project: Project; align_tree?: AlignTree; layers: Layer[]; layouts: Layout[]; styles: ShapeStyle[]; box_presets: BoxPreset[]; relation_styles: RelationStyle[]; relations: Relation[]; text_boxes: TextBox[]; validation: ValidationReport }
 

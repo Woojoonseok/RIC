@@ -21,6 +21,7 @@ from .routers import (
     snapshots,
     users,
     validation,
+    validation_rules,
     workflow,
 )
 from .services.box_presets import ensure_default_box_presets
@@ -106,6 +107,7 @@ app.include_router(align_trees.router)
 app.include_router(leases.router)
 app.include_router(graph.router)
 app.include_router(validation.router)
+app.include_router(validation_rules.router)
 app.include_router(project_reference.router)
 app.include_router(project_layer_master.router)
 app.include_router(layer_master_imports.router)

@@ -29,6 +29,7 @@ from app.routers import (
     snapshots,
     users,
     validation,
+    validation_rules,
     workflow,
 )
 from app.services.dev_migrations import run_local_dev_migrations
@@ -59,6 +60,7 @@ def client() -> Generator[TestClient, None, None]:
         leases.router,
         graph.router,
         validation.router,
+        validation_rules.router,
         project_reference.router,
         project_layer_master.router,
         layer_master_imports.router,
@@ -258,6 +260,148 @@ def test_project_graph_validation_restore_and_layout(client: TestClient) -> None
     assert next(row for row in restored.json()["layouts"] if row["layer_id"] == first)["x"] != 999
 
 
+def test_layer_impact_analysis_and_delete_cleanup(client: TestClient) -> None:
+    project_id = create_project(client)
+    tree_id = default_tree_id(client, project_id)
+    first = create_layer(client, project_id, "A", tree_id=tree_id)
+    second = create_layer(client, project_id, "B", 300, tree_id=tree_id)
+    third = create_layer(client, project_id, "C", 600, tree_id=tree_id)
+    fourth = create_layer(client, project_id, "D", 900, tree_id=tree_id)
+    base = graph_base(client, project_id, tree_id)
+    relation_ab = client.post(
+        f"{base}/relations", json={"parent_layer_id": first, "child_layer_id": second}
+    ).json()
+    relation_bc = client.post(
+        f"{base}/relations", json={"parent_layer_id": second, "child_layer_id": third}
+    ).json()
+    attachment = client.post(
+        f"{base}/relations",
+        json={
+            "parent_layer_id": fourth,
+            "child_layer_id": None,
+            "attached_relation_id": relation_ab["id"],
+        },
+    ).json()
+    rule = client.post(
+        f"/api/projects/{project_id}/reference/validation-rules",
+        json={
+            "name": "Layer step required",
+            "target_type": "layer",
+            "rule_type": "required",
+            "field_name": "step",
+            "expected_values": [],
+            "severity": "warning",
+            "enabled": True,
+            "sort_order": 0,
+        },
+    )
+    assert rule.status_code == 201, rule.text
+    updated_tree = client.patch(
+        f"/api/projects/{project_id}/align-trees/{tree_id}",
+        json={
+            "layer_process_names": {second: "ETCH"},
+            "layer_gds_names": {second: "GDS_B"},
+            "final_table_cells": {
+                relation_ab["id"]: {second: "AB-B", third: "AB-C"},
+                relation_bc["id"]: {second: "BC-B", third: "BC-C"},
+            },
+        },
+    )
+    assert updated_tree.status_code == 200, updated_tree.text
+
+    response = client.get(f"{base}/layers/{second}/impact")
+    assert response.status_code == 200, response.text
+    impact = response.json()
+    assert impact["layer"]["name"] == "B"
+    assert [row["name"] for row in impact["upstream_layers"]] == ["A"]
+    assert [row["name"] for row in impact["downstream_layers"]] == ["C"]
+    assert {row["id"] for row in impact["direct_relations"]} == {relation_ab["id"], relation_bc["id"]}
+    assert [row["id"] for row in impact["attachment_relations"]] == [attachment["id"]]
+    assert impact["overlay_key_count"] == 3
+    assert impact["export_row_count"] == 2
+    assert impact["saved_table_value_count"] == 6
+    assert [row["name"] for row in impact["validation_rules"]] == ["Layer step required"]
+
+    deleted = client.delete(f"{base}/layers/{second}")
+    assert deleted.status_code == 204, deleted.text
+    graph = client.get(base).json()
+    assert {row["id"] for row in graph["relations"]} == {attachment["id"]}
+    assert graph["relations"][0]["attached_relation_id"] is None
+    tree = client.get(f"/api/projects/{project_id}/align-trees/{tree_id}").json()
+    assert second not in tree["layer_process_names"]
+    assert second not in tree["layer_gds_names"]
+    assert tree["final_table_cells"] == {}
+
+
+def test_relation_impact_analysis_and_delete_cleanup(client: TestClient) -> None:
+    project_id = create_project(client)
+    tree_id = default_tree_id(client, project_id)
+    first = create_layer(client, project_id, "A", tree_id=tree_id)
+    second = create_layer(client, project_id, "B", 300, tree_id=tree_id)
+    third = create_layer(client, project_id, "C", 600, tree_id=tree_id)
+    fourth = create_layer(client, project_id, "D", 900, tree_id=tree_id)
+    base = graph_base(client, project_id, tree_id)
+    relation_ab = client.post(
+        f"{base}/relations", json={"parent_layer_id": first, "child_layer_id": second}
+    ).json()
+    relation_bc = client.post(
+        f"{base}/relations", json={"parent_layer_id": second, "child_layer_id": third}
+    ).json()
+    attachment = client.post(
+        f"{base}/relations",
+        json={
+            "parent_layer_id": fourth,
+            "child_layer_id": None,
+            "attached_relation_id": relation_ab["id"],
+        },
+    ).json()
+    rule = client.post(
+        f"/api/projects/{project_id}/reference/validation-rules",
+        json={
+            "name": "Relation type required",
+            "target_type": "relation",
+            "rule_type": "required",
+            "field_name": "relation_type",
+            "expected_values": [],
+            "severity": "error",
+            "enabled": True,
+            "sort_order": 0,
+        },
+    )
+    assert rule.status_code == 201, rule.text
+    updated_tree = client.patch(
+        f"/api/projects/{project_id}/align-trees/{tree_id}",
+        json={
+            "final_table_cells": {
+                relation_ab["id"]: {first: "AB-A", second: "AB-B"},
+                relation_bc["id"]: {second: "BC-B"},
+            },
+        },
+    )
+    assert updated_tree.status_code == 200, updated_tree.text
+
+    response = client.get(f"{base}/relations/{relation_ab['id']}/impact")
+    assert response.status_code == 200, response.text
+    impact = response.json()
+    assert impact["relation"]["id"] == relation_ab["id"]
+    assert [row["name"] for row in impact["upstream_layers"]] == ["A"]
+    assert [row["name"] for row in impact["downstream_layers"]] == ["B", "C"]
+    assert [row["id"] for row in impact["attachment_relations"]] == [attachment["id"]]
+    assert impact["overlay_key_count"] == 2
+    assert impact["export_row_count"] == 1
+    assert impact["saved_table_value_count"] == 2
+    assert [row["name"] for row in impact["validation_rules"]] == ["Relation type required"]
+
+    deleted = client.delete(f"{base}/relations/{relation_ab['id']}")
+    assert deleted.status_code == 204, deleted.text
+    graph = client.get(base).json()
+    remaining = {row["id"]: row for row in graph["relations"]}
+    assert set(remaining) == {relation_bc["id"], attachment["id"]}
+    assert remaining[attachment["id"]]["attached_relation_id"] is None
+    tree = client.get(f"/api/projects/{project_id}/align-trees/{tree_id}").json()
+    assert tree["final_table_cells"] == {relation_bc["id"]: {second: "BC-B"}}
+
+
 def test_relation_import_preview_and_commit_are_atomic(client: TestClient) -> None:
     project_id = create_project(client)
     first = create_layer(client, project_id, "A")
@@ -438,6 +582,80 @@ def test_align_tree_review_approval_publish_and_reopen_workflow(client: TestClie
     assert editable_again.status_code == 200, editable_again.text
 
 
+def test_configurable_validation_rules_are_applied_and_manageable(client: TestClient) -> None:
+    project_id = create_project(client)
+    tree_id = default_tree_id(client, project_id)
+    create_layer(client, project_id, "A", tree_id=tree_id)
+    rules_url = f"/api/projects/{project_id}/reference/validation-rules"
+
+    payload = {
+        "name": "Align side required",
+        "target_type": "layer",
+        "rule_type": "required",
+        "field_name": "align_side",
+        "expected_values": [],
+        "severity": "warning",
+        "message": "{target}: {field} is required",
+        "enabled": True,
+        "sort_order": 10,
+    }
+    created = client.post(rules_url, json=payload)
+    assert created.status_code == 201, created.text
+    rule = created.json()
+
+    report = client.post(validate_url(client, project_id, tree_id)).json()
+    custom_issues = [issue for issue in report["issues"] if issue.get("rule_id") == rule["id"]]
+    assert len(custom_issues) == 1
+    assert custom_issues[0]["rule_name"] == payload["name"]
+    assert custom_issues[0]["severity"] == "warning"
+    assert custom_issues[0]["message"] == "Layer 'A': align_side is required"
+
+    duplicate = client.post(rules_url, json=payload)
+    assert duplicate.status_code == 409, duplicate.text
+
+    invalid = client.post(rules_url, json={**payload, "name": "Invalid field", "field_name": "unknown"})
+    assert invalid.status_code == 422, invalid.text
+
+    updated = client.put(f"{rules_url}/{rule['id']}", json={**payload, "enabled": False})
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["enabled"] is False
+    assert client.get(rules_url).json()[0]["name"] == payload["name"]
+
+    report = client.post(validate_url(client, project_id, tree_id)).json()
+    assert not any(issue.get("rule_id") == rule["id"] for issue in report["issues"])
+    assert client.delete(f"{rules_url}/{rule['id']}").status_code == 204
+    assert client.get(rules_url).json() == []
+
+
+def test_error_validation_rule_blocks_review_request(client: TestClient) -> None:
+    project_id = create_project(client)
+    tree_id = default_tree_id(client, project_id)
+    rules_url = f"/api/projects/{project_id}/reference/validation-rules"
+    created = client.post(
+        rules_url,
+        json={
+            "name": "Process name required",
+            "target_type": "align_tree",
+            "rule_type": "required",
+            "field_name": "process_name",
+            "expected_values": [],
+            "severity": "error",
+            "enabled": True,
+            "sort_order": 0,
+        },
+    )
+    assert created.status_code == 201, created.text
+
+    requested = client.post(
+        f"/api/projects/{project_id}/align-trees/{tree_id}/workflow/request-review",
+        json={"note": "Review this"},
+    )
+    assert requested.status_code == 422, requested.text
+    detail = requested.json()["detail"]
+    assert detail["message"] == "Validation errors must be resolved before review"
+    assert detail["issues"][0]["rule_name"] == "Process name required"
+
+
 def test_pending_group_merge_and_split(client: TestClient) -> None:
     project_id = create_project(client)
     first = create_layer(client, project_id, "A")
@@ -488,6 +706,61 @@ def test_pending_group_merge_and_split(client: TestClient) -> None:
     assert {row["group"] for row in client.get(f"/api/projects/{project_id}/layer-master").json()} == {
         None
     }
+
+
+def test_layer_master_group_updates_reconcile_editor_merge(client: TestClient) -> None:
+    project_id = create_project(client)
+    tree_id = default_tree_id(client, project_id)
+    master_base = f"/api/projects/{project_id}/layer-master"
+    masters = []
+    for number, name in (("10", "Master A"), ("20", "Master B")):
+        created = client.post(master_base, json={"name": name, "layer_number": number})
+        assert created.status_code == 201, created.text
+        masters.append(created.json())
+        imported = client.post(
+            f"{graph_base(client, project_id, tree_id)}/layers",
+            json={"name": "ignored", "layer_master_id": created.json()["id"]},
+        )
+        assert imported.status_code == 201, imported.text
+
+    first_update = client.put(f"{master_base}/{masters[0]['id']}", json={"group": "  ETCH  "})
+    assert first_update.status_code == 200, first_update.text
+    assert first_update.json()["group"] == "ETCH"
+    first_graph = client.get(graph_base(client, project_id, tree_id)).json()
+    first_layer = next(row for row in first_graph["layers"] if row["layer_master_id"] == masters[0]["id"])
+    assert first_layer["pending_group"] == "ETCH"
+
+    second_update = client.put(f"{master_base}/{masters[1]['id']}", json={"group": "ETCH"})
+    assert second_update.status_code == 200, second_update.text
+    merged_graph = client.get(graph_base(client, project_id, tree_id)).json()
+    assert len([row for row in merged_graph["relations"] if row["same_group"] == "ETCH"]) == 1
+    assert not any(row["pending_group"] for row in merged_graph["layers"])
+
+    removed = client.put(f"{master_base}/{masters[0]['id']}", json={"group": None})
+    assert removed.status_code == 200, removed.text
+    split_graph = client.get(graph_base(client, project_id, tree_id)).json()
+    assert not any(row["same_group"] for row in split_graph["relations"])
+    remaining = next(row for row in split_graph["layers"] if row["layer_master_id"] == masters[1]["id"])
+    assert remaining["pending_group"] == "ETCH"
+
+
+def test_editor_merge_does_not_reuse_a_pending_layer_master_group(client: TestClient) -> None:
+    project_id = create_project(client)
+    first = create_layer(client, project_id, "Pending")
+    second = create_layer(client, project_id, "Merge A", 300)
+    third = create_layer(client, project_id, "Merge B", 600)
+    base = graph_base(client, project_id)
+
+    pending = client.patch(f"{base}/layers/{first}/group", json={"group": "1"})
+    assert pending.status_code == 200, pending.text
+    merged = client.post(f"{base}/layers/merge", json={"layer_ids": [second, third]})
+    assert merged.status_code == 200, merged.text
+
+    assert [row["same_group"] for row in merged.json()["relations"] if row["same_group"]] == ["2"]
+    pending_layer = next(row for row in merged.json()["layers"] if row["id"] == first)
+    assert pending_layer["pending_group"] == "1"
+    groups = {row["name"]: row["group"] for row in client.get(f"/api/projects/{project_id}/layer-master").json()}
+    assert groups == {"Pending": "1", "Merge A": "2", "Merge B": "2"}
 
 
 def test_merge_rejects_layers_with_an_existing_relation(client: TestClient) -> None:
@@ -790,7 +1063,12 @@ def test_layer_master_import_preview_and_commit_are_atomic(client: TestClient) -
         "rows": [
             {
                 "row_number": 1,
-                "layer": {"name": "M1", "layer_number": "10", "priorities": {layout["id"]: "1"}},
+                "layer": {
+                    "name": "M1",
+                    "layer_number": "10",
+                    "group": "  ETCH  ",
+                    "priorities": {layout["id"]: "1"},
+                },
             },
             {"row_number": 2, "layer": {"name": "M2", "layer_number": "20"}},
         ],
@@ -830,6 +1108,7 @@ def test_layer_master_import_preview_and_commit_are_atomic(client: TestClient) -
     assert committed.status_code == 200, committed.text
     assert committed.json()["created_count"] == 2
     assert [row["name"] for row in committed.json()["rows"]] == ["M1", "M2"]
+    assert committed.json()["rows"][0]["group"] == "ETCH"
     assert committed.json()["rows"][0]["priorities"] == {layout["id"]: "1"}
     assert {row["name"] for row in client.get(base).json()} == {"M1", "M2"}
 
@@ -1044,6 +1323,20 @@ def test_project_branch_copies_reference_and_layer_master_without_editor_graph(c
         f"{reference_base}/key-shapes",
         json={"key_shape": "Branch Shape", "drawing_guide": "Guide", "sort_order": 2},
     ).status_code == 201
+    source_rule = client.post(
+        f"{reference_base}/validation-rules",
+        json={
+            "name": "Branch rule",
+            "target_type": "layer",
+            "rule_type": "required",
+            "field_name": "step",
+            "expected_values": [],
+            "severity": "warning",
+            "enabled": True,
+            "sort_order": 3,
+        },
+    )
+    assert source_rule.status_code == 201, source_rule.text
     master = client.post(
         f"/api/projects/{source_project_id}/layer-master",
         json={
@@ -1090,6 +1383,12 @@ def test_project_branch_copies_reference_and_layer_master_without_editor_graph(c
         row["symbol"] == "BD"
         for row in client.get(f"/api/projects/{target_project_id}/reference/key-drawing-types").json()
     )
+    target_rules = client.get(
+        f"/api/projects/{target_project_id}/reference/validation-rules"
+    ).json()
+    assert len(target_rules) == 1
+    assert target_rules[0]["name"] == "Branch rule"
+    assert target_rules[0]["id"] != source_rule.json()["id"]
 
 
 def test_graph_load_keeps_layer_master_out_of_editor_until_imported(client: TestClient) -> None:

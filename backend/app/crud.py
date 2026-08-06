@@ -258,6 +258,24 @@ def delete_layer_with_relations(
         )
         .all()
     )
+    relation_ids = {str(relation.id) for relation in incoming + outgoing}
+    tree = db.get(models.AlignTree, align_tree_id)
+    if tree is not None:
+        layer_key = str(layer_id)
+        tree.layer_process_names = {
+            key: value for key, value in tree.layer_process_names.items() if key != layer_key
+        }
+        tree.layer_gds_names = {
+            key: value for key, value in tree.layer_gds_names.items() if key != layer_key
+        }
+        final_table_cells: dict[str, dict[str, str]] = {}
+        for relation_id, values in tree.final_table_cells.items():
+            if relation_id in relation_ids:
+                continue
+            remaining = {key: value for key, value in values.items() if key != layer_key}
+            if remaining:
+                final_table_cells[relation_id] = remaining
+        tree.final_table_cells = final_table_cells
     for relation in incoming + outgoing:
         db.delete(relation)
     layer = get_layer_or_404(db, project_id, align_tree_id, layer_id)

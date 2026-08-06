@@ -448,6 +448,25 @@ class KeyShape(Base, TimestampMixin):
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class ValidationRule(Base, TimestampMixin):
+    __tablename__ = "validation_rules"
+    __table_args__ = (UniqueConstraint("project_id", "name", name="uq_validation_rules_project_name"),)
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    target_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    rule_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    field_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    expected_values: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    severity: Mapped[str] = mapped_column(String(20), nullable=False, default="error")
+    message: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="1")
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+
+
 class LayerMaster(Base, TimestampMixin):
     __tablename__ = "layer_masters"
     __table_args__ = (UniqueConstraint("project_id", "name", name="uq_layer_masters_project_name"),)

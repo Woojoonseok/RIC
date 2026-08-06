@@ -8,7 +8,7 @@ import {
   attachmentPort, closestPointOnPath, facingPorts, getClosestPointOnSegment, intersects, orthogonalWaypoints, portHandlePoint, portPoint, relationBendWaypoints, relationGeometry, relationStroke, snap,
 } from "../src/domain/geometry";
 import { computeDisplayGraph, expandRelationCandidates, isMergedLayer, layerMatchesQuery, relationGroupById, relationTargetLayerId } from "../src/domain/graph";
-import { filterLayerMasterRows, layerImportPositions, layerMasterBaseColumns, layerMasterColumns, layerMasterMatchesQuery, layerMasterPayload, layerMasterPriorityColumns, layerMasterRowMatchesQuery, layerMasterRows } from "../src/domain/layerMaster";
+import { filterLayerMasterRows, layerImportPositions, layerMasterBaseColumns, layerMasterColumns, layerMasterMatchesQuery, layerMasterPasteRows, layerMasterPayload, layerMasterPriorityColumns, layerMasterRowMatchesQuery, layerMasterRows } from "../src/domain/layerMaster";
 import { parseTsv } from "../src/domain/tsv";
 import type { AuditEvent, Graph, Layout, Relation } from "../src/types";
 
@@ -175,6 +175,25 @@ describe("shared Layer information grid", () => {
       "priority:layout",
     ]);
     expect(row.priority_summary).toBe("1/1 설정");
+  });
+  it("keeps Group aligned when pasting rows copied from the basic information grid", () => {
+    const layouts = [{ id: "layout", name: "Scribe", scribe_lane_rows: 2, sort_order: 0 }];
+    const presets = [{ id: "preset", name: "Default", fill_color: "#fff", stroke_color: "#000", text_color: "#000", font_size: 14, width: 180, height: 72, stroke_width: 2, is_default: true, sort_order: 0 }];
+    const basic = layerMasterBaseColumns(presets);
+    const full = layerMasterColumns(layouts, presets);
+    const pasted = layerMasterPasteRows([[
+      "M1", "25.1", "MAIN", "SL", "PR", "DEV", "Positive", "Default", "Open",
+      "Front", "Required", "Comment", "1/1 설정",
+    ]], basic, full);
+
+    expect(layerMasterPayload(pasted[0], layouts)).toMatchObject({
+      name: "M1",
+      layer_number: "25.1",
+      group: "Front",
+      validation_rule: "Required",
+      comment: "Comment",
+      priorities: { layout: null },
+    });
   });
 });
 

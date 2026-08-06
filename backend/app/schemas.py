@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class OrmModel(BaseModel):
@@ -271,6 +271,53 @@ class LayerRead(OrmModel, LayerBase):
     pending_group: str | None = None
 
 
+class LayerImpactNode(BaseModel):
+    id: uuid.UUID
+    name: str
+    step: str | None = None
+
+
+class LayerImpactRelation(BaseModel):
+    id: uuid.UUID
+    label: str
+    relation_type: str
+    attached_relation_id: uuid.UUID | None = None
+    will_be_deleted: bool
+
+
+class LayerImpactRule(BaseModel):
+    id: uuid.UUID
+    name: str
+    target_type: Literal["layer", "relation"]
+    severity: Literal["error", "warning"]
+    rule_type: Literal["required", "allowed_values", "unique"]
+    field_name: str
+
+
+class LayerImpactReport(BaseModel):
+    layer: LayerImpactNode
+    upstream_layers: list[LayerImpactNode]
+    downstream_layers: list[LayerImpactNode]
+    direct_relations: list[LayerImpactRelation]
+    attachment_relations: list[LayerImpactRelation]
+    validation_rules: list[LayerImpactRule]
+    overlay_key_count: int
+    export_row_count: int
+    saved_table_value_count: int
+
+
+class RelationImpactReport(BaseModel):
+    relation: LayerImpactRelation
+    upstream_layers: list[LayerImpactNode]
+    downstream_layers: list[LayerImpactNode]
+    direct_relations: list[LayerImpactRelation]
+    attachment_relations: list[LayerImpactRelation]
+    validation_rules: list[LayerImpactRule]
+    overlay_key_count: int
+    export_row_count: int
+    saved_table_value_count: int
+
+
 class LayoutUpdate(BaseModel):
     x: float | None = None
     y: float | None = None
@@ -499,6 +546,53 @@ class LayerMasterRead(OrmModel, LayerMasterBase):
     id: uuid.UUID
     project_id: uuid.UUID | None = None
     priorities: dict[uuid.UUID, str | None] = Field(default_factory=dict)
+
+
+VALIDATION_RULE_FIELDS: dict[str, set[str]] = {
+    "layer": {"name", "step", "layer_property", "align", "align_side", "description"},
+    "relation": {
+        "relation_type", "key_priority", "priority_rule", "final_type", "key_purpose",
+        "placement", "stack_type", "inregi", "inner_size", "outer_size",
+    },
+    "align_tree": {"process_name", "gds_name"},
+}
+
+
+class ValidationRuleBase(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    target_type: Literal["layer", "relation", "align_tree"]
+    rule_type: Literal["required", "allowed_values", "unique"]
+    field_name: str = Field(min_length=1, max_length=80)
+    expected_values: list[str] = Field(default_factory=list, max_length=100)
+    severity: Literal["error", "warning"] = "error"
+    message: str | None = Field(default=None, max_length=500)
+    enabled: bool = True
+    sort_order: int = 0
+
+    @model_validator(mode="after")
+    def validate_configuration(self):
+        if self.field_name not in VALIDATION_RULE_FIELDS[self.target_type]:
+            raise ValueError(f"Field '{self.field_name}' is not available for {self.target_type}")
+        values = [value.strip() for value in self.expected_values if value.strip()]
+        if self.rule_type == "allowed_values" and not values:
+            raise ValueError("Allowed-values rules require at least one value")
+        self.expected_values = values if self.rule_type == "allowed_values" else []
+        return self
+
+
+class ValidationRuleCreate(ValidationRuleBase):
+    pass
+
+
+class ValidationRuleUpdate(ValidationRuleBase):
+    pass
+
+
+class ValidationRuleRead(OrmModel, ValidationRuleBase):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    created_at: datetime
+    updated_at: datetime
 
 
 class LayerMasterImportData(LayerMasterBase):
@@ -798,6 +892,8 @@ class ValidationIssue(BaseModel):
     message: str
     relation_id: uuid.UUID | None = None
     layer_id: uuid.UUID | None = None
+    rule_id: uuid.UUID | None = None
+    rule_name: str | None = None
 
 
 class ValidationReport(BaseModel):

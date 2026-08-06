@@ -14,7 +14,7 @@ from ..services.project_access import (
     get_project_context,
     project_request_guard,
 )
-from .project_layer_master import _apply_priorities, _serialize
+from .project_layer_master import _apply_priorities, _normalize_group, _serialize
 
 router = APIRouter(
     prefix="/api/projects/{project_id}/layer-master/import",
@@ -76,6 +76,7 @@ def _stage_import(
         data = item.layer.model_dump(exclude={"priorities"})
         data["name"] = name
         data["layer_number"] = layer_number
+        data["group"] = _normalize_group(data.get("group"))
         row = models.LayerMaster(project_id=project_id, **data)
         db.add(row)
         db.flush()

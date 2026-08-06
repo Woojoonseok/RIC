@@ -136,7 +136,13 @@ def clone_project_reference_data(
         db.flush()
         layout_type_map[source.id] = created.id
 
-    for model in (models.KeyDrawingType, models.KeyShape, models.RelationStyle, models.BoxPreset):
+    for model in (
+        models.KeyDrawingType,
+        models.KeyShape,
+        models.RelationStyle,
+        models.BoxPreset,
+        models.ValidationRule,
+    ):
         for source in (
             db.query(model)
             .filter(model.project_id == source_project_id)
