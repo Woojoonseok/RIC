@@ -37,6 +37,7 @@ pnpm dev
 
 ```text
 DATABASE_URL=sqlite:///./ric-dev.db
+ENVIRONMENT=development
 CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 IDENTITY_SECRET=replace-with-a-random-64-character-secret
 IDENTITY_COOKIE_SECURE=false
@@ -44,6 +45,7 @@ TRUST_PROXY_HEADERS=false
 TRUSTED_PROXY_IPS=127.0.0.1,::1
 ALLOW_LEGACY_PROJECT_CLAIMS=false
 EDIT_LEASE_TTL_SECONDS=90
+RUN_DATABASE_MIGRATIONS=true
 VITE_API_BASE_URL=http://localhost:8000/api
 ```
 
@@ -90,4 +92,6 @@ pnpm build
 
 ## 배포
 
-Vue의 `dist/`를 정적 호스팅하고 `/api` 요청을 FastAPI로 프록시한다. FastAPI는 PostgreSQL `DATABASE_URL`을 사용해 실행하며, CORS는 실제 프론트 도메인만 `CORS_ORIGINS`에 지정한다. 운영 DB 스키마 변경은 실제 배포 데이터 확인 후 Alembic migration으로 관리해야 한다.
+Vue의 `dist/`를 정적 호스팅하고 `/api` 요청을 FastAPI로 프록시한다. FastAPI는 PostgreSQL `DATABASE_URL`을 사용해 실행하며, CORS는 실제 프론트 도메인만 `CORS_ORIGINS`에 지정한다. DB 변경은 Alembic으로 관리되며 서버 시작 시 현재 revision까지 적용된다.
+
+CI, readiness, DB 백업·복구, HTTPS와 production 설정은 [운영 가이드](docs/OPERATIONS.md)를 따른다.

@@ -7,6 +7,7 @@ dependencies = [
   "fastapi>=0.115.0",
   "uvicorn[standard]>=0.30.0",
   "sqlalchemy>=2.0.0",
+  "alembic>=1.14.0",
   "pydantic>=2.8.0",
   "pydantic-settings>=2.4.0",
 ]
@@ -23,3 +24,14 @@ dev = [
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+# Existing style-only debt is tracked separately; CI enforces correctness
+# rules now without rewriting unrelated application modules.
+ignore = ["B008", "I001", "SIM102", "UP017", "UP037"]

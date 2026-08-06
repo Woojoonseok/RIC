@@ -8,8 +8,12 @@ ric-dev.db-*
 
 backend/.venv/
 backend/*.egg-info/
+backend/backups/
+backend/ci.db
+backend/*.log
 frontend/node_modules/
 frontend/dist/
 frontend-vue/node_modules/
 frontend-vue/dist/
+frontend-vue/*.log
 .pnpm-store/

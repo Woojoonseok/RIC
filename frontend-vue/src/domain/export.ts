@@ -2,7 +2,7 @@ import PptxGenJS from "pptxgenjs";
 import * as XLSX from "xlsx-js-style";
 
 import { relationPoints, relationStroke } from "./geometry";
-import type { Graph, Point } from "../types";
+import type { Graph, Layer, Point } from "../types";
 
 const PPTX_WIDTH = 13.333;
 const PPTX_HEIGHT = 7.5;
@@ -18,7 +18,14 @@ export interface PptxCanvasTransform {
   offsetY: number;
 }
 
-export function pptxCanvasTransform(graph: Graph): PptxCanvasTransform {
+export interface CanvasContentBounds {
+  minX: number;
+  minY: number;
+  width: number;
+  height: number;
+}
+
+export function canvasContentBounds(graph: Graph): CanvasContentBounds {
   const layouts = new Map(graph.layouts.map((row) => [row.layer_id, row]));
   const relations = new Map(graph.relations.map((row) => [row.id, row]));
   const points: Point[] = [];
@@ -37,6 +44,11 @@ export function pptxCanvasTransform(graph: Graph): PptxCanvasTransform {
   const maxY = Math.max(...points.map((point) => point.y));
   const width = Math.max(maxX - minX, 1);
   const height = Math.max(maxY - minY, 1);
+  return { minX, minY, width, height };
+}
+
+export function pptxCanvasTransform(graph: Graph): PptxCanvasTransform {
+  const { minX, minY, width, height } = canvasContentBounds(graph);
   const scale = Math.min((PPTX_WIDTH - PPTX_MARGIN * 2) / width, (PPTX_HEIGHT - PPTX_MARGIN * 2) / height);
   return {
     minX, minY, width, height, scale,
@@ -63,6 +75,10 @@ export function pptxLinePosition(start: Point, end: Point, transform: PptxCanvas
     flipH: target.x < source.x,
     flipV: target.y < source.y,
   };
+}
+
+export function layerExportLabel(layer: Pick<Layer, "name" | "step">, labelField: "name" | "step") {
+  return labelField === "step" ? layer.step?.trim() || layer.name : layer.name;
 }
 
 function download(blob: Blob, name: string) {
@@ -119,6 +135,14 @@ export function graphSvg(graph: Graph) {
   const relations = new Map(graph.relations.map((row) => [row.id, row]));
   const styles = new Map(graph.styles.map((row) => [row.layer_id, row]));
   const relationStyles = new Map(graph.relation_styles.map((row) => [row.id, row]));
+  const bounds = canvasContentBounds(graph);
+  const padding = 40;
+  const viewBox = [
+    bounds.minX - padding,
+    bounds.minY - padding,
+    bounds.width + padding * 2,
+    bounds.height + padding * 2,
+  ].join(" ");
   const escape = (value: string) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const backgroundMarkup = graph.text_boxes.filter((row) => (row.shape_type ?? "text") !== "text").map((row) => (
     row.shape_type === "ellipse"
@@ -139,12 +163,12 @@ export function graphSvg(graph: Graph) {
   const textMarkup = graph.text_boxes.filter((row) => (row.shape_type ?? "text") === "text").map((row) => (
     `<g><rect x="${row.x}" y="${row.y}" width="${row.width}" height="${row.height}" fill="${row.background_color}" stroke="${row.border_color}"/><text x="${row.x + 8}" y="${row.y + row.height / 2}" dominant-baseline="middle" font-family="Arial" font-size="${row.font_size}" fill="${row.text_color}">${escape(row.text)}</text></g>`
   )).join("");
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000"><defs><marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 Z" fill="#344054"/></marker></defs><rect width="1600" height="1000" fill="white"/>${backgroundMarkup}${relationMarkup}${layerMarkup}${textMarkup}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}"><defs><marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 Z" fill="#344054"/></marker></defs><rect x="${bounds.minX - padding}" y="${bounds.minY - padding}" width="${bounds.width + padding * 2}" height="${bounds.height + padding * 2}" fill="white"/>${backgroundMarkup}${relationMarkup}${layerMarkup}${textMarkup}</svg>`;
 }
 
 export function exportSvg(graph: Graph) { download(new Blob([graphSvg(graph)], { type: "image/svg+xml" }), `${exportBaseName(graph)}.svg`) }
 
-export async function exportPptx(graph: Graph) {
+export async function exportPptx(graph: Graph, labelField: "name" | "step" = "name") {
   const pptx = new PptxGenJS();
   pptx.layout = "LAYOUT_WIDE";
   pptx.author = "RIC Align Tree Editor";
@@ -194,7 +218,7 @@ export async function exportPptx(graph: Graph) {
   for (const layer of graph.layers) {
     const layout = layouts.get(layer.id); if (!layout) continue;
     const style = styles.get(layer.id);
-    slide.addText(layer.name, {
+    slide.addText(layerExportLabel(layer, labelField), {
       ...position(layout.x, layout.y, layout.width, layout.height),
       shape: pptx.ShapeType.roundRect, margin: 0.06, align: "center", valign: "middle",
       color: (style?.text_color ?? "#101828").replace("#", ""), fontSize: (style?.font_size ?? 14) * fontScale,

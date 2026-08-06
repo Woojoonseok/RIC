@@ -4,6 +4,7 @@ import {
   ChevronDown,
   Circle,
   FileImage,
+  History,
   Layers3,
   Link2,
   Merge,
@@ -31,12 +32,14 @@ import { useProjectStore } from "../../stores/project";
 import { useReferenceStore } from "../../stores/reference";
 import type { LayerMaster } from "../../types";
 import LayerMasterPickerModal from "./LayerMasterPickerModal.vue";
+import SnapshotManagerModal from "./SnapshotManagerModal.vue";
 
 const app = useAppStore();
 const graph = useGraphStore();
 const project = useProjectStore();
 const reference = useReferenceStore();
 const layerPickerOpen = ref(false);
+const snapshotOpen = ref(false);
 const splitLayerId = computed(() => {
   const layerId = app.selectedSplitLayerId;
   return layerId && graph.rawGraph && isMergedLayer(graph.rawGraph, layerId) ? layerId : null;
@@ -120,8 +123,9 @@ async function splitSelected() {
       <summary aria-label="더보기" title="더보기"><MoreHorizontal :size="18"/><ChevronDown :size="13"/></summary>
       <div>
         <button :disabled="!graph.displayGraph" @click="exportSvg(graph.displayGraph!)"><FileImage :size="15"/>SVG 내보내기</button>
-        <button :disabled="!graph.displayGraph" @click="exportPptx(graph.displayGraph!)"><Presentation :size="15"/>PowerPoint 내보내기</button>
+        <button :disabled="!graph.displayGraph" @click="exportPptx(graph.displayGraph!, app.labelField)"><Presentation :size="15"/>PowerPoint 내보내기</button>
         <button :disabled="!graph.displayGraph?.layers.length" @click="selectAll"><MousePointer2 :size="15"/>전체 선택</button>
+        <button @click="snapshotOpen = true"><History :size="15"/>스냅샷</button>
         <button :disabled="!project.canEdit" @click="graph.mutateGraph('자동 배치', () => api.autoLayout(project.projectId))"><WandSparkles :size="15"/>자동 배치</button>
         <button @click="graph.reloadGraph"><RefreshCw :size="15"/>새로고침</button>
       </div>
@@ -132,4 +136,5 @@ async function splitSelected() {
     @confirm="addLayers"
     @close="layerPickerOpen = false"
   />
+  <SnapshotManagerModal :open="snapshotOpen" @close="snapshotOpen = false"/>
 </template>

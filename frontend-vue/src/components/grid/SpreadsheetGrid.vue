@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
+import { Filter } from "@lucide/vue";
 import { cloneJson } from "../../domain/clone";
 import { parseTsv, toTsv } from "../../domain/tsv";
 
 export interface GridOption { value: string; label: string }
 export interface GridColumn { key: string; label: string; width?: number; readonly?: boolean; options?: GridOption[]; defaultValue?: unknown; action?: boolean; sticky?: boolean; highlightEmpty?: boolean }
-const props = defineProps<{ columns: GridColumn[]; rows: Array<Record<string, unknown>>; rowKey?: string; selectedRows?: string[]; selectAllRows?: boolean; emptyHint?: string; autoCommit?: boolean; readonly?: boolean }>();
-const emit = defineEmits<{ commit: [rows: Array<Record<string, unknown>>]; rowSelect: [id: string, additive: boolean]; rowSelection: [ids: string[]]; cellAction: [row: Record<string, unknown>, key: string]; addRow: [] }>();
+const props = defineProps<{ columns: GridColumn[]; rows: Array<Record<string, unknown>>; rowKey?: string; selectedRows?: string[]; selectAllRows?: boolean; emptyHint?: string; autoCommit?: boolean; readonly?: boolean; filterable?: boolean; filteredColumns?: string[] }>();
+const emit = defineEmits<{ commit: [rows: Array<Record<string, unknown>>]; rowSelect: [id: string, additive: boolean]; rowSelection: [ids: string[]]; cellAction: [row: Record<string, unknown>, key: string]; addRow: []; columnFilter: [key: string, event: MouseEvent] }>();
 const draft = ref<Array<Record<string, unknown>>>(cloneJson(props.rows));
 const active = ref({ row: 0, col: 0 });
 const anchor = ref({ row: 0, col: 0 });
@@ -180,7 +181,18 @@ onBeforeUnmount(stopCellDrag);
         <template v-else>#</template>
       </div>
       <div v-for="(column, colIndex) in columns" :key="column.key" class="sheet-head" :class="{ 'sticky-column': column.sticky }" :style="column.sticky ? { left: `${stickyLeft(colIndex)}px` } : undefined" @click="selectColumn(colIndex)" @dblclick="autoFit(column)">
-        {{ column.label }}<span class="column-resizer" @pointerdown.stop="resize(column, $event)" />
+        <span class="sheet-head-label">{{ column.label }}</span>
+        <button
+          v-if="filterable"
+          type="button"
+          class="sheet-filter-button"
+          :class="{ active: filteredColumns?.includes(column.key) }"
+          :title="`${column.label} 필터`"
+          :aria-label="`${column.label} 필터`"
+          @click.stop="emit('columnFilter', column.key, $event)"
+          @dblclick.stop
+        ><Filter :size="13"/></button>
+        <span class="column-resizer" @pointerdown.stop="resize(column, $event)" />
       </div>
     </div>
     <div v-for="(row, rowIndex) in draft" :key="String(row[rowKey ?? 'id'] ?? rowIndex)" class="sheet-row" :class="{ 'row-selected': selectedRows?.includes(String(row[rowKey ?? 'id'])) }" :style="{ gridTemplateColumns: gridColumns }">

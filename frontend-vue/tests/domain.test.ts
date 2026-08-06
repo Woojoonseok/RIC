@@ -3,12 +3,12 @@ import { isReactive, reactive } from "vue";
 import { describeErrorDetail } from "../src/api/client";
 import { auditActorName, auditEventChanges, auditEventTitle, isChangeAuditEvent } from "../src/domain/audit";
 import { cloneJson } from "../src/domain/clone";
-import { graphSvg, pptxCanvasTransform, pptxLinePosition } from "../src/domain/export";
+import { graphSvg, layerExportLabel, pptxCanvasTransform, pptxLinePosition } from "../src/domain/export";
 import {
   attachmentPort, closestPointOnPath, facingPorts, getClosestPointOnSegment, intersects, orthogonalWaypoints, portHandlePoint, portPoint, relationBendWaypoints, relationGeometry, relationStroke, snap,
 } from "../src/domain/geometry";
 import { computeDisplayGraph, expandRelationCandidates, isMergedLayer, layerMatchesQuery, relationGroupById, relationTargetLayerId } from "../src/domain/graph";
-import { layerImportPositions, layerMasterBaseColumns, layerMasterColumns, layerMasterMatchesQuery, layerMasterPayload, layerMasterPriorityColumns, layerMasterRows } from "../src/domain/layerMaster";
+import { filterLayerMasterRows, layerImportPositions, layerMasterBaseColumns, layerMasterColumns, layerMasterMatchesQuery, layerMasterPayload, layerMasterPriorityColumns, layerMasterRowMatchesQuery, layerMasterRows } from "../src/domain/layerMaster";
 import { parseTsv } from "../src/domain/tsv";
 import type { AuditEvent, Graph, Layout, Relation } from "../src/types";
 
@@ -103,6 +103,28 @@ describe("shared Layer information grid", () => {
     expect(layerMasterMatchesQuery(master, "25.1")).toBe(true);
     expect(layerMasterMatchesQuery(master, "26")).toBe(false);
   });
+  it("filters Layer information across all visible columns", () => {
+    const row = { name: "Metal 1", layer_number: "25.1", group: "Front", comment: "critical mask" };
+    const columns = [
+      { key: "name", label: "Layer 명" },
+      { key: "layer_number", label: "Layer 번호" },
+      { key: "group", label: "Group" },
+      { key: "comment", label: "Comment" },
+    ];
+    expect(layerMasterRowMatchesQuery(row, columns, "25.1")).toBe(true);
+    expect(layerMasterRowMatchesQuery(row, columns, "critical")).toBe(true);
+    expect(layerMasterRowMatchesQuery(row, columns, "back")).toBe(false);
+  });
+  it("combines value filters from multiple Layer information columns", () => {
+    const rows = [
+      { name: "Metal 1", group: "Front", pr_type: "Positive" },
+      { name: "Metal 2", group: "Back", pr_type: "Positive" },
+      { name: "Via 1", group: "Front", pr_type: "Negative" },
+    ];
+    const columns = [{ key: "name", label: "Layer 명" }, { key: "group", label: "Group" }, { key: "pr_type", label: "PR" }];
+    expect(filterLayerMasterRows(rows, columns, "", { group: ["Front"], pr_type: ["Positive"] })).toEqual([rows[0]]);
+    expect(filterLayerMasterRows(rows, columns, "metal", { group: ["Front"] })).toEqual([rows[0]]);
+  });
   it("stacks imported Layers near the most recently changed Layer", () => {
     const layers = [
       { id: "older", created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-02T00:00:00Z" },
@@ -157,6 +179,12 @@ describe("shared Layer information grid", () => {
 });
 
 describe("canvas exports", () => {
+  it("uses the selected Layer or Step label for PowerPoint boxes", () => {
+    expect(layerExportLabel({ name: "Metal", step: "25.1" }, "name")).toBe("Metal");
+    expect(layerExportLabel({ name: "Metal", step: "25.1" }, "step")).toBe("25.1");
+    expect(layerExportLabel({ name: "Metal", step: "  " }, "step")).toBe("Metal");
+  });
+
   it("renders decorative shapes behind relations and Layers", () => {
     const source = graph();
     source.text_boxes = [{
@@ -167,6 +195,19 @@ describe("canvas exports", () => {
     const svg = graphSvg(source);
     expect(svg).toContain('<ellipse cx="120" cy="80" rx="100" ry="50"');
     expect(svg.indexOf("<ellipse")).toBeLessThan(svg.indexOf("<polyline"));
+  });
+
+  it("exports the complete SVG content instead of a fixed Fit viewport", () => {
+    const source = graph();
+    source.text_boxes = [{
+      id: "outside", project_id: "p", text: "", shape_type: "rectangle",
+      x: 2000, y: 1200, width: 160, height: 80, text_color: "#111111", font_size: 16,
+      background_color: "#eeeeee", border_color: "#999999", locked: false,
+    }];
+    const svg = graphSvg(source);
+    expect(svg).toContain('viewBox="-40 -40 2240 1360"');
+    expect(svg).toContain('<rect x="-40" y="-40" width="2240" height="1360" fill="white"/>');
+    expect(svg).not.toContain('viewBox="0 0 1600 1000"');
   });
 
   it("fits the complete canvas content into the PowerPoint slide", () => {

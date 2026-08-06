@@ -484,6 +484,39 @@ class LayerMasterRead(OrmModel, LayerMasterBase):
     priorities: dict[uuid.UUID, str | None] = Field(default_factory=dict)
 
 
+class LayerMasterImportData(LayerMasterBase):
+    name: str = Field(default="", max_length=160)
+    layer_number: str = Field(default="", max_length=40)
+    priorities: dict[uuid.UUID, str | None] = Field(default_factory=dict)
+
+
+class LayerMasterImportRow(BaseModel):
+    row_number: int = Field(ge=1)
+    layer: LayerMasterImportData
+
+
+class LayerMasterImportRequest(BaseModel):
+    rows: list[LayerMasterImportRow] = Field(min_length=1, max_length=5000)
+
+
+class LayerMasterImportIssue(BaseModel):
+    row_number: int | None = None
+    code: str
+    message: str
+
+
+class LayerMasterImportPreview(BaseModel):
+    total_count: int
+    create_count: int
+    error_count: int
+    issues: list[LayerMasterImportIssue] = Field(default_factory=list)
+
+
+class LayerMasterImportCommitResult(BaseModel):
+    created_count: int
+    rows: list[LayerMasterRead] = Field(default_factory=list)
+
+
 class RelationExtraCreate(BaseModel):
     layer_master_id: uuid.UUID
     key_drawing_type_id: uuid.UUID
@@ -566,6 +599,28 @@ class RelationRead(OrmModel, RelationBase):
     extras: list[RelationExtraRead] = Field(default_factory=list)
 
 
+class RelationImportRow(BaseModel):
+    row_number: int = Field(ge=1)
+    relation: RelationCreate
+
+
+class RelationImportRequest(BaseModel):
+    rows: list[RelationImportRow] = Field(min_length=1, max_length=5000)
+
+
+class RelationImportIssue(BaseModel):
+    row_number: int | None = None
+    code: str
+    message: str
+
+
+class RelationImportPreview(BaseModel):
+    total_count: int
+    create_count: int
+    error_count: int
+    issues: list[RelationImportIssue] = Field(default_factory=list)
+
+
 class TextBoxBase(BaseModel):
     text: str = "Text"
     shape_type: Literal["text", "rectangle", "ellipse"] = "text"
@@ -621,6 +676,11 @@ class GraphRead(BaseModel):
     validation: "ValidationReport"
 
 
+class RelationImportCommitResult(BaseModel):
+    created_count: int
+    graph: GraphRead
+
+
 class GraphUpdate(BaseModel):
     layers: list[LayerRead] | None = None
     layouts: list[LayoutRead] | None = None
@@ -646,6 +706,60 @@ class GraphRestore(BaseModel):
     relation_styles: list[RelationStyleRead] = Field(default_factory=list)
     relations: list[RelationRead] = Field(default_factory=list)
     text_boxes: list[TextBoxRead] = Field(default_factory=list)
+
+
+class SnapshotCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    description: str | None = Field(default=None, max_length=1000)
+
+
+class SnapshotSummary(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    align_tree_id: uuid.UUID
+    name: str
+    description: str | None = None
+    created_by_actor_id: uuid.UUID | None = None
+    created_by_label: str
+    project_revision: int
+    summary: dict[str, int] = Field(default_factory=dict)
+    created_at: datetime
+
+
+class SnapshotDetail(SnapshotSummary):
+    graph: GraphRestore
+    tree: dict[str, Any] = Field(default_factory=dict)
+
+
+class SnapshotDiffItem(BaseModel):
+    id: str
+    label: str
+
+
+class SnapshotDiffSection(BaseModel):
+    added: int = 0
+    removed: int = 0
+    modified: int = 0
+    added_items: list[SnapshotDiffItem] = Field(default_factory=list)
+    removed_items: list[SnapshotDiffItem] = Field(default_factory=list)
+    modified_items: list[SnapshotDiffItem] = Field(default_factory=list)
+
+
+class SnapshotVersionLabel(BaseModel):
+    id: uuid.UUID | None = None
+    name: str
+    created_at: datetime | None = None
+
+
+class SnapshotDiff(BaseModel):
+    base: SnapshotVersionLabel
+    target: SnapshotVersionLabel
+    layers: SnapshotDiffSection
+    relations: SnapshotDiffSection
+    text_boxes: SnapshotDiffSection
+    tree_fields: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    has_changes: bool = False
 
 
 class ProjectBundleMetadata(BaseModel):

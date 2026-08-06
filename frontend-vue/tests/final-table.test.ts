@@ -113,6 +113,9 @@ describe("final table", () => {
       {},
       { "relation-1": { "layer-38": "CUSTOM", "layer-39": "" } },
     );
+    expect(matrix[0].slice(11, 13)).toEqual(["LAYER", ""]);
+    expect(matrix[1].slice(11, 13)).toEqual(["STEP", ""]);
+    expect(matrix[2].slice(11, 13)).toEqual(["GDS", ""]);
     expect(matrix[3].slice(-2)).toEqual(["38.0", "39.0"]);
     expect(matrix[4].slice(-2)).toEqual(["CUSTOM", ""]);
     expect(matrix[5].slice(-2)).toEqual(["O", "X"]);

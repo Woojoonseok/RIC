@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, Uuid, func
@@ -553,6 +553,27 @@ class TextBox(Base, TimestampMixin):
     locked: Mapped[bool] = mapped_column(Boolean, default=False)
 
     project: Mapped[Project] = relationship(back_populates="text_boxes")
+
+
+class GraphSnapshot(Base):
+    __tablename__ = "graph_snapshots"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    align_tree_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("align_trees.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_actor_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("actors.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    created_by_label: Mapped[str] = mapped_column(String(120), nullable=False)
+    project_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    graph_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    tree_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    summary_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), server_default=func.now(), index=True
+    )
 
 
 class ChangeHistory(Base, TimestampMixin):
