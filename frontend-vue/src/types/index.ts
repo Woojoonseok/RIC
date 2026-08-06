@@ -50,6 +50,7 @@ export interface EditLease {
   expires_at: string;
   revision?: number;
 }
+export type WorkflowStatus = "draft" | "in_review" | "approved" | "published";
 export interface AlignTree {
   id: string;
   project_id: string;
@@ -68,6 +69,19 @@ export interface AlignTree {
   lock_expires_at?: string | null;
   is_default?: boolean;
   created_by_actor_id?: string | null;
+  workflow_status?: WorkflowStatus;
+  workflow_note?: string | null;
+  review_requested_by_actor_id?: string | null;
+  review_requested_by_label?: string | null;
+  review_requested_at?: string | null;
+  reviewed_by_actor_id?: string | null;
+  reviewed_by_label?: string | null;
+  reviewed_at?: string | null;
+  approved_snapshot_id?: string | null;
+  published_snapshot_id?: string | null;
+  published_by_actor_id?: string | null;
+  published_by_label?: string | null;
+  published_at?: string | null;
 }
 export interface AlignTreeCreate {
   name: string;

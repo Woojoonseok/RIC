@@ -152,9 +152,26 @@ class AlignTreeRead(OrmModel):
     final_table_cells: FinalTableCellMap = Field(default_factory=dict)
     revision: int
     is_default: bool
+    workflow_status: Literal["draft", "in_review", "approved", "published"] = "draft"
+    workflow_note: str | None = None
+    review_requested_by_actor_id: uuid.UUID | None = None
+    review_requested_by_label: str | None = None
+    review_requested_at: datetime | None = None
+    reviewed_by_actor_id: uuid.UUID | None = None
+    reviewed_by_label: str | None = None
+    reviewed_at: datetime | None = None
+    approved_snapshot_id: uuid.UUID | None = None
+    published_snapshot_id: uuid.UUID | None = None
+    published_by_actor_id: uuid.UUID | None = None
+    published_by_label: str | None = None
+    published_at: datetime | None = None
     created_by_actor_id: uuid.UUID | None
     created_at: datetime
     updated_at: datetime
+
+
+class WorkflowTransitionRequest(BaseModel):
+    note: str = Field(min_length=1, max_length=1000)
 
 
 class ActorRead(OrmModel):

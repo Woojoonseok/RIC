@@ -29,6 +29,7 @@ from app.routers import (
     snapshots,
     users,
     validation,
+    workflow,
 )
 from app.services.dev_migrations import run_local_dev_migrations
 from app.services.identity import _encode_actor_cookie, client_ip, hmac_subject
@@ -63,6 +64,7 @@ def client() -> Generator[TestClient, None, None]:
         layer_master_imports.router,
         relation_imports.router,
         snapshots.router,
+        workflow.router,
     ):
         app.include_router(router)
 
@@ -375,6 +377,65 @@ def test_graph_snapshots_compare_preview_restore_and_delete(client: TestClient) 
     deleted = client.delete(f"{snapshots_url}/{second_snapshot['id']}")
     assert deleted.status_code == 204, deleted.text
     assert [row["name"] for row in client.get(snapshots_url).json()] == ["Before change"]
+
+
+def test_align_tree_review_approval_publish_and_reopen_workflow(client: TestClient) -> None:
+    project_id = create_project(client)
+    tree_id = default_tree_id(client, project_id)
+    layer_id = create_layer(client, project_id, "A", tree_id=tree_id)
+    workflow_url = f"/api/projects/{project_id}/align-trees/{tree_id}/workflow"
+
+    requested = client.post(f"{workflow_url}/request-review", json={"note": "Ready for review"})
+    assert requested.status_code == 200, requested.text
+    assert requested.json()["workflow_status"] == "in_review"
+    assert requested.json()["review_requested_by_label"]
+
+    blocked = client.put(
+        f"{graph_base(client, project_id, tree_id)}/layers/{layer_id}",
+        json={"name": "Blocked edit"},
+    )
+    assert blocked.status_code == 409, blocked.text
+    assert blocked.json()["detail"]["workflow_status"] == "in_review"
+
+    rejected = client.post(f"{workflow_url}/reject", json={"note": "Update the layer name"})
+    assert rejected.status_code == 200, rejected.text
+    assert rejected.json()["workflow_status"] == "draft"
+    assert rejected.json()["reviewed_by_label"]
+
+    edited = client.put(
+        f"{graph_base(client, project_id, tree_id)}/layers/{layer_id}",
+        json={"name": "Reviewed layer"},
+    )
+    assert edited.status_code == 200, edited.text
+
+    assert client.post(f"{workflow_url}/request-review", json={"note": "Second review"}).status_code == 200
+    approved = client.post(f"{workflow_url}/approve", json={"note": "Approved for release"})
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["workflow_status"] == "approved"
+    approved_snapshot_id = approved.json()["approved_snapshot_id"]
+    assert approved_snapshot_id
+
+    snapshots_url = f"/api/projects/{project_id}/align-trees/{tree_id}/snapshots"
+    snapshots = client.get(snapshots_url).json()
+    assert [row["id"] for row in snapshots] == [approved_snapshot_id]
+    assert snapshots[0]["name"].startswith("Approved ")
+
+    published = client.post(f"{workflow_url}/publish", json={"note": "Production release"})
+    assert published.status_code == 200, published.text
+    assert published.json()["workflow_status"] == "published"
+    assert published.json()["published_snapshot_id"] == approved_snapshot_id
+    assert published.json()["published_by_label"]
+
+    reopened = client.post(f"{workflow_url}/reopen", json={"note": "Start the next revision"})
+    assert reopened.status_code == 200, reopened.text
+    assert reopened.json()["workflow_status"] == "draft"
+    assert reopened.json()["published_snapshot_id"] == approved_snapshot_id
+
+    editable_again = client.put(
+        f"{graph_base(client, project_id, tree_id)}/layers/{layer_id}",
+        json={"name": "Next revision"},
+    )
+    assert editable_again.status_code == 200, editable_again.text
 
 
 def test_pending_group_merge_and_split(client: TestClient) -> None:

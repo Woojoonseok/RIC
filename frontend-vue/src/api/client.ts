@@ -140,6 +140,11 @@ export const api = {
   getAlignTree: (projectId: string, treeId: string) => request<AlignTree>(`/projects/${projectId}/align-trees/${treeId}`),
   updateAlignTree: (projectId: string, treeId: string, body: Partial<AlignTreeCreate>) => request<AlignTree>(`/projects/${projectId}/align-trees/${treeId}`, json("PATCH", body)),
   deleteAlignTree: (projectId: string, treeId: string) => request<void>(`/projects/${projectId}/align-trees/${treeId}`, json("DELETE")),
+  requestWorkflowReview: (treeId: string, note: string) => request<AlignTree>(`${treeRoot(treeId)}/workflow/request-review`, json("POST", { note })),
+  rejectWorkflowReview: (treeId: string, note: string) => request<AlignTree>(`${treeRoot(treeId)}/workflow/reject`, json("POST", { note })),
+  approveWorkflowReview: (treeId: string, note: string) => request<AlignTree>(`${treeRoot(treeId)}/workflow/approve`, json("POST", { note })),
+  publishWorkflow: (treeId: string, note: string) => request<AlignTree>(`${treeRoot(treeId)}/workflow/publish`, json("POST", { note })),
+  reopenWorkflowDraft: (treeId: string, note: string) => request<AlignTree>(`${treeRoot(treeId)}/workflow/reopen`, json("POST", { note })),
 
   acquireLease: (projectId: string, clientInstanceId: string, force = false) => request<EditLease>(`/projects/${projectId}/lease`, json("POST", { client_instance_id: clientInstanceId, force })),
   heartbeatLease: (projectId: string, clientInstanceId: string, leaseToken: string) => request<EditLease>(`/projects/${projectId}/lease`, { ...json("PUT", { client_instance_id: clientInstanceId }), headers: { "X-Edit-Lease": leaseToken } }),

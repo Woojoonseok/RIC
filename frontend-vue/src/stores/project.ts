@@ -63,13 +63,18 @@ export const useProjectStore = defineStore("project", () => {
   const hasMembership = computed(() => currentRole.value !== null);
   const canAdminProject = computed(() => currentRole.value === "owner" || currentRole.value === "admin");
   const canEditProject = computed(() => currentRole.value === "owner" || currentRole.value === "admin" || currentRole.value === "editor");
+  const workflowStatus = computed(() => currentTree.value?.workflow_status ?? "draft");
+  const workflowLocked = computed(() => Boolean(currentTree.value) && workflowStatus.value !== "draft");
   const currentRevision = computed(() => currentProject.value?.revision ?? lease.value?.revision ?? currentTree.value?.revision ?? null);
-  const canEdit = computed(() => canEditProject.value && leaseState.value === "held" && Boolean(lease.value?.lease_token));
+  const canEdit = computed(() => canEditProject.value && !workflowLocked.value && leaseState.value === "held" && Boolean(lease.value?.lease_token));
   const readOnly = computed(() => Boolean(currentProjectId.value) && !canEdit.value);
   const accessRequestStatus = computed<AccessRequestStatus | null>(() => currentProject.value?.access_request_status ?? null);
   const readOnlyReason = computed(() => {
     if (!hasMembership.value) return accessRequestStatus.value === "pending" ? "프로젝트 사용 신청이 승인 대기 중입니다." : "프로젝트 멤버만 내부 데이터를 볼 수 있습니다.";
     if (currentRole.value === "viewer") return "보기 권한으로 열었습니다.";
+    if (workflowStatus.value === "in_review") return "검토 요청된 Editor는 승인 또는 반려 전까지 편집할 수 없습니다.";
+    if (workflowStatus.value === "approved") return "승인된 Editor입니다. 수정하려면 새 Draft를 시작하세요.";
+    if (workflowStatus.value === "published") return "공식 배포된 Editor입니다. 수정하려면 새 Draft를 시작하세요.";
     if (leaseState.value === "locked") {
       const holder = currentProject.value?.lock_holder_display_name;
       return holder ? `${holder}님이 이 프로젝트를 편집 중이라 보기 전용으로 열었습니다.` : "다른 사용자가 이 프로젝트를 편집 중이라 보기 전용으로 열었습니다.";
@@ -531,7 +536,7 @@ export const useProjectStore = defineStore("project", () => {
   return {
     session, publicProjects, projects, currentProjectId, currentProject, alignTrees, currentTreeId, currentTree, projectId,
     members, accessRequests, userCandidates, auditEvents, loadingProject, bootstrapped, lease, leaseState, clientInstanceId, autosaveState, autosaveLabel, lastSavedAt,
-    currentRole, currentRevision, hasMembership, canAdminProject, canEditProject, canEdit, readOnly, readOnlyReason, accessRequestStatus,
+    currentRole, currentRevision, hasMembership, canAdminProject, canEditProject, workflowStatus, workflowLocked, canEdit, readOnly, readOnlyReason, accessRequestStatus,
     bootstrap, updateDisplayName, loadPublicProjects, loadProjects, createProject, branchProject, loadProject, selectProject, clearProjectSelection, updateProject, deleteProject,
     requestAccess, claimLegacyProject, loadAuditEvents, loadMembersAndRequests, reviewAccessRequest, searchUsers, addMember, updateMemberRole, removeMember,
     loadAlignTrees, createAlignTree, updateAlignTree, deleteAlignTree, ensureEditLease, acquireEdit, activateTree, activateProject, releaseLease,

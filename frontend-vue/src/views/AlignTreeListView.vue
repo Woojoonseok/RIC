@@ -13,6 +13,7 @@ const branchOpen = ref(false);
 const branchName = ref("");
 const branchDescription = ref("");
 const editor = computed(() => project.alignTrees[0] ?? null);
+const workflowLabels = { draft: "Draft", in_review: "검토 중", approved: "승인 완료", published: "공식 배포" } as const;
 const editorCards = computed(() => {
   const current = editor.value;
   if (!current) return [];
@@ -29,6 +30,7 @@ const editorCards = computed(() => {
       revision: current.revision ?? project.currentRevision ?? 0,
       to: { name: "tree-editor", params: { projectId, treeId: current.id } },
       action: action("Overlay Key"),
+      workflowStatus: current.workflow_status ?? "draft",
     },
     {
       id: "align",
@@ -40,6 +42,7 @@ const editorCards = computed(() => {
       revision: current.revision ?? project.currentRevision ?? 0,
       to: { name: "align-key-editor", params: { projectId } },
       action: action("Align Key"),
+      workflowStatus: null,
     },
   ] as const;
 });
@@ -95,7 +98,8 @@ onMounted(() => project.loadAlignTrees());
       <article v-for="card in editorCards" :key="card.id" class="panel tree-card editor-choice-card" :class="card.id">
         <div class="tree-card-top">
           <span class="tree-symbol"><component :is="card.icon" :size="22" :stroke-width="1.8"/></span>
-          <span class="access-badge owner">공통 기준정보</span>
+          <span v-if="card.workflowStatus" class="workflow-list-badge" :class="`is-${card.workflowStatus}`">{{ workflowLabels[card.workflowStatus] }}</span>
+          <span v-else class="access-badge owner">공통 기준정보</span>
         </div>
         <div>
           <h2>{{ card.title }}</h2>

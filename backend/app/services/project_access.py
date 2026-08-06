@@ -187,6 +187,25 @@ def require_project_admin_mutation(
     return context
 
 
+def require_draft_align_tree(
+    db: Session,
+    project_id: uuid.UUID,
+    align_tree_id: uuid.UUID,
+) -> models.AlignTree:
+    tree = db.get(models.AlignTree, align_tree_id)
+    if tree is None or tree.project_id != project_id or tree.deleted_at is not None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Align Tree not found")
+    if tree.workflow_status != "draft":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "Only a Draft Align Tree can be edited",
+                "workflow_status": tree.workflow_status,
+            },
+        )
+    return tree
+
+
 def project_request_guard(
     request: Request,
     response: Response,
@@ -200,6 +219,9 @@ def project_request_guard(
     if request.method.upper() not in {"GET", "HEAD", "OPTIONS"}:
         if ROLE_RANK[context.role] < ROLE_RANK["editor"]:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Project is read-only")
+        raw_tree_id = request.path_params.get("align_tree_id")
+        if raw_tree_id is not None:
+            require_draft_align_tree(db, project_id, uuid.UUID(str(raw_tree_id)))
         _require_live_lease(db, context, x_edit_lease)
         expected_revision = _parse_if_match(if_match)
         _advance_revision(db, context, expected_revision)

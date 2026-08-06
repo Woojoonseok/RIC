@@ -60,7 +60,7 @@ onBeforeRouteLeave(async (to) => {
 
 <template>
   <section class="project-workspace-shell" :class="{ 'is-read-only': project.readOnly, 'has-read-only-banner': project.readOnly }">
-    <div v-if="project.readOnly" class="read-only-banner"><span><b>보기 전용</b>{{ project.readOnlyReason }}</span><div><button v-if="project.canEditProject" @click="retryEditing(false)">편집 다시 시도</button><button v-if="project.currentRole === 'owner' && project.leaseState === 'locked'" class="danger" @click="retryEditing(true)">편집 가져오기</button></div></div>
+    <div v-if="project.readOnly" class="read-only-banner"><span><b>{{ project.workflowLocked ? 'Workflow 잠금' : '보기 전용' }}</b>{{ project.readOnlyReason }}</span><div><button v-if="project.canEditProject && !project.workflowLocked" @click="retryEditing(false)">편집 다시 시도</button><button v-if="project.currentRole === 'owner' && project.leaseState === 'locked' && !project.workflowLocked" class="danger" @click="retryEditing(true)">편집 가져오기</button></div></div>
     <div v-if="loading" class="empty-page">Align Tree를 불러오는 중입니다…</div>
     <div v-else-if="error" class="empty-page"><div><strong>Align Tree를 열 수 없습니다.</strong><p>{{ error }}</p></div></div>
     <RouterView v-else/>

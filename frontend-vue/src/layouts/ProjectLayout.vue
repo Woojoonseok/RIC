@@ -180,7 +180,7 @@ onBeforeRouteLeave(async (to) => {
             <span class="tree-status-dot" :class="{ readonly: project.readOnly }"/>
             <div>
               <strong>Overlay Key Editor</strong>
-              <small>{{ project.currentTree?.name || "Main" }} · {{ project.readOnly ? "보기 전용" : project.autosaveLabel }}</small>
+              <small>{{ project.currentTree?.name || "Main" }} · {{ project.workflowLocked ? project.workflowStatus : project.readOnly ? "보기 전용" : project.autosaveLabel }}</small>
             </div>
           </div>
           <RouterLink
