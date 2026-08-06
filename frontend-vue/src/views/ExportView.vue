@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
-import { ArrowDownAZ, ArrowUpAZ, Download, Filter, Search, X as CloseIcon } from "@lucide/vue";
+import { computed, nextTick, onMounted, ref } from "vue";
+import { ArrowDownAZ, ArrowUpAZ, Download, Filter, PanelLeft, PanelRight, Search, X as CloseIcon } from "@lucide/vue";
 import * as XLSX from "xlsx-js-style";
 import { api } from "../api/client";
 import { buildFinalTable } from "../domain/finalTable";
@@ -30,21 +30,30 @@ const filterDraft = ref<string[]>([]);
 const columnFilters = ref<Record<string, string[]>>({});
 const sortState = ref<{ key: string; direction: "asc" | "desc" } | null>(null);
 const filterMenuPosition = ref({ top: 0, left: 0 });
-const fixedColumns = [
+const tableView = ref<"left" | "right">("left");
+const tableScroll = ref<HTMLElement | null>(null);
+const commonColumns = [
   { key: "keyName", label: "Key 이름" },
+  { key: "inner", label: "Inner(아들자)" },
+  { key: "outer", label: "Outer(어미자)" },
+] as const;
+const leftDetailColumns = [
   { key: "keyLayoutType", label: "기능별 Key" },
   { key: "keyDrawingType", label: "Key Type" },
   { key: "key_priority", label: "No." },
-  { key: "inner", label: "Inner(아들자)" },
-  { key: "outer", label: "Outer(어미자)" },
   { key: "final_type", label: "Type" },
   { key: "key_purpose", label: "key목적" },
   { key: "placement", label: "Placement" },
   { key: "stack_type", label: "Stack종류" },
   { key: "inregi", label: "INREGI여부" },
+] as const;
+const rightDetailColumns = [
   { key: "inner_size", label: "Inner Size" },
   { key: "outer_size", label: "Outer Size" },
 ] as const;
+const visibleFixedColumns = computed(() => tableView.value === "left"
+  ? [commonColumns[0], ...leftDetailColumns.slice(0, 3), commonColumns[1], commonColumns[2], ...leftDetailColumns.slice(3)]
+  : [...commonColumns, ...rightDetailColumns]);
 const finalTable = computed(() => (
   graph.rawGraph
     ? buildFinalTable(
@@ -162,6 +171,14 @@ function filterLabel(value: string) { return value || "(빈 셀)" }
 function isColumnActive(key: string) {
   return Object.prototype.hasOwnProperty.call(columnFilters.value, key) || sortState.value?.key === key;
 }
+function setTableView(view: "left" | "right") {
+  if (tableView.value === view) return;
+  tableView.value = view;
+  columnFilters.value = {};
+  sortState.value = null;
+  closeFilter();
+  void nextTick(() => tableScroll.value?.scrollTo({ left: 0, top: 0 }));
+}
 
 function value(event: Event) {
   return (event.target as HTMLInputElement).value;
@@ -219,6 +236,7 @@ function exportFinalExcel() {
   const table = document.querySelector<HTMLTableElement>(".final-table");
   if (!table) return;
   const merges: XLSX.Range[] = [];
+  const headerRowIndex = tableView.value === "right" ? 3 : 0;
   const matrix = Array.from(table.rows).map((row, rowIndex) => {
     const values: string[] = [];
     let columnIndex = 0;
@@ -252,12 +270,12 @@ function exportFinalExcel() {
       const address = XLSX.utils.encode_cell({ r: rowIndex, c: columnIndex });
       const cell = sheet[address];
       if (!cell) continue;
-      const isMetaSpacer = rowIndex < 3 && columnIndex < 12;
-      const isMetaCell = rowIndex < 3 && columnIndex >= 12;
-      const isHeader = rowIndex === 3;
-      const isGeneratedKey = rowIndex > 3 && columnIndex === 0;
-      const isNumberCell = rowIndex > 3 && (columnIndex === 4 || columnIndex === 5);
-      const isMarkerCell = rowIndex > 3 && columnIndex >= 13;
+      const isMetaSpacer = cell.classList.contains("final-table-meta-spacer");
+      const isMetaCell = rowIndex < headerRowIndex && !isMetaSpacer;
+      const isHeader = rowIndex === headerRowIndex;
+      const isGeneratedKey = cell.classList.contains("generated-key");
+      const isNumberCell = cell.classList.contains("number-cell");
+      const isMarkerCell = cell.classList.contains("marker-cell");
       const marker = String(cell.v ?? "").trim().toUpperCase();
       cell.s = {
         font: {
@@ -292,14 +310,13 @@ function exportFinalExcel() {
     }
   }
   sheet["!merges"] = merges;
-  sheet["!rows"] = matrix.map((_row, index) => ({ hpt: index === 3 ? 28 : 25 }));
-  sheet["!cols"] = [
-    { wch: 18 }, { wch: 20 }, { wch: 18 }, { wch: 10 }, { wch: 16 }, { wch: 16 },
-    { wch: 16 }, { wch: 18 }, { wch: 18 }, { wch: 16 }, { wch: 16 }, { wch: 14 },
-    { wch: 14 }, ...finalTable.value.layers.map(() => ({ wch: 10 })),
-  ];
-  if (matrix.length >= 4 && matrix[3]?.length) {
-    sheet["!autofilter"] = { ref: `A4:${XLSX.utils.encode_col(matrix[3].length - 1)}${matrix.length}` };
+  sheet["!rows"] = matrix.map((_row, index) => ({ hpt: index === headerRowIndex ? 28 : 25 }));
+  sheet["!cols"] = tableView.value === "left"
+    ? [{ wch: 18 }, { wch: 20 }, { wch: 18 }, { wch: 10 }, { wch: 16 }, { wch: 16 }, ...Array.from({ length: 5 }, () => ({ wch: 16 }))]
+    : [{ wch: 18 }, { wch: 16 }, { wch: 16 }, { wch: 14 }, { wch: 14 }, ...finalTable.value.layers.map(() => ({ wch: 10 }))];
+  if (matrix.length > headerRowIndex && matrix[headerRowIndex]?.length) {
+    const headerNumber = headerRowIndex + 1;
+    sheet["!autofilter"] = { ref: `A${headerNumber}:${XLSX.utils.encode_col(matrix[headerRowIndex].length - 1)}${matrix.length}` };
   }
   XLSX.utils.book_append_sheet(workbook, sheet, "Overlay_Key_Table");
   XLSX.writeFile(workbook, `${graph.rawGraph.project.name}_Overlay_Key_Table.xlsx`);
@@ -320,17 +337,21 @@ onMounted(async () => {
         <p>Overlay Key Editor의 Relation과 Layer 정보를 표로 정리합니다.</p>
       </div>
       <div v-if="graph.displayGraph" class="final-export-actions">
+        <div class="final-table-view-switch" role="group" aria-label="Overlay Key Table 보기">
+          <button type="button" :class="{ active: tableView === 'left' }" title="왼쪽 컬럼 보기" @click="setTableView('left')"><PanelLeft :size="15"/><span>왼쪽</span></button>
+          <button type="button" :class="{ active: tableView === 'right' }" title="오른쪽 컬럼 보기" @click="setTableView('right')"><PanelRight :size="15"/><span>오른쪽</span></button>
+        </div>
         <button class="primary final-export-primary" @click="exportFinalExcel"><Download :size="16"/>Overlay Key Excel</button>
       </div>
     </div>
 
     <div v-if="graph.rawGraph?.align_tree && finalTable && referenceReady" class="final-table-shell">
-      <div class="final-table-scroll">
-        <table class="final-table">
+      <div ref="tableScroll" class="final-table-scroll">
+        <table class="final-table" :class="{ 'right-view': tableView === 'right' }">
           <thead>
-            <tr class="final-table-meta">
-              <td colspan="12" class="final-table-meta-spacer"/>
-              <th>LAYER</th>
+            <tr v-if="tableView === 'right'" class="final-table-meta">
+              <td colspan="3" class="final-table-meta-spacer"/>
+              <th colspan="2" class="final-table-meta-group">LAYER</th>
               <td v-if="!finalTable.layers.length" class="missing-value">Layer 번호 없음</td>
               <td v-for="layer in finalTable.layers" :key="`process-${layer.layerId}`" class="final-table-meta-value">
                 <input
@@ -341,17 +362,17 @@ onMounted(async () => {
                 >
               </td>
             </tr>
-            <tr class="final-table-meta">
-              <td colspan="12" class="final-table-meta-spacer"/>
-              <th>STEP</th>
+            <tr v-if="tableView === 'right'" class="final-table-meta">
+              <td colspan="3" class="final-table-meta-spacer"/>
+              <th colspan="2" class="final-table-meta-group">STEP</th>
               <th v-if="!finalTable.layers.length" class="missing-value">Layer 번호 없음</th>
               <th v-for="layer in finalTable.layers" :key="`step-${layer.layerId}`">
                 {{ layer.number || "미지정" }}
               </th>
             </tr>
-            <tr class="final-table-meta">
-              <td colspan="12" class="final-table-meta-spacer"/>
-              <th>GDS</th>
+            <tr v-if="tableView === 'right'" class="final-table-meta">
+              <td colspan="3" class="final-table-meta-spacer"/>
+              <th colspan="2" class="final-table-meta-group">GDS</th>
               <td v-if="!finalTable.layers.length" class="missing-value">Layer 번호 없음</td>
               <td v-for="layer in finalTable.layers" :key="`gds-${layer.layerId}`" class="final-table-meta-value">
                 <input
@@ -363,7 +384,7 @@ onMounted(async () => {
               </td>
             </tr>
             <tr class="final-table-main">
-              <th v-for="column in fixedColumns" :key="column.key">
+              <th v-for="column in visibleFixedColumns" :key="column.key" :class="{ 'final-table-size-group-start': column.key === 'inner_size' }">
                 <span>{{ column.label }}</span>
                 <button
                   type="button"
@@ -378,7 +399,7 @@ onMounted(async () => {
                   <Filter v-else :size="13"/>
                 </button>
               </th>
-              <th v-for="layer in finalTable.layers" :key="`header-${layer.layerId}`">
+              <th v-for="layer in tableView === 'right' ? finalTable.layers : []" :key="`header-${layer.layerId}`">
                 <span>{{ layer.number || "미지정" }}</span>
                 <button
                   type="button"
@@ -398,20 +419,26 @@ onMounted(async () => {
           <tbody>
             <tr v-for="row in displayedRows" :key="row.relation.id">
               <th class="generated-key">{{ row.keyName || "Layer 번호 필요" }}</th>
-              <td>{{ row.keyLayoutType || "-" }}</td>
-              <td>{{ row.keyDrawingType || "-" }}</td>
-              <td><input :value="row.relation.key_priority || ''" :disabled="!project.canEdit" @change="saveRelationField(row.relation.id, 'key_priority', value($event))"></td>
+              <template v-if="tableView === 'left'">
+                <td>{{ row.keyLayoutType || "-" }}</td>
+                <td>{{ row.keyDrawingType || "-" }}</td>
+                <td><input :value="row.relation.key_priority || ''" :disabled="!project.canEdit" @change="saveRelationField(row.relation.id, 'key_priority', value($event))"></td>
+              </template>
               <td class="number-cell">{{ row.inner || "-" }}</td>
               <td class="number-cell">{{ row.outer || "-" }}</td>
-              <td><input :value="row.relation.final_type || ''" :disabled="!project.canEdit" @change="saveRelationField(row.relation.id, 'final_type', value($event))"></td>
-              <td><input :value="row.relation.key_purpose || ''" :disabled="!project.canEdit" @change="saveRelationField(row.relation.id, 'key_purpose', value($event))"></td>
-              <td><input :value="row.relation.placement || ''" :disabled="!project.canEdit" @change="saveRelationField(row.relation.id, 'placement', value($event))"></td>
-              <td><input :value="row.relation.stack_type || ''" :disabled="!project.canEdit" @change="saveRelationField(row.relation.id, 'stack_type', value($event))"></td>
-              <td><input :value="row.relation.inregi || ''" :disabled="!project.canEdit" @change="saveRelationField(row.relation.id, 'inregi', value($event))"></td>
-              <td><input :value="row.relation.inner_size || ''" :disabled="!project.canEdit" @change="saveRelationField(row.relation.id, 'inner_size', value($event))"></td>
-              <td><input :value="row.relation.outer_size || ''" :disabled="!project.canEdit" @change="saveRelationField(row.relation.id, 'outer_size', value($event))"></td>
+              <template v-if="tableView === 'left'">
+                <td><input :value="row.relation.final_type || ''" :disabled="!project.canEdit" @change="saveRelationField(row.relation.id, 'final_type', value($event))"></td>
+                <td><input :value="row.relation.key_purpose || ''" :disabled="!project.canEdit" @change="saveRelationField(row.relation.id, 'key_purpose', value($event))"></td>
+                <td><input :value="row.relation.placement || ''" :disabled="!project.canEdit" @change="saveRelationField(row.relation.id, 'placement', value($event))"></td>
+                <td><input :value="row.relation.stack_type || ''" :disabled="!project.canEdit" @change="saveRelationField(row.relation.id, 'stack_type', value($event))"></td>
+                <td><input :value="row.relation.inregi || ''" :disabled="!project.canEdit" @change="saveRelationField(row.relation.id, 'inregi', value($event))"></td>
+              </template>
+              <template v-else>
+                <td class="final-table-size-group-start"><input :value="row.relation.inner_size || ''" :disabled="!project.canEdit" @change="saveRelationField(row.relation.id, 'inner_size', value($event))"></td>
+                <td><input :value="row.relation.outer_size || ''" :disabled="!project.canEdit" @change="saveRelationField(row.relation.id, 'outer_size', value($event))"></td>
+              </template>
               <td
-                v-for="layer in finalTable.layers"
+                v-for="layer in tableView === 'right' ? finalTable.layers : []"
                 :key="`${row.relation.id}-${layer.layerId}`"
                 class="marker-cell"
                 :class="{
@@ -428,7 +455,7 @@ onMounted(async () => {
               </td>
             </tr>
             <tr v-if="!displayedRows.length">
-              <td :colspan="13 + Math.max(1, finalTable.layers.length)" class="final-table-empty">
+              <td :colspan="visibleFixedColumns.length + (tableView === 'right' ? Math.max(1, finalTable.layers.length) : 0)" class="final-table-empty">
                 {{ finalTable.rows.length ? "필터 조건에 맞는 Key가 없습니다." : "Relation 테이블에서 Relation을 생성하면 Key 행이 표시됩니다." }}
               </td>
             </tr>

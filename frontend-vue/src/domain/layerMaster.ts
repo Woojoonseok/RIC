@@ -3,6 +3,27 @@ import type { BoxPreset, KeyLayoutType, Layer, LayerMaster, LayerMasterCreate, L
 
 export type LayerMasterGridRow = Record<string, unknown>;
 
+export function layerMasterRowMatchesQuery(row: LayerMasterGridRow, columns: GridColumn[], query: string): boolean {
+  const needle = query.trim().toLocaleLowerCase("ko");
+  if (!needle) return true;
+  return columns.some((column) => String(row[column.key] ?? "").toLocaleLowerCase("ko").includes(needle));
+}
+
+export function filterLayerMasterRows(
+  rows: LayerMasterGridRow[],
+  columns: GridColumn[],
+  query: string,
+  filters: Record<string, string[]> = {},
+  excludedFilterKey?: string,
+): LayerMasterGridRow[] {
+  return rows.filter((row) => (
+    layerMasterRowMatchesQuery(row, columns, query)
+    && Object.entries(filters).every(([key, selected]) => (
+      key === excludedFilterKey || selected.includes(String(row[key] ?? ""))
+    ))
+  ));
+}
+
 export function layerMasterMatchesQuery(master: Pick<LayerMaster, "name" | "layer_number">, query: string): boolean {
   const needle = query.trim().toLowerCase();
   return master.name.toLowerCase().includes(needle)

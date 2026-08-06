@@ -18,12 +18,15 @@ from app.main import configure_cors
 from app.routers import (
     align_trees,
     graph,
+    layer_master_imports,
     leases,
     project_governance,
     project_layer_master,
     project_reference,
     projects,
+    relation_imports,
     session,
+    snapshots,
     users,
     validation,
 )
@@ -57,6 +60,9 @@ def client() -> Generator[TestClient, None, None]:
         validation.router,
         project_reference.router,
         project_layer_master.router,
+        layer_master_imports.router,
+        relation_imports.router,
+        snapshots.router,
     ):
         app.include_router(router)
 
@@ -248,6 +254,127 @@ def test_project_graph_validation_restore_and_layout(client: TestClient) -> None
     restored = client.patch(f"{graph_base(client, project_id)}/restore", json=snapshot)
     assert restored.status_code == 200, restored.text
     assert next(row for row in restored.json()["layouts"] if row["layer_id"] == first)["x"] != 999
+
+
+def test_relation_import_preview_and_commit_are_atomic(client: TestClient) -> None:
+    project_id = create_project(client)
+    first = create_layer(client, project_id, "A")
+    second = create_layer(client, project_id, "B", 300)
+    third = create_layer(client, project_id, "C", 600)
+    base = f"{graph_base(client, project_id)}/relations/import"
+    valid_rows = {
+        "rows": [
+            {"row_number": 2, "relation": {"parent_layer_id": first, "child_layer_id": second}},
+            {"row_number": 3, "relation": {"parent_layer_id": second, "child_layer_id": third}},
+        ],
+    }
+
+    revision_before = client.get(f"/api/projects/{project_id}").json()["revision"]
+    preview = client.post(f"{base}/preview", json=valid_rows)
+    assert preview.status_code == 200, preview.text
+    assert preview.json() == {
+        "total_count": 2,
+        "create_count": 2,
+        "error_count": 0,
+        "issues": [],
+    }
+    assert client.get(graph_base(client, project_id)).json()["relations"] == []
+    assert client.get(f"/api/projects/{project_id}").json()["revision"] == revision_before
+
+    invalid_rows = {
+        "rows": [
+            valid_rows["rows"][0],
+            {
+                "row_number": 3,
+                "relation": {
+                    "parent_layer_id": second,
+                    "child_layer_id": str(uuid.uuid4()),
+                },
+            },
+        ],
+    }
+    rejected = client.post(f"{base}/commit", json=invalid_rows)
+    assert rejected.status_code == 422, rejected.text
+    assert client.get(graph_base(client, project_id)).json()["relations"] == []
+
+    committed = client.post(f"{base}/commit", json=valid_rows)
+    assert committed.status_code == 200, committed.text
+    assert committed.json()["created_count"] == 2
+    assert len(committed.json()["graph"]["relations"]) == 2
+
+
+def test_graph_snapshots_compare_preview_restore_and_delete(client: TestClient) -> None:
+    project_id = create_project(client)
+    tree_id = default_tree_id(client, project_id)
+    graph_url = graph_base(client, project_id, tree_id)
+    snapshots_url = f"/api/projects/{project_id}/align-trees/{tree_id}/snapshots"
+    first_layer = create_layer(client, project_id, "A", tree_id=tree_id)
+    second_layer = create_layer(client, project_id, "B", 300, tree_id=tree_id)
+    relation = client.post(
+        f"{graph_url}/relations",
+        json={"parent_layer_id": first_layer, "child_layer_id": second_layer},
+    )
+    assert relation.status_code == 201, relation.text
+
+    first = client.post(
+        snapshots_url,
+        json={"name": "Before change", "description": "Known-good graph"},
+    )
+    assert first.status_code == 201, first.text
+    first_snapshot = first.json()
+    assert first_snapshot["summary"] == {"layers": 2, "relations": 1, "text_boxes": 0}
+
+    renamed = client.put(f"{graph_url}/layers/{first_layer}", json={"name": "A changed"})
+    assert renamed.status_code == 200, renamed.text
+    third_layer = create_layer(client, project_id, "C", 600, tree_id=tree_id)
+    tree_update = client.patch(
+        f"/api/projects/{project_id}/align-trees/{tree_id}",
+        json={"process_name": "ETCH"},
+    )
+    assert tree_update.status_code == 200, tree_update.text
+    second = client.post(snapshots_url, json={"name": "After change"})
+    assert second.status_code == 201, second.text
+    second_snapshot = second.json()
+
+    listed = client.get(snapshots_url)
+    assert listed.status_code == 200, listed.text
+    assert [row["name"] for row in listed.json()] == ["After change", "Before change"]
+
+    compared = client.get(
+        f"{snapshots_url}/{first_snapshot['id']}/compare",
+        params={"target_snapshot_id": second_snapshot["id"]},
+    )
+    assert compared.status_code == 200, compared.text
+    comparison = compared.json()
+    assert comparison["layers"]["added"] == 1
+    assert comparison["layers"]["modified"] == 1
+    assert comparison["tree_fields"] == ["process_name"]
+    assert comparison["has_changes"] is True
+
+    preview = client.post(f"{snapshots_url}/{first_snapshot['id']}/restore/preview")
+    assert preview.status_code == 200, preview.text
+    impact = preview.json()
+    assert impact["base"]["name"] == "현재 상태"
+    assert impact["target"]["name"] == "Before change"
+    assert impact["layers"]["removed"] == 1
+    assert impact["layers"]["modified"] == 1
+    assert impact["tree_fields"] == ["process_name"]
+
+    restored = client.post(f"{snapshots_url}/{first_snapshot['id']}/restore")
+    assert restored.status_code == 200, restored.text
+    restored_graph = restored.json()
+    assert {row["name"] for row in restored_graph["layers"]} == {"A", "B"}
+    assert third_layer not in {row["id"] for row in restored_graph["layers"]}
+    restored_tree = client.get(f"/api/projects/{project_id}/align-trees/{tree_id}").json()
+    assert restored_tree["process_name"] is None
+
+    unchanged = client.get(f"{snapshots_url}/{first_snapshot['id']}/compare")
+    assert unchanged.status_code == 200, unchanged.text
+    assert unchanged.json()["has_changes"] is False
+
+    deleted = client.delete(f"{snapshots_url}/{second_snapshot['id']}")
+    assert deleted.status_code == 204, deleted.text
+    assert [row["name"] for row in client.get(snapshots_url).json()] == ["Before change"]
 
 
 def test_pending_group_merge_and_split(client: TestClient) -> None:
@@ -588,6 +715,62 @@ def test_reference_and_layer_master_priorities(client: TestClient) -> None:
     )
     assert reimported.status_code == 201, reimported.text
     assert reimported.json()["name"] == "M1 updated"
+
+
+def test_layer_master_import_preview_and_commit_are_atomic(client: TestClient) -> None:
+    project_id = create_project(client)
+    base = f"/api/projects/{project_id}/layer-master"
+    import_base = f"{base}/import"
+    layout = client.post(
+        f"/api/projects/{project_id}/reference/key-layout-types",
+        json={"name": "Scribe"},
+    ).json()
+    valid_rows = {
+        "rows": [
+            {
+                "row_number": 1,
+                "layer": {"name": "M1", "layer_number": "10", "priorities": {layout["id"]: "1"}},
+            },
+            {"row_number": 2, "layer": {"name": "M2", "layer_number": "20"}},
+        ],
+    }
+
+    revision_before = client.get(f"/api/projects/{project_id}").json()["revision"]
+    preview = client.post(f"{import_base}/preview", json=valid_rows)
+    assert preview.status_code == 200, preview.text
+    assert preview.json() == {
+        "total_count": 2,
+        "create_count": 2,
+        "error_count": 0,
+        "issues": [],
+    }
+    assert client.get(base).json() == []
+    assert client.get(f"/api/projects/{project_id}").json()["revision"] == revision_before
+
+    invalid_rows = {
+        "rows": [
+            valid_rows["rows"][0],
+            {"row_number": 2, "layer": {"name": "M1", "layer_number": "20"}},
+            {"row_number": 3, "layer": {"name": "M3", "layer_number": ""}},
+        ],
+    }
+    invalid_preview = client.post(f"{import_base}/preview", json=invalid_rows)
+    assert invalid_preview.status_code == 200, invalid_preview.text
+    assert invalid_preview.json()["create_count"] == 0
+    assert {(issue["row_number"], issue["code"]) for issue in invalid_preview.json()["issues"]} == {
+        (2, "duplicate_name"),
+        (3, "layer_number_required"),
+    }
+    rejected = client.post(f"{import_base}/commit", json=invalid_rows)
+    assert rejected.status_code == 422, rejected.text
+    assert client.get(base).json() == []
+
+    committed = client.post(f"{import_base}/commit", json=valid_rows)
+    assert committed.status_code == 200, committed.text
+    assert committed.json()["created_count"] == 2
+    assert [row["name"] for row in committed.json()["rows"]] == ["M1", "M2"]
+    assert committed.json()["rows"][0]["priorities"] == {layout["id"]: "1"}
+    assert {row["name"] for row in client.get(base).json()} == {"M1", "M2"}
 
 
 def test_relation_reference_fields_and_variable_extras(client: TestClient) -> None:

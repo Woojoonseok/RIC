@@ -198,6 +198,17 @@ export interface RelationUpdate {
   attached_relation_id?: string | null; waypoints?: Point[] | null;
 }
 
+export interface RelationImportRow { row_number: number; relation: RelationCreate }
+export interface RelationImportRequest { rows: RelationImportRow[] }
+export interface RelationImportIssue { row_number: number | null; code: string; message: string }
+export interface RelationImportPreview {
+  total_count: number;
+  create_count: number;
+  error_count: number;
+  issues: RelationImportIssue[];
+}
+export interface RelationImportCommitResult { created_count: number; graph: Graph }
+
 export interface RelationStyle { id: string; name: string; stroke_color: string; stroke_width: number; line_pattern: "solid" | "dashed" | "dotted" | "reference"; marker_type: "arrow" | "none"; sort_order: number }
 export type RelationStyleCreate = Omit<RelationStyle, "id">;
 export type RelationStyleUpdate = Partial<RelationStyleCreate>;
@@ -219,6 +230,40 @@ export interface Graph { project: Project; align_tree?: AlignTree; layers: Layer
 export interface GraphBatchUpdate { layer_presets?: LayerPresetBatchUpdate[]; layouts?: LayoutBatchUpdate[]; styles?: StyleBatchUpdate[]; text_boxes?: TextBoxBatchUpdate[] }
 export interface GraphUpdate { layers?: Layer[]; layouts?: Layout[]; styles?: ShapeStyle[]; box_presets?: BoxPreset[]; relation_styles?: RelationStyle[]; relations?: Relation[]; text_boxes?: TextBox[] }
 export interface GraphRestore { layers: Layer[]; layouts: Layout[]; styles: ShapeStyle[]; box_presets: BoxPreset[]; relation_styles: RelationStyle[]; relations: Relation[]; text_boxes: TextBox[] }
+export interface SnapshotCreate { name: string; description?: string | null }
+export interface SnapshotSummary {
+  id: string;
+  project_id: string;
+  align_tree_id: string;
+  name: string;
+  description?: string | null;
+  created_by_actor_id?: string | null;
+  created_by_label: string;
+  project_revision: number;
+  summary: { layers?: number; relations?: number; text_boxes?: number };
+  created_at: string;
+}
+export interface SnapshotDetail extends SnapshotSummary { graph: GraphRestore; tree: Record<string, unknown> }
+export interface SnapshotDiffItem { id: string; label: string }
+export interface SnapshotDiffSection {
+  added: number;
+  removed: number;
+  modified: number;
+  added_items: SnapshotDiffItem[];
+  removed_items: SnapshotDiffItem[];
+  modified_items: SnapshotDiffItem[];
+}
+export interface SnapshotVersionLabel { id?: string | null; name: string; created_at?: string | null }
+export interface SnapshotDiff {
+  base: SnapshotVersionLabel;
+  target: SnapshotVersionLabel;
+  layers: SnapshotDiffSection;
+  relations: SnapshotDiffSection;
+  text_boxes: SnapshotDiffSection;
+  tree_fields: string[];
+  warnings: string[];
+  has_changes: boolean;
+}
 export interface LayerMergeRequest { layer_ids: string[]; name?: string | null }
 export interface LayerSplitRequest { orientation?: "vertical" | "horizontal" }
 
@@ -235,6 +280,16 @@ export type KeyShapeUpdate = Partial<KeyShapeCreate>;
 export interface LayerMaster { id: string; name: string; layer_number: string | null; mask_main_fld: string | null; mask_sl_fld: string | null; pr_wf: string | null; dev_wf: string | null; pr_type: string | null; light_source: string | null; pr_open_close: string | null; group: string | null; validation_rule: string | null; comment: string | null; priorities: Record<string, string | null> }
 export type LayerMasterCreate = Omit<LayerMaster, "id" | "layer_number"> & { layer_number: string };
 export type LayerMasterUpdate = Partial<LayerMasterCreate>;
+export interface LayerMasterImportRow { row_number: number; layer: LayerMasterCreate }
+export interface LayerMasterImportRequest { rows: LayerMasterImportRow[] }
+export interface LayerMasterImportIssue { row_number: number | null; code: string; message: string }
+export interface LayerMasterImportPreview {
+  total_count: number;
+  create_count: number;
+  error_count: number;
+  issues: LayerMasterImportIssue[];
+}
+export interface LayerMasterImportCommitResult { created_count: number; rows: LayerMaster[] }
 
 export type ReferenceResource = "key-layout-types" | "key-drawing-types" | "key-shapes" | "relation-styles" | "box-presets";
 export interface ReferenceReadMap {

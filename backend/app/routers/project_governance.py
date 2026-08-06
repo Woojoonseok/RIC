@@ -285,7 +285,7 @@ def remove_member(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the owner can remove admins")
     target_label = member.actor.display_name
     member_id = member.id
-    purged_legacy_grants = (
+    (
         db.query(models.ProjectAccess)
         .filter(
             models.ProjectAccess.project_id == project_id,

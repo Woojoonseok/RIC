@@ -159,11 +159,11 @@ export function finalTableMatrix(
     "Inner Size",
     "Outer Size",
   ];
-  const blankPrefix = Array.from({ length: fixedHeaders.length - 1 }, () => "");
+  const blankPrefix = Array.from({ length: fixedHeaders.length - 2 }, () => "");
   return [
-    [...blankPrefix, "LAYER", ...table.layers.map((layer) => processNames[layer.layerId] ?? "")],
-    [...blankPrefix, "STEP", ...table.layers.map((layer) => layer.number)],
-    [...blankPrefix, "GDS", ...table.layers.map((layer) => gdsNames[layer.layerId] ?? "")],
+    [...blankPrefix, "LAYER", "", ...table.layers.map((layer) => processNames[layer.layerId] ?? "")],
+    [...blankPrefix, "STEP", "", ...table.layers.map((layer) => layer.number)],
+    [...blankPrefix, "GDS", "", ...table.layers.map((layer) => gdsNames[layer.layerId] ?? "")],
     [...fixedHeaders, ...table.layers.map((layer) => layer.number)],
     ...table.rows.map((row) => [
       row.keyName,

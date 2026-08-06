@@ -1,10 +1,12 @@
 import type {
   AlignTree, AlignTreeCreate, AnonymousSession, AuditEvent, BoxPreset, EditLease, Graph, GraphBatchUpdate,
   GraphRestore, KeyDrawingType, KeyLayoutType, KeyShape, Layer, LayerCreate, LayerMaster, LayerMasterCreate,
-  LayerMasterUpdate, LayerMergeRequest, LayerSplitRequest, LayerUpdate, Layout, LayoutUpdate, Project,
+  LayerMasterImportCommitResult, LayerMasterImportPreview, LayerMasterImportRequest, LayerMasterUpdate,
+  LayerMergeRequest, LayerSplitRequest, LayerUpdate, Layout, LayoutUpdate, Project,
   ProjectAccessRequest, ProjectCreate, ProjectMember, ProjectRole, ProjectUpdate, ReferenceCreateMap,
   ReferenceReadMap, ReferenceResource, ReferenceUpdateMap, Relation, RelationCreate, RelationStyle,
-  RelationUpdate, ShapeStyle, StyleUpdate, TextBox, TextBoxCreate, TextBoxUpdate, ValidationReport,
+  RelationImportCommitResult, RelationImportPreview, RelationImportRequest, RelationUpdate, ShapeStyle, StyleUpdate, TextBox, TextBoxCreate, TextBoxUpdate, ValidationReport,
+  SnapshotCreate, SnapshotDetail, SnapshotDiff, SnapshotSummary,
   UserSummary,
 } from "../types";
 
@@ -160,9 +162,18 @@ export const api = {
   createRelation: (treeId: string, body: RelationCreate) => request<Relation>(`${graphRoot(treeId)}/relations`, json("POST", body)),
   updateRelation: (treeId: string, id: string, body: RelationUpdate) => request<Relation>(`${graphRoot(treeId)}/relations/${id}`, json("PUT", body)),
   deleteRelation: (treeId: string, id: string) => request<void>(`${graphRoot(treeId)}/relations/${id}`, json("DELETE")),
+  previewRelationImport: (treeId: string, body: RelationImportRequest) => request<RelationImportPreview>(`${graphRoot(treeId)}/relations/import/preview`, json("POST", body)),
+  commitRelationImport: (treeId: string, body: RelationImportRequest) => request<RelationImportCommitResult>(`${graphRoot(treeId)}/relations/import/commit`, json("POST", body)),
   createText: (treeId: string, body: TextBoxCreate) => request<TextBox>(`${graphRoot(treeId)}/text-boxes`, json("POST", body)),
   updateText: (treeId: string, id: string, body: TextBoxUpdate) => request<TextBox>(`${graphRoot(treeId)}/text-boxes/${id}`, json("PUT", body)),
   deleteText: (treeId: string, id: string) => request<void>(`${graphRoot(treeId)}/text-boxes/${id}`, json("DELETE")),
+  listSnapshots: (treeId: string) => request<SnapshotSummary[]>(`${treeRoot(treeId)}/snapshots`),
+  createSnapshot: (treeId: string, body: SnapshotCreate) => request<SnapshotSummary>(`${treeRoot(treeId)}/snapshots`, json("POST", body)),
+  getSnapshot: (treeId: string, id: string) => request<SnapshotDetail>(`${treeRoot(treeId)}/snapshots/${id}`),
+  compareSnapshot: (treeId: string, id: string, targetId?: string) => request<SnapshotDiff>(`${treeRoot(treeId)}/snapshots/${id}/compare${targetId ? `?target_snapshot_id=${encodeURIComponent(targetId)}` : ""}`),
+  previewSnapshotRestore: (treeId: string, id: string) => request<SnapshotDiff>(`${treeRoot(treeId)}/snapshots/${id}/restore/preview`, json("POST")),
+  restoreSnapshot: (treeId: string, id: string) => request<Graph>(`${treeRoot(treeId)}/snapshots/${id}/restore`, json("POST")),
+  deleteSnapshot: (treeId: string, id: string) => request<void>(`${treeRoot(treeId)}/snapshots/${id}`, json("DELETE")),
 
   keyLayoutTypes: () => request<KeyLayoutType[]>(`${referenceRoot()}/key-layout-types`),
   keyDrawingTypes: () => request<KeyDrawingType[]>(`${referenceRoot()}/key-drawing-types`),
@@ -176,6 +187,8 @@ export const api = {
   createLayerMaster: (body: LayerMasterCreate) => request<LayerMaster>(layerMasterRoot(), json("POST", body)),
   updateLayerMaster: (id: string, body: LayerMasterUpdate) => request<LayerMaster>(`${layerMasterRoot()}/${id}`, json("PUT", body)),
   deleteLayerMaster: (id: string) => request<void>(`${layerMasterRoot()}/${id}`, json("DELETE")),
+  previewLayerMasterImport: (body: LayerMasterImportRequest) => request<LayerMasterImportPreview>(`${layerMasterRoot()}/import/preview`, json("POST", body)),
+  commitLayerMasterImport: (body: LayerMasterImportRequest) => request<LayerMasterImportCommitResult>(`${layerMasterRoot()}/import/commit`, json("POST", body)),
 };
 
 export const referenceApi = {

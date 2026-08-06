@@ -1,16 +1,17 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
-import { ChevronDown, ClipboardPaste, Download, Plus, Trash2 } from "@lucide/vue";
+import { computed, onMounted, ref, watch } from "vue";
+import { AlertTriangle, CheckCircle2, ChevronDown, ClipboardPaste, Download, FilterX, Plus, Search, Trash2, X } from "@lucide/vue";
+import * as XLSX from "xlsx-js-style";
 import SpreadsheetGrid from "../components/grid/SpreadsheetGrid.vue";
 import { api } from "../api/client";
-import { exportExcel } from "../domain/export";
 import { formatLayerNumber } from "../domain/finalTable";
+import { expandRelationCandidates } from "../domain/graph";
 import { parseTsv } from "../domain/tsv";
 import { useAppStore } from "../stores/app";
 import { useGraphStore } from "../stores/graph";
 import { useProjectStore } from "../stores/project";
 import { useReferenceStore } from "../stores/reference";
-import type { PortName, Relation, RelationCreate, RelationEndpointType, RelationUpdate } from "../types";
+import type { PortName, Relation, RelationCreate, RelationEndpointType, RelationImportIssue, RelationImportPreview, RelationImportRequest, RelationUpdate } from "../types";
 
 type Row = Record<string, unknown>;
 interface GridColumn {
@@ -41,6 +42,10 @@ interface ExtraDraft {
   layerMasterId: string;
   drawingTypeId: string;
 }
+interface PastePreview extends RelationImportPreview {
+  source_count: number;
+  request: RelationImportRequest;
+}
 
 const SPARE_ENDPOINT = "__spare__";
 
@@ -50,8 +55,15 @@ const project = useProjectStore();
 const reference = useReferenceStore();
 const pasteOpen = ref(false);
 const pasteText = ref("");
+const pasteBusy = ref(false);
+const pastePreview = ref<PastePreview | null>(null);
 const relationEditor = ref<RelationEditor | null>(null);
 const extraEditor = ref<{ relationId: string; rows: ExtraDraft[] } | null>(null);
+const columnFilters = ref<Record<string, string[]>>({});
+const activeFilterKey = ref<string | null>(null);
+const filterDraft = ref<string[]>([]);
+const filterSearch = ref("");
+const filterMenuPosition = ref({ top: 0, left: 0 });
 
 function drawingLabel(id: string | null | undefined) {
   const row = reference.keyDrawingTypes.find((item) => item.id === id);
@@ -111,6 +123,7 @@ const relationColumns = computed<GridColumn[]>(() => [
   { key: "priority_rule", label: "우선순위 Rule", width: 200 },
   { key: "extras_summary", label: "Extra", width: 120, action: true, readonly: true },
 ]);
+const relationPasteColumns = computed(() => relationColumns.value.filter((column) => column.key !== "extras_summary"));
 
 const selectedRelationIds = computed(() => app.selection
   .filter((item) => item.kind === "relation")
@@ -123,6 +136,105 @@ const relationRows = computed<Row[]>(() => {
     extras_summary: `${row.extras.length}개`,
   })) ?? [];
 });
+function relationRowsMatchingFilters(excludedKey?: string) {
+  return relationRows.value.filter((row) => Object.entries(columnFilters.value).every(([key, selected]) => (
+    key === excludedKey || selected.includes(String(row[key] ?? ""))
+  )));
+}
+const displayedRelationRows = computed(() => relationRowsMatchingFilters());
+
+function relationDownloadValue(row: Row, column: GridColumn) {
+  const value = String(row[column.key] ?? "");
+  return column.options?.find((option) => option.value === value)?.label || value;
+}
+function relationFileName(suffix: string) {
+  const projectName = project.currentProject?.name || "RIC";
+  return `${projectName}_${suffix}`.replace(/[\\/:*?"<>|]+/g, "_");
+}
+function downloadRelationWorkbook(columns: GridColumn[], rows: Row[], fileName: string) {
+  const matrix = [
+    columns.map((column) => column.label),
+    ...rows.map((row) => columns.map((column) => relationDownloadValue(row, column))),
+  ];
+  const sheet = XLSX.utils.aoa_to_sheet(matrix);
+  sheet["!cols"] = columns.map((column) => ({ wch: Math.max(14, Math.round((column.width ?? 140) / 8)) }));
+  sheet["!autofilter"] = { ref: `A1:${XLSX.utils.encode_col(columns.length - 1)}${Math.max(1, matrix.length)}` };
+  columns.forEach((_column, index) => {
+    const cell = sheet[XLSX.utils.encode_cell({ r: 0, c: index })];
+    if (cell) cell.s = {
+      fill: { fgColor: { rgb: "344054" } },
+      font: { bold: true, color: { rgb: "FFFFFF" } },
+      alignment: { horizontal: "center", vertical: "center" },
+    };
+  });
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, sheet, "Layer Relation");
+  XLSX.writeFile(workbook, fileName);
+}
+function downloadRelationTemplate() {
+  downloadRelationWorkbook(relationPasteColumns.value, [], "RIC_Layer_Relation_Template.xlsx");
+  app.status = "Layer Relation 템플릿을 다운로드했습니다.";
+}
+function downloadCurrentRelationTable() {
+  downloadRelationWorkbook(
+    relationColumns.value,
+    displayedRelationRows.value,
+    `${relationFileName("Layer_Relation")}.xlsx`,
+  );
+  app.status = `현재 Relation Table ${displayedRelationRows.value.length}개 행을 다운로드했습니다.`;
+}
+const activeFilterValues = computed(() => {
+  if (!activeFilterKey.value) return [];
+  return [...new Set(relationRowsMatchingFilters(activeFilterKey.value).map((row) => String(row[activeFilterKey.value!] ?? "")))]
+    .sort((left, right) => filterDisplayLabel(activeFilterKey.value!, left).localeCompare(
+      filterDisplayLabel(activeFilterKey.value!, right),
+      "ko",
+      { numeric: true, sensitivity: "base" },
+    ));
+});
+const searchedFilterValues = computed(() => {
+  const needle = filterSearch.value.trim().toLocaleLowerCase("ko");
+  return needle
+    ? activeFilterValues.value.filter((value) => filterDisplayLabel(activeFilterKey.value!, value).toLocaleLowerCase("ko").includes(needle))
+    : activeFilterValues.value;
+});
+const activeFilterLabel = computed(() => relationColumns.value.find((column) => column.key === activeFilterKey.value)?.label ?? "컬럼");
+
+function filterDisplayLabel(key: string, value: string) {
+  const column = relationColumns.value.find((item) => item.key === key);
+  return column?.options?.find((option) => option.value === value)?.label || value || "(빈 셀)";
+}
+function openColumnFilter(key: string, event: MouseEvent) {
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  activeFilterKey.value = key;
+  filterSearch.value = "";
+  filterDraft.value = columnFilters.value[key] ? [...columnFilters.value[key]] : [...activeFilterValues.value];
+  filterMenuPosition.value = {
+    top: Math.max(12, Math.min(rect.bottom + 6, window.innerHeight - 360)),
+    left: Math.max(12, Math.min(rect.right - 280, window.innerWidth - 292)),
+  };
+}
+function closeColumnFilter() { activeFilterKey.value = null }
+function toggleFilterValue(value: string) {
+  filterDraft.value = filterDraft.value.includes(value)
+    ? filterDraft.value.filter((item) => item !== value)
+    : [...filterDraft.value, value];
+}
+function applyColumnFilter() {
+  if (!activeFilterKey.value) return;
+  const key = activeFilterKey.value;
+  const allSelected = filterDraft.value.length === activeFilterValues.value.length
+    && activeFilterValues.value.every((value) => filterDraft.value.includes(value));
+  const { [key]: _removed, ...rest } = columnFilters.value;
+  columnFilters.value = allSelected ? rest : { ...rest, [key]: [...filterDraft.value] };
+  closeColumnFilter();
+}
+function clearColumnFilter() {
+  if (!activeFilterKey.value) return;
+  const { [activeFilterKey.value]: _removed, ...rest } = columnFilters.value;
+  columnFilters.value = rest;
+  closeColumnFilter();
+}
 
 function selectRelation(id: string, additive: boolean) {
   app.select({ kind: "relation", id }, additive);
@@ -310,11 +422,124 @@ function rowsFromMatrix(matrix: unknown[][]): Row[] {
     .filter((row) => row.some((cell) => String(cell ?? "").trim()))
     .map((row) => Object.fromEntries(keys.map((key, index) => [key, row[index] ?? ""])));
 }
-async function applyPaste() {
-  await commitRelations(rowsFromMatrix(parseTsv(pasteText.value)));
-  pasteOpen.value = false;
-  pasteText.value = "";
+
+function importReferenceId(
+  value: unknown,
+  rows: Array<{ id: string }>,
+  label: (row: { id: string }) => string,
+  fieldLabel: string,
+  rowNumber: number,
+  issues: RelationImportIssue[],
+) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  const id = idFromValue(raw, rows, label);
+  if (!id) issues.push({ row_number: rowNumber, code: "mapping_error", message: `${fieldLabel} '${raw}'을(를) 찾을 수 없습니다.` });
+  return id;
 }
+
+function relationImportRequest(sourceRows: Row[]) {
+  const issues: RelationImportIssue[] = [];
+  const request: RelationImportRequest = { rows: [] };
+  const layerIds = new Map(
+    graph.rawGraph?.layers.map((row) => [layerNumberLabel(row.id).trim().toLowerCase(), row.id]),
+  );
+  sourceRows.forEach((row, index) => {
+    const rowNumber = index + 1;
+    const parent = endpointFromValue(row.parent, layerIds);
+    const child = endpointFromValue(row.child, layerIds);
+    if (!parent.valid) issues.push({ row_number: rowNumber, code: "mapping_error", message: `Parent Layer '${String(row.parent ?? "")}'을(를) 찾을 수 없습니다.` });
+    if (!child.valid) issues.push({ row_number: rowNumber, code: "mapping_error", message: `Child Layer '${String(row.child ?? "")}'을(를) 찾을 수 없습니다.` });
+    const relationStyleId = importReferenceId(
+      row.relation_style_id,
+      reference.relationStyles,
+      (item) => reference.relationStyles.find((candidate) => candidate.id === item.id)?.name || item.id,
+      "Relation Type",
+      rowNumber,
+      issues,
+    );
+    const relationStyle = reference.relationStyles.find((item) => item.id === relationStyleId);
+    const body: RelationCreate = {
+      parent_endpoint_type: parent.type,
+      child_endpoint_type: child.type,
+      parent_layer_id: parent.layerId,
+      child_layer_id: child.layerId,
+      key_layout_type_id: importReferenceId(
+        row.key_layout_type_id,
+        reference.keyLayoutTypes,
+        (item) => reference.keyLayoutTypes.find((candidate) => candidate.id === item.id)?.name || item.id,
+        "Key 배치",
+        rowNumber,
+        issues,
+      ),
+      key_drawing_type_id: importReferenceId(row.key_drawing_type_id, reference.keyDrawingTypes, (item) => drawingLabel(item.id), "Key Type", rowNumber, issues),
+      relation_type: relationStyle?.name || "parent_child",
+      relation_style_id: relationStyleId,
+      parent_drawing_type_id: importReferenceId(row.parent_drawing_type_id, reference.keyDrawingTypes, (item) => drawingLabel(item.id), "Parent Drawing", rowNumber, issues),
+      child_drawing_type_id: importReferenceId(row.child_drawing_type_id, reference.keyDrawingTypes, (item) => drawingLabel(item.id), "Child Drawing", rowNumber, issues),
+      comment: String(row.comment || "") || null,
+      key_priority: String(row.key_priority || "") || null,
+      priority_rule: String(row.priority_rule || "") || null,
+      source_port: "bottom",
+      target_port: "top",
+    };
+    if (!parent.valid || !child.valid) return;
+    try {
+      const candidates = graph.rawGraph ? expandRelationCandidates(graph.rawGraph, body) : [];
+      for (const relation of candidates) request.rows.push({ row_number: rowNumber, relation });
+    } catch (error) {
+      issues.push({ row_number: rowNumber, code: "relation_rule", message: error instanceof Error ? error.message : String(error) });
+    }
+  });
+  return { request, issues };
+}
+
+async function previewPaste() {
+  const sourceRows = rowsFromMatrix(parseTsv(pasteText.value));
+  if (!sourceRows.length) {
+    app.status = "붙여넣을 Relation 데이터가 없습니다.";
+    return;
+  }
+  const built = relationImportRequest(sourceRows);
+  pasteBusy.value = true;
+  try {
+    const serverPreview: RelationImportPreview = built.request.rows.length
+      ? await api.previewRelationImport(project.projectId, built.request)
+      : { total_count: 0, create_count: 0, error_count: 0, issues: [] };
+    pastePreview.value = {
+      ...serverPreview,
+      source_count: sourceRows.length,
+      error_count: built.issues.length + serverPreview.error_count,
+      issues: [...built.issues, ...serverPreview.issues],
+      request: built.request,
+    };
+  } catch (error) {
+    project.handleMutationError(error);
+    app.status = error instanceof Error ? error.message : String(error);
+  } finally {
+    pasteBusy.value = false;
+  }
+}
+
+async function commitPaste() {
+  if (!pastePreview.value || pastePreview.value.error_count || !pastePreview.value.request.rows.length) return;
+  pasteBusy.value = true;
+  project.markSaving();
+  try {
+    const result = await api.commitRelationImport(project.projectId, pastePreview.value.request);
+    graph.setGraph(result.graph);
+    project.markSaved();
+    app.status = `Relation ${result.created_count}개 Import 완료`;
+    pasteOpen.value = false;
+    pasteText.value = "";
+  } catch (error) {
+    project.handleMutationError(error);
+    app.status = error instanceof Error ? error.message : String(error);
+  } finally {
+    pasteBusy.value = false;
+  }
+}
+watch(pasteText, () => { pastePreview.value = null });
 onMounted(async () => {
   await Promise.all([reference.loadAll(), graph.reloadGraph()]);
 });
@@ -331,15 +556,17 @@ onMounted(async () => {
     </div>
     <div v-if="graph.rawGraph" class="panel data-panel relation-data-panel">
       <div class="panel-heading data-actions">
-        <div><h2>Layer Relation</h2><span>{{ relationRows.length }} rows</span></div>
+        <div><h2>Layer Relation</h2><span>{{ displayedRelationRows.length }}<template v-if="Object.keys(columnFilters).length">/{{ relationRows.length }}</template> rows</span></div>
         <div class="relation-data-toolbar">
+          <button v-if="Object.keys(columnFilters).length" type="button" title="모든 필터 해제" @click="columnFilters = {}"><FilterX :size="15"/>필터 해제</button>
           <button class="primary" :disabled="!project.canEdit" @click="editRelation()"><Plus :size="16"/>Relation 추가</button>
           <button class="danger ghost" :disabled="!project.canEdit || !selectedRelationIds.length" @click="deleteSelected"><Trash2 :size="15"/>선택 삭제</button>
           <span class="layer-action-divider"/>
           <details class="action-menu">
             <summary>데이터 도구<ChevronDown :size="14"/></summary>
             <div>
-              <button type="button" @click="exportExcel(graph.rawGraph!)"><Download :size="15"/>Excel 내보내기</button>
+              <button type="button" @click="downloadRelationTemplate"><Download :size="15"/>템플릿 다운로드</button>
+              <button type="button" @click="downloadCurrentRelationTable"><Download :size="15"/>Relation Table 다운로드</button>
               <button type="button" :disabled="!project.canEdit" @click="pasteOpen = true"><ClipboardPaste :size="15"/>표 붙여넣기</button>
             </div>
           </details>
@@ -349,11 +576,14 @@ onMounted(async () => {
         auto-commit
         :readonly="project.readOnly"
         :columns="relationColumns"
-        :rows="relationRows"
+        :rows="displayedRelationRows"
         :selected-rows="selectedRelationIds"
+        filterable
+        :filtered-columns="Object.keys(columnFilters)"
         empty-hint="Relation 추가에서 Parent와 Child Layer를 선택하세요."
         @row-select="selectRelation"
         @row-selection="setRelationSelection"
+        @column-filter="openColumnFilter"
         @cell-action="handleCellAction"
         @commit="commitRelations"
       />
@@ -361,12 +591,67 @@ onMounted(async () => {
     <div v-else class="empty-page">프로젝트를 선택하세요.</div>
 
     <div v-if="pasteOpen" class="paste-overlay" @click="pasteOpen = false">
-      <section class="panel paste-panel" @click.stop>
-        <div class="panel-heading"><h2>Layer Relation Paste</h2><button @click="pasteOpen = false">닫기</button></div>
-        <textarea v-model="pasteText" autofocus placeholder="Excel에서 복사한 표를 붙여 넣으세요."/>
-        <div class="sheet-actions"><button class="primary" @click="applyPaste">적용</button></div>
+      <section class="panel paste-panel relation-import-panel" @click.stop>
+        <div class="panel-heading">
+          <div><p class="eyebrow">ATOMIC IMPORT</p><h2>Layer Relation Paste</h2></div>
+          <button @click="pasteOpen = false">닫기</button>
+        </div>
+        <textarea v-model="pasteText" autofocus placeholder="Excel에서 복사한 Relation 행을 붙여 넣으세요."/>
+        <div v-if="pastePreview" class="relation-import-preview" :class="{ invalid: pastePreview.error_count }">
+          <div class="relation-import-summary">
+            <div><span>입력 행</span><b>{{ pastePreview.source_count }}</b></div>
+            <div><span>생성 Relation</span><b>{{ pastePreview.create_count }}</b></div>
+            <div><span>오류</span><b>{{ pastePreview.error_count }}</b></div>
+          </div>
+          <div v-if="pastePreview.issues.length" class="relation-import-issues">
+            <div v-for="(issue, index) in pastePreview.issues" :key="`${issue.row_number}-${issue.code}-${index}`">
+              <AlertTriangle :size="16"/>
+              <span><strong>{{ issue.row_number ? `${issue.row_number}행` : '전체' }} · {{ issue.code }}</strong><small>{{ issue.message }}</small></span>
+            </div>
+          </div>
+          <div v-else class="relation-import-ready"><CheckCircle2 :size="18"/><span>검증이 완료되었습니다. 저장하면 모든 Relation이 한 번에 반영됩니다.</span></div>
+        </div>
+        <div class="sheet-actions">
+          <button :disabled="pasteBusy" @click="pasteOpen = false">취소</button>
+          <button :disabled="pasteBusy || !pasteText.trim()" @click="previewPaste">{{ pasteBusy && !pastePreview ? '검증 중…' : '미리보기' }}</button>
+          <button class="primary" :disabled="pasteBusy || !pastePreview || pastePreview.error_count > 0 || !pastePreview.create_count" @click="commitPaste">
+            {{ pasteBusy && pastePreview ? '저장 중…' : `${pastePreview?.create_count ?? 0}개 저장` }}
+          </button>
+        </div>
       </section>
     </div>
+
+    <div v-if="activeFilterKey" class="final-table-filter-backdrop" @click="closeColumnFilter"/>
+    <section
+      v-if="activeFilterKey"
+      class="final-table-filter-menu"
+      :style="{ top: `${filterMenuPosition.top}px`, left: `${filterMenuPosition.left}px` }"
+      @click.stop
+    >
+      <div class="final-table-filter-heading">
+        <strong>{{ activeFilterLabel }} 필터</strong>
+        <button type="button" title="닫기" aria-label="필터 닫기" @click="closeColumnFilter"><X :size="16"/></button>
+      </div>
+      <label class="final-table-filter-search">
+        <Search :size="15"/>
+        <input v-model="filterSearch" placeholder="값 검색">
+      </label>
+      <div class="final-table-filter-tools">
+        <button type="button" @click="filterDraft = [...activeFilterValues]">모두 선택</button>
+        <button type="button" @click="filterDraft = []">선택 해제</button>
+      </div>
+      <div class="final-table-filter-values">
+        <label v-for="option in searchedFilterValues" :key="option">
+          <input type="checkbox" :checked="filterDraft.includes(option)" @change="toggleFilterValue(option)">
+          <span>{{ filterDisplayLabel(activeFilterKey, option) }}</span>
+        </label>
+        <p v-if="!searchedFilterValues.length">검색 결과가 없습니다.</p>
+      </div>
+      <div class="final-table-filter-actions">
+        <button type="button" @click="clearColumnFilter">필터 해제</button>
+        <button type="button" class="primary" @click="applyColumnFilter">적용</button>
+      </div>
+    </section>
 
     <div v-if="relationEditor" class="paste-overlay" @click="relationEditor = null">
       <section class="panel relation-picker-panel relation-detail-panel" @click.stop>

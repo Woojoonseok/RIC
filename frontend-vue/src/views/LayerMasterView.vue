@@ -1,16 +1,18 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
-import { ChevronDown, ClipboardPaste, Download, Plus, Trash2, Users } from "@lucide/vue";
+import { AlertTriangle, CheckCircle2, ChevronDown, ClipboardPaste, Download, Plus, Search, Trash2, Users, X } from "@lucide/vue";
 import * as XLSX from "xlsx-js-style";
 import { api } from "../api/client";
 import SpreadsheetGrid from "../components/grid/SpreadsheetGrid.vue";
-import { layerMasterBaseColumns, layerMasterColumns, layerMasterPayload, layerMasterPriorityColumns, layerMasterRows } from "../domain/layerMaster";
+import { filterLayerMasterRows, layerMasterBaseColumns, layerMasterColumns, layerMasterPayload, layerMasterPriorityColumns, layerMasterRows } from "../domain/layerMaster";
 import { parseTsv } from "../domain/tsv";
 import { useAppStore } from "../stores/app";
 import { useProjectStore } from "../stores/project";
 import { useReferenceStore } from "../stores/reference";
+import type { LayerMasterImportPreview, LayerMasterImportRequest } from "../types";
 
 type Row = Record<string, unknown>;
+interface PastePreview extends LayerMasterImportPreview { request: LayerMasterImportRequest }
 const app = useAppStore();
 const project = useProjectStore();
 const reference = useReferenceStore();
@@ -18,24 +20,48 @@ const selected = ref<string[]>([]);
 const grid = ref<InstanceType<typeof SpreadsheetGrid> | null>(null);
 const pasteOpen = ref(false);
 const pasteText = ref("");
+const pasteBusy = ref(false);
+const pastePreview = ref<PastePreview | null>(null);
 const busy = ref(false);
 const status = ref("준비");
 const activeTab = ref<"basic" | "priorities">("basic");
+const basicQuery = ref("");
 const priorityQuery = ref("");
+const basicColumnFilters = ref<Record<string, string[]>>({});
+const priorityColumnFilters = ref<Record<string, string[]>>({});
+const activeFilterKey = ref<string | null>(null);
+const filterDraft = ref<string[]>([]);
+const filterSearch = ref("");
+const filterMenuPosition = ref({ top: 0, left: 0 });
 const persistedRows = new Map<string, string>();
 let writeQueue: Promise<void> = Promise.resolve();
 const basicColumns = computed(() => layerMasterBaseColumns(reference.boxPresets));
 const priorityColumns = computed(() => layerMasterPriorityColumns(reference.keyLayoutTypes));
 const importColumns = computed(() => layerMasterColumns(reference.keyLayoutTypes, reference.boxPresets));
 const rows = computed<Row[]>(() => layerMasterRows(reference.layerMasters, reference.keyLayoutTypes, reference.boxPresets));
-const priorityRows = computed(() => {
-  const needle = priorityQuery.value.trim().toLowerCase();
-  if (!needle) return rows.value;
-  return rows.value.filter((row) => (
-    String(row.layer_number ?? "").toLowerCase().includes(needle)
-    || String(row.name ?? "").toLowerCase().includes(needle)
-  ));
+const basicRows = computed(() => filterLayerMasterRows(rows.value, basicColumns.value, basicQuery.value, basicColumnFilters.value));
+const priorityRows = computed(() => filterLayerMasterRows(rows.value, priorityColumns.value, priorityQuery.value, priorityColumnFilters.value));
+const activeColumns = computed(() => activeTab.value === "basic" ? basicColumns.value : priorityColumns.value);
+const activeFilters = computed(() => activeTab.value === "basic" ? basicColumnFilters.value : priorityColumnFilters.value);
+const activeQuery = computed(() => activeTab.value === "basic" ? basicQuery.value : priorityQuery.value);
+const activeFilterValues = computed(() => {
+  if (!activeFilterKey.value) return [];
+  return [...new Set(filterLayerMasterRows(
+    rows.value,
+    activeColumns.value,
+    activeQuery.value,
+    activeFilters.value,
+    activeFilterKey.value,
+  ).map((row) => String(row[activeFilterKey.value!] ?? "")))]
+    .sort((left, right) => left.localeCompare(right, "ko", { numeric: true, sensitivity: "base" }));
 });
+const searchedFilterValues = computed(() => {
+  const needle = filterSearch.value.trim().toLocaleLowerCase("ko");
+  return needle
+    ? activeFilterValues.value.filter((value) => value.toLocaleLowerCase("ko").includes(needle))
+    : activeFilterValues.value;
+});
+const activeFilterLabel = computed(() => activeColumns.value.find((column) => column.key === activeFilterKey.value)?.label ?? "컬럼");
 const priorityValueCount = computed(() => rows.value.reduce((total, row) => (
   total + reference.keyLayoutTypes.filter((layout) => String(row[`priority:${layout.id}`] ?? "").trim()).length
 ), 0));
@@ -64,6 +90,42 @@ function selectRow(id: string, additive: boolean) {
     : [...selected.value, id];
 }
 function setSelectedRows(ids: string[]) { selected.value = ids }
+function openColumnFilter(key: string, event: MouseEvent) {
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  activeFilterKey.value = key;
+  filterSearch.value = "";
+  filterDraft.value = activeFilters.value[key] ? [...activeFilters.value[key]] : [...activeFilterValues.value];
+  filterMenuPosition.value = {
+    top: Math.max(12, Math.min(rect.bottom + 6, window.innerHeight - 360)),
+    left: Math.max(12, Math.min(rect.right - 280, window.innerWidth - 292)),
+  };
+}
+function closeColumnFilter() { activeFilterKey.value = null }
+function toggleFilterValue(value: string) {
+  filterDraft.value = filterDraft.value.includes(value)
+    ? filterDraft.value.filter((item) => item !== value)
+    : [...filterDraft.value, value];
+}
+function updateActiveFilters(next: Record<string, string[]>) {
+  if (activeTab.value === "basic") basicColumnFilters.value = next;
+  else priorityColumnFilters.value = next;
+}
+function applyColumnFilter() {
+  if (!activeFilterKey.value) return;
+  const key = activeFilterKey.value;
+  const allSelected = filterDraft.value.length === activeFilterValues.value.length
+    && activeFilterValues.value.every((value) => filterDraft.value.includes(value));
+  const { [key]: _removed, ...rest } = activeFilters.value;
+  updateActiveFilters(allSelected ? rest : { ...rest, [key]: [...filterDraft.value] });
+  closeColumnFilter();
+}
+function clearColumnFilter() {
+  if (!activeFilterKey.value) return;
+  const { [activeFilterKey.value]: _removed, ...rest } = activeFilters.value;
+  updateActiveFilters(rest);
+  closeColumnFilter();
+}
+function filterLabel(value: string) { return value || "(빈 셀)" }
 async function addLayerRow() {
   activeTab.value = "basic";
   await nextTick();
@@ -162,10 +224,52 @@ function rowsFromMatrix(matrix: unknown[][]): Row[] {
     .filter((row) => row.some((cell) => String(cell ?? "").trim()))
     .map((row) => Object.fromEntries(keys.map((key, index) => [key, row[index] ?? ""])));
 }
-async function applyPaste() {
-  await commit(rowsFromMatrix(parseTsv(pasteText.value)));
-  pasteOpen.value = false;
-  pasteText.value = "";
+function layerMasterImportRequest(sourceRows: Row[]): LayerMasterImportRequest {
+  return {
+    rows: sourceRows.map((row, index) => ({
+      row_number: index + 1,
+      layer: layerMasterPayload(row, reference.keyLayoutTypes),
+    })),
+  };
+}
+async function previewPaste() {
+  const sourceRows = rowsFromMatrix(parseTsv(pasteText.value));
+  if (!sourceRows.length) {
+    app.status = "붙여넣을 Layer 정보가 없습니다.";
+    return;
+  }
+  const request = layerMasterImportRequest(sourceRows);
+  pasteBusy.value = true;
+  try {
+    pastePreview.value = { ...await api.previewLayerMasterImport(request), request };
+  } catch (error) {
+    project.handleMutationError(error);
+    app.status = error instanceof Error ? error.message : String(error);
+  } finally {
+    pasteBusy.value = false;
+  }
+}
+async function commitPaste() {
+  if (!pastePreview.value || pastePreview.value.error_count || !pastePreview.value.create_count) return;
+  pasteBusy.value = true;
+  project.markSaving();
+  try {
+    const result = await api.commitLayerMasterImport(pastePreview.value.request);
+    for (const row of result.rows) {
+      reference.syncLayerMaster(row);
+      persistedRows.set(row.id, rowSignature(layerMasterRows([row], reference.keyLayoutTypes, reference.boxPresets)[0]));
+    }
+    project.markSaved();
+    app.status = `Layer 정보 ${result.created_count}개 Import 완료`;
+    status.value = `${result.created_count}개 Layer 정보 저장 완료`;
+    pasteOpen.value = false;
+    pasteText.value = "";
+  } catch (error) {
+    project.handleMutationError(error);
+    app.status = error instanceof Error ? error.message : String(error);
+  } finally {
+    pasteBusy.value = false;
+  }
 }
 function downloadTemplate() {
   const worksheet = XLSX.utils.aoa_to_sheet([
@@ -184,6 +288,7 @@ watch(
   (projectId) => { if (projectId) void load() },
   { immediate: true },
 );
+watch(pasteText, () => { pastePreview.value = null });
 </script>
 
 <template>
@@ -215,27 +320,54 @@ watch(
       </div>
     </div>
     <nav class="resource-tabs layer-master-tabs" aria-label="Layer 정보 보기">
-      <button :class="{ active: activeTab === 'basic' }" @click="activeTab = 'basic'; priorityQuery = ''">
+      <button :class="{ active: activeTab === 'basic' }" @click="activeTab = 'basic'; priorityQuery = ''; closeColumnFilter()">
         <span>Layer 기본정보</span><b>{{ rows.length }}</b>
       </button>
-      <button :class="{ active: activeTab === 'priorities' }" @click="activeTab = 'priorities'">
+      <button :class="{ active: activeTab === 'priorities' }" @click="activeTab = 'priorities'; closeColumnFilter()">
         <span>Key 우선순위</span><b>{{ priorityValueCount }}/{{ priorityCellCount }}</b>
       </button>
-      <input v-if="activeTab === 'priorities'" v-model="priorityQuery" class="layer-priority-search" placeholder="Layer 번호 또는 이름 검색">
+      <label class="layer-master-filter">
+        <Search :size="16"/>
+        <input
+          v-if="activeTab === 'basic'"
+          v-model="basicQuery"
+          placeholder="Layer 정보 전체 검색"
+          aria-label="Layer 기본정보 필터"
+        >
+        <input
+          v-else
+          v-model="priorityQuery"
+          placeholder="Layer 및 우선순위 검색"
+          aria-label="Key 우선순위 필터"
+        >
+        <span v-if="activeTab === 'basic' ? basicQuery : priorityQuery" class="layer-filter-count">
+          {{ activeTab === 'basic' ? basicRows.length : priorityRows.length }}/{{ rows.length }}
+        </span>
+        <button
+          v-if="activeTab === 'basic' ? basicQuery : priorityQuery"
+          type="button"
+          title="필터 지우기"
+          aria-label="필터 지우기"
+          @click="activeTab === 'basic' ? basicQuery = '' : priorityQuery = ''"
+        ><X :size="15"/></button>
+      </label>
     </nav>
     <div class="sheet-help">셀 선택 후 바로 입력 또는 Enter/F2로 편집 · Ctrl+C / Ctrl+V로 Excel 범위 복사·붙여넣기 · 행 번호를 클릭해 선택</div>
     <div v-if="activeTab === 'basic'" class="panel data-panel">
       <SpreadsheetGrid
         ref="grid"
         :columns="basicColumns"
-        :rows="rows"
+        :rows="basicRows"
         :selected-rows="selected"
         select-all-rows
+        filterable
+        :filtered-columns="Object.keys(basicColumnFilters)"
         :readonly="!project.canEdit"
         :auto-commit="true"
-        empty-hint="Layer를 추가하세요."
+        :empty-hint="basicQuery ? '필터 조건에 맞는 Layer가 없습니다.' : 'Layer를 추가하세요.'"
         @row-select="selectRow"
         @row-selection="setSelectedRows"
+        @column-filter="openColumnFilter"
         @cell-action="openPriorities"
         @commit="commit"
       />
@@ -247,21 +379,76 @@ watch(
         :rows="priorityRows"
         :selected-rows="selected"
         select-all-rows
+        filterable
+        :filtered-columns="Object.keys(priorityColumnFilters)"
         :readonly="!project.canEdit"
         :auto-commit="true"
-        empty-hint="Key Layout Type을 추가하면 우선순위 열이 표시됩니다."
+        :empty-hint="priorityQuery ? '필터 조건에 맞는 Layer가 없습니다.' : 'Key Layout Type을 추가하면 우선순위 열이 표시됩니다.'"
         @row-select="selectRow"
         @row-selection="setSelectedRows"
+        @column-filter="openColumnFilter"
         @commit="commit"
       />
     </div>
 
     <div v-if="pasteOpen" class="paste-overlay" @click="pasteOpen = false">
-      <section class="panel paste-panel" @click.stop>
-        <div class="panel-heading"><h2>Layer 정보 Paste</h2><button @click="pasteOpen = false">닫기</button></div>
+      <section class="panel paste-panel relation-import-panel" @click.stop>
+        <div class="panel-heading"><div><p class="eyebrow">ATOMIC IMPORT</p><h2>Layer 정보 Paste</h2></div><button @click="pasteOpen = false">닫기</button></div>
         <textarea v-model="pasteText" autofocus placeholder="Excel에서 복사한 표를 여기에 붙여넣으세요."/>
-        <div class="sheet-actions"><button class="primary" @click="applyPaste">적용</button></div>
+        <div v-if="pastePreview" class="relation-import-preview" :class="{ invalid: pastePreview.error_count }">
+          <div class="relation-import-summary">
+            <div><span>입력 행</span><b>{{ pastePreview.total_count }}</b></div>
+            <div><span>생성 Layer</span><b>{{ pastePreview.create_count }}</b></div>
+            <div><span>오류</span><b>{{ pastePreview.error_count }}</b></div>
+          </div>
+          <div v-if="pastePreview.issues.length" class="relation-import-issues">
+            <div v-for="(issue, index) in pastePreview.issues" :key="`${issue.row_number}-${issue.code}-${index}`">
+              <AlertTriangle :size="16"/>
+              <span><strong>{{ issue.row_number ? `${issue.row_number}행` : '전체' }} · {{ issue.code }}</strong><small>{{ issue.message }}</small></span>
+            </div>
+          </div>
+          <div v-else class="relation-import-ready"><CheckCircle2 :size="18"/><span>검증이 완료되었습니다. 저장하면 모든 Layer 정보가 한 번에 반영됩니다.</span></div>
+        </div>
+        <div class="sheet-actions">
+          <button :disabled="pasteBusy" @click="pasteOpen = false">취소</button>
+          <button :disabled="pasteBusy || !pasteText.trim()" @click="previewPaste">{{ pasteBusy && !pastePreview ? '검증 중…' : '미리보기' }}</button>
+          <button class="primary" :disabled="pasteBusy || !pastePreview || pastePreview.error_count > 0 || !pastePreview.create_count" @click="commitPaste">
+            {{ pasteBusy && pastePreview ? '저장 중…' : `${pastePreview?.create_count ?? 0}개 저장` }}
+          </button>
+        </div>
       </section>
     </div>
+
+    <div v-if="activeFilterKey" class="final-table-filter-backdrop" @click="closeColumnFilter"/>
+    <section
+      v-if="activeFilterKey"
+      class="final-table-filter-menu"
+      :style="{ top: `${filterMenuPosition.top}px`, left: `${filterMenuPosition.left}px` }"
+      @click.stop
+    >
+      <div class="final-table-filter-heading">
+        <strong>{{ activeFilterLabel }} 필터</strong>
+        <button type="button" title="닫기" aria-label="필터 닫기" @click="closeColumnFilter"><X :size="16"/></button>
+      </div>
+      <label class="final-table-filter-search">
+        <Search :size="15"/>
+        <input v-model="filterSearch" placeholder="값 검색">
+      </label>
+      <div class="final-table-filter-tools">
+        <button type="button" @click="filterDraft = [...activeFilterValues]">모두 선택</button>
+        <button type="button" @click="filterDraft = []">선택 해제</button>
+      </div>
+      <div class="final-table-filter-values">
+        <label v-for="option in searchedFilterValues" :key="option">
+          <input type="checkbox" :checked="filterDraft.includes(option)" @change="toggleFilterValue(option)">
+          <span>{{ filterLabel(option) }}</span>
+        </label>
+        <p v-if="!searchedFilterValues.length">검색 결과가 없습니다.</p>
+      </div>
+      <div class="final-table-filter-actions">
+        <button type="button" @click="clearColumnFilter">필터 해제</button>
+        <button type="button" class="primary" @click="applyColumnFilter">적용</button>
+      </div>
+    </section>
   </section>
 </template>

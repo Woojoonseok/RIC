@@ -8,6 +8,7 @@ import { useGraphStore } from "../../stores/graph";
 import { useProjectStore } from "../../stores/project";
 import { useReferenceStore } from "../../stores/reference";
 import type { LayerUpdate, LayoutUpdate, PortName, Relation, RelationUpdate, StyleUpdate, TextBoxUpdate } from "../../types";
+import ColorPickerField from "./ColorPickerField.vue";
 
 const app = useAppStore(); const graph = useGraphStore(); const project = useProjectStore(); const reference = useReferenceStore();
 const emit = defineEmits<{ collapse: [] }>();
@@ -126,10 +127,10 @@ onMounted(() => reference.loadAll());
       <section class="property-section">
         <h3>스타일</h3>
         <label>Box Type<select :value="selectedLayers.every((row) => row.box_preset_id === selectedLayers[0]?.box_preset_id) ? selectedLayers[0]?.box_preset_id || '' : ''" @change="applyBoxPreset"><option value="" disabled>{{ selectedLayers.every((row) => row.box_preset_id === selectedLayers[0]?.box_preset_id) ? '선택' : '여러 Box Type' }}</option><option v-for="preset in reference.boxPresets" :key="preset.id" :value="preset.id">{{ preset.name }}</option></select></label>
-        <label class="property-color-row">Fill<span class="property-color-control"><input class="property-color-input" type="color" value="#dbeafe" aria-label="Fill color" @change="updateSelectedStyles({ fill_color: value($event) })"><code>#DBEAFE</code></span></label>
+        <ColorPickerField label="Fill" model-value="#dbeafe" @update:model-value="updateSelectedStyles({ fill_color: $event })"/>
         <div class="color-swatches"><button v-for="color in COLOR_SWATCHES" :key="color" type="button" class="color-swatch" :style="{ background: color }" :aria-label="`Fill ${color}`" :title="color" @click="updateSelectedStyles({ fill_color: color })"/></div>
-        <label class="property-color-row">Stroke<span class="property-color-control"><input class="property-color-input" type="color" value="#2563eb" aria-label="Stroke color" @change="updateSelectedStyles({ stroke_color: value($event) })"><code>#2563EB</code></span></label>
-        <label class="property-color-row">Text<span class="property-color-control"><input class="property-color-input" type="color" value="#111827" aria-label="Text color" @change="updateSelectedStyles({ text_color: value($event) })"><code>#111827</code></span></label>
+        <ColorPickerField label="Stroke" model-value="#2563eb" @update:model-value="updateSelectedStyles({ stroke_color: $event })"/>
+        <ColorPickerField label="Text" model-value="#111827" @update:model-value="updateSelectedStyles({ text_color: $event })"/>
         <div class="property-grid">
           <label>Font size<input type="number" min="8" max="72" value="16" @change="updateSelectedStyles({ font_size: numberValue($event) })"></label>
         </div>
@@ -156,10 +157,10 @@ onMounted(() => reference.loadAll());
       <section v-if="style" class="property-section">
         <h3>스타일</h3>
         <label>Box Type<select :value="layer.box_preset_id || ''" @change="applyBoxPreset"><option value="" disabled>선택</option><option v-for="preset in reference.boxPresets" :key="preset.id" :value="preset.id">{{ preset.name }}</option></select></label>
-        <label class="property-color-row">Fill<span class="property-color-control"><input class="property-color-input" type="color" :value="style.fill_color" aria-label="Fill color" @change="updateStyle({ fill_color: value($event) })"><code>{{ style.fill_color.toUpperCase() }}</code></span></label>
+        <ColorPickerField label="Fill" :model-value="style.fill_color" @update:model-value="updateStyle({ fill_color: $event })"/>
         <div class="color-swatches"><button v-for="color in COLOR_SWATCHES" :key="color" type="button" class="color-swatch" :class="{ active: style.fill_color.toLowerCase() === color }" :style="{ background: color }" :aria-label="`Fill ${color}`" :title="color" @click="updateStyle({ fill_color: color })"/></div>
-        <label class="property-color-row">Stroke<span class="property-color-control"><input class="property-color-input" type="color" :value="style.stroke_color" aria-label="Stroke color" @change="updateStyle({ stroke_color: value($event) })"><code>{{ style.stroke_color.toUpperCase() }}</code></span></label>
-        <label class="property-color-row">Text<span class="property-color-control"><input class="property-color-input" type="color" :value="style.text_color" aria-label="Text color" @change="updateStyle({ text_color: value($event) })"><code>{{ style.text_color.toUpperCase() }}</code></span></label>
+        <ColorPickerField label="Stroke" :model-value="style.stroke_color" @update:model-value="updateStyle({ stroke_color: $event })"/>
+        <ColorPickerField label="Text" :model-value="style.text_color" @update:model-value="updateStyle({ text_color: $event })"/>
         <div class="property-grid">
           <label>Font size<input type="number" min="8" max="72" :value="style.font_size" @change="updateStyle({ font_size: numberValue($event) })"></label>
           <label>Stroke width<input type="number" min="1" max="12" :value="style.stroke_width" @change="updateStyle({ stroke_width: numberValue($event) })"></label>
@@ -205,8 +206,10 @@ onMounted(() => reference.loadAll());
       <label v-else>텍스트<textarea :value="text.text" @change="updateText({ text: value($event) })"/></label>
       <label>X<input type="number" :value="text.x" @change="updateText({ x: numberValue($event) })"></label><label>Y<input type="number" :value="text.y" @change="updateText({ y: numberValue($event) })"></label>
       <label>Width<input type="number" min="40" :value="text.width" @change="updateText({ width: numberValue($event) })"></label><label>Height<input type="number" min="24" :value="text.height" @change="updateText({ height: numberValue($event) })"></label>
-      <label v-if="!isDecorativeShape">Font Size<input type="number" min="8" max="96" :value="text.font_size" @change="updateText({ font_size: numberValue($event) })"></label><label v-if="!isDecorativeShape">Text Color<input type="color" :value="text.text_color" @change="updateText({ text_color: value($event) })"></label>
-      <label>{{ isDecorativeShape ? 'Fill' : 'Background' }}<input type="color" :value="text.background_color" @change="updateText({ background_color: value($event) })"></label><label>Border<input type="color" :value="text.border_color" @change="updateText({ border_color: value($event) })"></label>
+      <label v-if="!isDecorativeShape">Font Size<input type="number" min="8" max="96" :value="text.font_size" @change="updateText({ font_size: numberValue($event) })"></label>
+      <ColorPickerField v-if="!isDecorativeShape" label="Text Color" :model-value="text.text_color" @update:model-value="updateText({ text_color: $event })"/>
+      <ColorPickerField :label="isDecorativeShape ? 'Fill' : 'Background'" :model-value="text.background_color" @update:model-value="updateText({ background_color: $event })"/>
+      <ColorPickerField label="Border" :model-value="text.border_color" @update:model-value="updateText({ border_color: $event })"/>
       <label>Locked<input type="checkbox" :checked="text.locked" @change="updateText({ locked: ($event.target as HTMLInputElement).checked })"></label>
     </div>
     <div v-else class="property-empty"><div class="empty-icon">◇</div><b>선택된 객체가 없습니다.</b><p>Canvas에서 Layer, 관계선 또는 Text Box를 선택하세요.</p></div>

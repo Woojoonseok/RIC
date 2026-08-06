@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import create_engine
@@ -20,6 +21,7 @@ _INSECURE_IDENTITY_SECRETS = {
 
 
 class Settings(BaseSettings):
+    environment: Literal["development", "test", "production"] = "development"
     database_url: str = "sqlite:///./ric-dev.db"
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     # Credentials are enabled, so this must remain a strict full-origin
@@ -34,6 +36,7 @@ class Settings(BaseSettings):
     trusted_proxy_ips: str = "127.0.0.1,::1"
     allow_legacy_project_claims: bool = False
     edit_lease_ttl_seconds: int = 90
+    run_database_migrations: bool = True
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
@@ -48,6 +51,22 @@ def validate_identity_secret(secret: str) -> None:
         raise RuntimeError(
             "IDENTITY_SECRET must be a non-default random secret of at least 32 bytes"
         )
+
+
+def validate_runtime_settings(active_settings: Settings | None = None) -> None:
+    active = active_settings or settings
+    validate_identity_secret(active.identity_secret)
+    origins = [origin.strip() for origin in active.cors_origins.split(",") if origin.strip()]
+    if "*" in origins:
+        raise RuntimeError("CORS_ORIGINS cannot contain a wildcard when credentials are enabled")
+    if active.environment != "production":
+        return
+    if not active.identity_cookie_secure:
+        raise RuntimeError("IDENTITY_COOKIE_SECURE must be true in production")
+    if not origins or any(not origin.startswith("https://") for origin in origins):
+        raise RuntimeError("Production CORS_ORIGINS must contain only HTTPS origins")
+    if active.cors_origin_regex and "https?://" in active.cors_origin_regex:
+        raise RuntimeError("Production CORS_ORIGIN_REGEX must not allow plain HTTP")
 connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
 engine = create_engine(settings.database_url, pool_pre_ping=True, connect_args=connect_args)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)

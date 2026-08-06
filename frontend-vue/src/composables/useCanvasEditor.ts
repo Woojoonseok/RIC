@@ -573,6 +573,14 @@ export function useCanvasEditor() {
     if (value == null || (field === "name" && !value.trim())) return;
     await graphStore.mutateGraph("Layer 인라인 저장", () => api.updateLayer(project.projectId, id, field === "step" ? { step: value.trim() || null } : { name: value.trim() }));
   }
+  async function editTextBox(id: string) {
+    if (!project.canEdit) return;
+    const text = raw.value?.text_boxes.find((row) => row.id === id && (row.shape_type ?? "text") === "text");
+    if (!text) return;
+    const value = prompt("Text", text.text);
+    if (value == null || value === text.text) return;
+    await graphStore.mutateGraph("Text 인라인 저장", () => api.updateText(project.projectId, id, { text: value }));
+  }
   function fit() { viewBox.value = { x: 0, y: 0, width: 1600, height: 1000 } }
   function zoom(factor: number) {
     const center = { x: viewBox.value.x + viewBox.value.width / 2, y: viewBox.value.y + viewBox.value.height / 2 };
@@ -587,6 +595,6 @@ export function useCanvasEditor() {
     decorativeShapes, annotationTexts, shapePreview,
     selectedRelation, selectedTexts, ports, viewBoxString, portPoint, portHandlePoint, layerLabel, nodePointerDown, textPointerDown, canvasDown,
     pointerMove, pointerUp, wheel, startConnect, relationPointerDown, relationAppearance,
-    editableWaypoints, addWaypoint, waypointDown, deleteWaypoint, focusSearch, editLayer, fit, zoom,
+    editableWaypoints, addWaypoint, waypointDown, deleteWaypoint, focusSearch, editLayer, editTextBox, fit, zoom,
   };
 }
