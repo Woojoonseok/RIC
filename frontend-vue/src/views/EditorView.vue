@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from "vue";
 import CanvasEditor from "../components/canvas/CanvasEditor.vue";
+import LayerDeleteImpactModal from "../components/editor/LayerDeleteImpactModal.vue";
 import LayerList from "../components/editor/LayerList.vue";
 import PropertyPanel from "../components/editor/PropertyPanel.vue";
 import Toolbar from "../components/editor/Toolbar.vue";
@@ -44,6 +45,7 @@ watch(propertiesOpen, (open) => localStorage.setItem("ric-editor-properties-hidd
         Properties <span>‹</span>
       </button>
     </div>
+    <LayerDeleteImpactModal/>
   </section>
   <section v-else class="empty-page">프로젝트를 선택하세요.</section>
 </template>

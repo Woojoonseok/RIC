@@ -6,6 +6,7 @@ from collections import defaultdict, deque
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
+from .custom_validation import evaluate_validation_rules
 
 
 def validate_project_graph(
@@ -158,6 +159,8 @@ def validate_project_graph(
                 message=f"Layer '{layer.name}' has no relation.",
                 layer_id=layer.id,
             ))
+
+    issues.extend(evaluate_validation_rules(db, project_id, tree, layers, relations))
 
     return schemas.ValidationReport(
         ok=all(issue.severity != "error" for issue in issues),

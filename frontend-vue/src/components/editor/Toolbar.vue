@@ -33,6 +33,7 @@ import { useReferenceStore } from "../../stores/reference";
 import type { LayerMaster } from "../../types";
 import LayerMasterPickerModal from "./LayerMasterPickerModal.vue";
 import SnapshotManagerModal from "./SnapshotManagerModal.vue";
+import WorkflowControl from "./WorkflowControl.vue";
 
 const app = useAppStore();
 const graph = useGraphStore();
@@ -94,6 +95,8 @@ async function splitSelected() {
 
 <template>
   <div class="editor-toolbar">
+    <WorkflowControl/>
+    <span class="divider"/>
     <div class="tool-group toolbar-history" aria-label="편집 기록">
       <button class="toolbar-icon-button" :disabled="!project.canEdit || !graph.undoStack.length" title="실행 취소" aria-label="실행 취소" @click="graph.undo"><Undo2 :size="17"/></button>
       <button class="toolbar-icon-button" :disabled="!project.canEdit || !graph.redoStack.length" title="다시 실행" aria-label="다시 실행" @click="graph.redo"><Redo2 :size="17"/></button>

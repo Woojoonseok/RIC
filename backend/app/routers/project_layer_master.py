@@ -19,6 +19,10 @@ router = APIRouter(
 )
 
 
+def _normalize_group(value: str | None) -> str | None:
+    return (value or "").strip() or None
+
+
 def _snapshot(row: models.LayerMaster) -> dict[str, object]:
     excluded = {"id", "project_id", "created_at", "updated_at"}
     values: dict[str, object] = {
@@ -107,6 +111,7 @@ def create_layer_master(
 ) -> schemas.LayerMasterRead:
     data = payload.model_dump(exclude={"priorities"})
     data["layer_number"] = payload.layer_number.strip()
+    data["group"] = _normalize_group(data.get("group"))
     if not data["layer_number"]:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -148,6 +153,8 @@ def update_layer_master(
     row = _row_or_404(db, project_id, row_id)
     before = _snapshot(row)
     data = payload.model_dump(exclude={"priorities"}, exclude_unset=True)
+    if "group" in data:
+        data["group"] = _normalize_group(data["group"])
     if "layer_number" in data:
         data["layer_number"] = (data["layer_number"] or "").strip()
         if not data["layer_number"]:

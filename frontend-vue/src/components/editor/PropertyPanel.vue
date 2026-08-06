@@ -9,6 +9,8 @@ import { useProjectStore } from "../../stores/project";
 import { useReferenceStore } from "../../stores/reference";
 import type { LayerUpdate, LayoutUpdate, PortName, Relation, RelationUpdate, StyleUpdate, TextBoxUpdate } from "../../types";
 import ColorPickerField from "./ColorPickerField.vue";
+import LayerImpactSummary from "./LayerImpactSummary.vue";
+import RelationImpactSummary from "./RelationImpactSummary.vue";
 
 const app = useAppStore(); const graph = useGraphStore(); const project = useProjectStore(); const reference = useReferenceStore();
 const emit = defineEmits<{ collapse: [] }>();
@@ -53,7 +55,8 @@ async function resetRelationWaypoints() {
   });
 }
 async function deleteRelation(row: Relation) {
-  if (!confirm("이 Relation을 삭제할까요?")) return;
+  const impact = await api.relationImpact(project.projectId, row.id);
+  if (!await graph.requestDeleteImpact(impact)) return;
   const next = relationGroup.value.find((relation) => relation.id !== row.id);
   await graph.mutateGraph("관계 삭제", () => api.deleteRelation(project.projectId, row.id));
   if (next) app.select({ kind: "relation", id: next.id });
@@ -114,6 +117,8 @@ onMounted(() => reference.loadAll());
         <button class="panel-collapse-button" aria-label="Properties 패널 닫기" title="Properties 패널 닫기" @click="emit('collapse')">›</button>
       </div>
     </div>
+    <LayerImpactSummary v-if="layer" :layer-id="layer.id"/>
+    <RelationImpactSummary v-else-if="selectedRelation" :relation-id="selectedRelation.id"/>
     <fieldset class="property-fieldset" :disabled="!project.canEdit">
     <div v-if="selectedLayers.length > 1" class="property-form multi-property">
       <div class="property-title"><div><strong>{{ selectedLayers.length }} Layers</strong><small>다중 편집</small></div></div>

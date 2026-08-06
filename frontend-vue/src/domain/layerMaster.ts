@@ -204,3 +204,35 @@ export function layerMasterPayload(row: LayerMasterGridRow, layouts: KeyLayoutTy
     priorities: Object.fromEntries(layouts.map((layout) => [layout.id, text(`priority:${layout.id}`)])),
   };
 }
+
+export function layerMasterPasteRows(
+  matrix: unknown[][],
+  basicColumns: GridColumn[],
+  importColumns: GridColumn[],
+): LayerMasterGridRow[] {
+  const nonEmptyRows = matrix.filter((row) => row.some((cell) => String(cell ?? "").trim()));
+  if (!nonEmptyRows.length) return [];
+
+  const headerKeys = new Map<string, string>();
+  for (const column of importColumns) headerKeys.set(column.label.trim().toLocaleLowerCase("ko"), column.key);
+  for (const column of basicColumns) headerKeys.set(column.label.trim().toLocaleLowerCase("ko"), column.key);
+
+  const mappedHeader = nonEmptyRows[0].map((cell) => (
+    headerKeys.get(String(cell ?? "").trim().toLocaleLowerCase("ko"))
+  ));
+  if (mappedHeader.filter(Boolean).length >= 2) {
+    return nonEmptyRows.slice(1).map((row) => Object.fromEntries(
+      mappedHeader.flatMap((key, index) => key ? [[key, row[index] ?? ""]] : []),
+    ));
+  }
+
+  const editableBasicColumns = basicColumns.filter((column) => !column.readonly);
+  const looksLikeBasicGrid = nonEmptyRows.every((row) => (
+    row.length <= editableBasicColumns.length
+    || /^\d+\/\d+\s*설정$/.test(String(row[basicColumns.length - 1] ?? "").trim())
+  ));
+  const columns = looksLikeBasicGrid ? editableBasicColumns : importColumns;
+  return nonEmptyRows.map((row) => Object.fromEntries(
+    columns.map((column, index) => [column.key, row[index] ?? ""]),
+  ));
+}

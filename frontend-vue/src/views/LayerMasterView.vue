@@ -4,7 +4,7 @@ import { AlertTriangle, CheckCircle2, ChevronDown, ClipboardPaste, Download, Plu
 import * as XLSX from "xlsx-js-style";
 import { api } from "../api/client";
 import SpreadsheetGrid from "../components/grid/SpreadsheetGrid.vue";
-import { filterLayerMasterRows, layerMasterBaseColumns, layerMasterColumns, layerMasterPayload, layerMasterPriorityColumns, layerMasterRows } from "../domain/layerMaster";
+import { filterLayerMasterRows, layerMasterBaseColumns, layerMasterColumns, layerMasterPasteRows, layerMasterPayload, layerMasterPriorityColumns, layerMasterRows } from "../domain/layerMaster";
 import { parseTsv } from "../domain/tsv";
 import { useAppStore } from "../stores/app";
 import { useProjectStore } from "../stores/project";
@@ -219,10 +219,7 @@ async function removeSelected() {
   }
 }
 function rowsFromMatrix(matrix: unknown[][]): Row[] {
-  const keys = importColumns.value.map((column) => column.key);
-  return matrix
-    .filter((row) => row.some((cell) => String(cell ?? "").trim()))
-    .map((row) => Object.fromEntries(keys.map((key, index) => [key, row[index] ?? ""])));
+  return layerMasterPasteRows(matrix, basicColumns.value, importColumns.value);
 }
 function layerMasterImportRequest(sourceRows: Row[]): LayerMasterImportRequest {
   return {

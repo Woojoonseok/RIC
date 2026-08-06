@@ -21,6 +21,8 @@ from .routers import (
     snapshots,
     users,
     validation,
+    validation_rules,
+    workflow,
 )
 from .services.box_presets import ensure_default_box_presets
 from .services.migrations import migration_status, upgrade_database
@@ -105,11 +107,13 @@ app.include_router(align_trees.router)
 app.include_router(leases.router)
 app.include_router(graph.router)
 app.include_router(validation.router)
+app.include_router(validation_rules.router)
 app.include_router(project_reference.router)
 app.include_router(project_layer_master.router)
 app.include_router(layer_master_imports.router)
 app.include_router(relation_imports.router)
 app.include_router(snapshots.router)
+app.include_router(workflow.router)
 
 # Keep SQLAlchemy model imports reachable for metadata registration.
 _models = models

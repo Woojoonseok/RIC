@@ -180,6 +180,19 @@ class AlignTree(Base, TimestampMixin):
     )
     revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    workflow_status: Mapped[str] = mapped_column(String(20), nullable=False, default="draft", server_default="draft")
+    workflow_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    review_requested_by_actor_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    review_requested_by_label: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    review_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reviewed_by_actor_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    reviewed_by_label: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    approved_snapshot_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    published_snapshot_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    published_by_actor_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    published_by_label: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
 
     project: Mapped[Project] = relationship(back_populates="align_trees")
@@ -433,6 +446,25 @@ class KeyShape(Base, TimestampMixin):
     key_shape: Mapped[str] = mapped_column(String(120), nullable=False)
     drawing_guide: Mapped[str | None] = mapped_column(String(200), nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class ValidationRule(Base, TimestampMixin):
+    __tablename__ = "validation_rules"
+    __table_args__ = (UniqueConstraint("project_id", "name", name="uq_validation_rules_project_name"),)
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    target_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    rule_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    field_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    expected_values: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    severity: Mapped[str] = mapped_column(String(20), nullable=False, default="error")
+    message: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="1")
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 
 
 class LayerMaster(Base, TimestampMixin):

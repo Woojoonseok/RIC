@@ -13,12 +13,23 @@ docs/           초기 코드 분석, 차이표, 구현 가정
 
 ## 로컬 실행
 
-Python 3.11 이상과 Node.js가 필요하다. 기본 DB는 저장소 루트의 `ric-dev.db`다.
+Python 3.12와 Node.js가 필요하다. 백엔드는 Python 3.12에서 검증하며, pip의 과도한 버전 탐색을 방지하기 위해 pytest와 Ruff 버전을 고정한다. 기본 DB는 저장소 루트의 `ric-dev.db`다.
+
+처음 설치하거나 기존 가상환경을 새로 만들 때 저장소 루트에서 실행한다.
 
 ```powershell
-python -m venv backend\.venv
-backend\.venv\Scripts\python.exe -m pip install -e "backend[dev]"
+if (Test-Path backend\.venv) { Remove-Item -Recurse -Force backend\.venv }
+py -3.12 -m venv backend\.venv
+backend\.venv\Scripts\python.exe -m pip install --upgrade pip setuptools wheel
+backend\.venv\Scripts\python.exe -m pip install --prefer-binary -e "backend[dev]"
 backend\.venv\Scripts\python.exe -m uvicorn app.main:app --app-dir backend --reload
+```
+
+설치 중 `pip is looking at multiple versions`가 반복되면 Python 버전을 먼저 확인한다. 반드시 `Python 3.12.x`가 표시되어야 한다.
+
+```powershell
+backend\.venv\Scripts\python.exe --version
+backend\.venv\Scripts\python.exe -m pip check
 ```
 
 다른 PowerShell에서 Vue UI를 실행한다.
@@ -80,8 +91,8 @@ python -m uvicorn app.main:app --app-dir backend --reload
 
 ```powershell
 $env:PYTHONPATH = "backend"
-python -m pytest backend/tests -q
-ruff check backend/app backend/tests
+backend\.venv\Scripts\python.exe -m pytest backend/tests -q
+backend\.venv\Scripts\python.exe -m ruff check backend/app backend/tests
 
 cd frontend-vue
 pnpm test

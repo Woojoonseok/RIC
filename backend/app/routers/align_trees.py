@@ -9,7 +9,12 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import get_db
 from ..services.audit import record_project_event
-from ..services.project_access import ProjectContext, get_project_context, require_project_mutation
+from ..services.project_access import (
+    ProjectContext,
+    get_project_context,
+    require_draft_align_tree,
+    require_project_mutation,
+)
 
 router = APIRouter(prefix="/api/projects/{project_id}/align-trees", tags=["align trees"])
 
@@ -108,7 +113,7 @@ def update_align_tree(
     context: ProjectContext = Depends(require_project_mutation),
     db: Session = Depends(get_db),
 ) -> models.AlignTree:
-    tree = _tree_or_404(db, project_id, align_tree_id)
+    tree = require_draft_align_tree(db, project_id, align_tree_id)
     before = {
         "name": tree.name,
         "description": tree.description,

@@ -3,7 +3,7 @@ import { defineStore } from "pinia";
 import { ApiError, api } from "../api/client";
 import { cloneJson } from "../domain/clone";
 import { computeDisplayGraph, expandRelationCandidates, graphRestoreFromGraph, groupMaps, isMergedLayer } from "../domain/graph";
-import type { Graph, RelationCreate } from "../types";
+import type { DeleteImpactReport, Graph, RelationCreate } from "../types";
 import { useAppStore } from "./app";
 import { useProjectStore } from "./project";
 import { useReferenceStore } from "./reference";
@@ -18,6 +18,8 @@ export const useGraphStore = defineStore("graph", () => {
   const rawGraph = ref<Graph | null>(null);
   const undoStack = ref<Graph[]>([]);
   const redoStack = ref<Graph[]>([]);
+  const deleteImpact = ref<DeleteImpactReport | null>(null);
+  let deleteImpactResolver: ((confirmed: boolean) => void) | null = null;
 
   const displayGraph = computed(() => rawGraph.value ? computeDisplayGraph(rawGraph.value) : null);
   const groupData = computed(() => rawGraph.value ? groupMaps(rawGraph.value) : { anchorByLayerId: {}, groupToLayerIds: {} });
@@ -36,11 +38,24 @@ export const useGraphStore = defineStore("graph", () => {
   }
 
   function resetGraph() {
+    finishDeleteImpact(false);
     setGraph(null);
     undoStack.value = [];
     redoStack.value = [];
     app.clearSelection();
     app.clearCanvasActivity();
+  }
+
+  function requestDeleteImpact(report: DeleteImpactReport) {
+    finishDeleteImpact(false);
+    deleteImpact.value = report;
+    return new Promise<boolean>((resolve) => { deleteImpactResolver = resolve });
+  }
+
+  function finishDeleteImpact(confirmed: boolean) {
+    deleteImpactResolver?.(confirmed);
+    deleteImpactResolver = null;
+    deleteImpact.value = null;
   }
 
   function remember(previous: Graph | null) {
@@ -152,11 +167,12 @@ export const useGraphStore = defineStore("graph", () => {
     try {
       for (const item of selected) {
         if (item.kind === "layer") {
-          const preview = await api.deletePreview(project.projectId, item.id);
-          const relationCount = preview.incoming.length + preview.outgoing.length;
-          if (relationCount && !confirm(`연결 관계 ${relationCount}개와 함께 삭제할까요?`)) continue;
+          const impact = await api.layerImpact(project.projectId, item.id);
+          if (!await requestDeleteImpact(impact)) continue;
           await api.deleteLayer(project.projectId, item.id);
         } else if (item.kind === "relation") {
+          const impact = await api.relationImpact(project.projectId, item.id);
+          if (!await requestDeleteImpact(impact)) continue;
           await api.deleteRelation(project.projectId, item.id);
         } else {
           await api.deleteText(project.projectId, item.id);
@@ -175,6 +191,7 @@ export const useGraphStore = defineStore("graph", () => {
 
   return {
     rawGraph, displayGraph, undoStack, redoStack, anchorByLayerId, groupToLayerIds, groupSizeByLayerId,
-    setGraph, resetGraph, loadGraph, reloadGraph, mutateGraph, createRelationExpanded, undo, redo, deleteSelection,
+    deleteImpact, setGraph, resetGraph, loadGraph, reloadGraph, mutateGraph, createRelationExpanded, undo, redo,
+    deleteSelection, requestDeleteImpact, finishDeleteImpact,
   };
 });

@@ -11,6 +11,7 @@ from .. import crud, models, schemas
 from ..database import get_db
 from ..services.audit import record_project_event
 from ..services.layout import apply_auto_layout
+from ..services.impact import build_layer_impact, build_relation_impact
 from ..services.layer_master_sync import (
     _apply_master_to_layer,
     sync_layer_master,
@@ -1003,17 +1004,37 @@ def merge_layers(
         # Use the existing group (only one group at this point due to validations above)
         next_group = next(iter(unique_groups))
     else:
-        # Find next available group number
-        all_groups = db.query(models.LayerRelation.same_group).filter(
-            models.LayerRelation.project_id == project_id,
-            models.LayerRelation.align_tree_id == align_tree_id,
-            models.LayerRelation.same_group.is_not(None),
-            models.LayerRelation.same_group != ""
-        ).all()
+        # Group labels are canonical project-wide Layer Master data. Include
+        # lone pending groups too, otherwise a new Editor merge can reuse a
+        # hidden label and accidentally absorb an unrelated Layer.
+        group_labels = {
+            value
+            for (value,) in db.query(models.LayerMaster.group).filter(
+                models.LayerMaster.project_id == project_id,
+                models.LayerMaster.group.is_not(None),
+                models.LayerMaster.group != "",
+            ).all()
+        }
+        group_labels.update(
+            value
+            for (value,) in db.query(models.Layer.pending_group).filter(
+                models.Layer.project_id == project_id,
+                models.Layer.pending_group.is_not(None),
+                models.Layer.pending_group != "",
+            ).all()
+        )
+        group_labels.update(
+            value
+            for (value,) in db.query(models.LayerRelation.same_group).filter(
+                models.LayerRelation.project_id == project_id,
+                models.LayerRelation.same_group.is_not(None),
+                models.LayerRelation.same_group != "",
+            ).all()
+        )
         group_numbers = []
-        for g in all_groups:
+        for label in group_labels:
             try:
-                group_numbers.append(int(g[0]))
+                group_numbers.append(int(label))
             except ValueError:
                 pass
         next_group = str(max(group_numbers) + 1) if group_numbers else "1"
@@ -1968,6 +1989,17 @@ def preview_layer_delete(
     return {"incoming": incoming, "outgoing": outgoing}
 
 
+@router.get("/layers/{layer_id}/impact", response_model=schemas.LayerImpactReport)
+def read_layer_impact(
+    project_id: uuid.UUID,
+    align_tree_id: uuid.UUID,
+    layer_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> schemas.LayerImpactReport:
+    layer = crud.get_layer_or_404(db, project_id, align_tree_id, layer_id)
+    return build_layer_impact(db, project_id, align_tree_id, layer)
+
+
 @router.delete("/layers/{layer_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_layer(
     project_id: uuid.UUID,
@@ -1978,6 +2010,7 @@ def delete_layer(
 ) -> None:
     layer = crud.get_layer_or_404(db, project_id, align_tree_id, layer_id)
     layer_name = layer.name
+    impact = build_layer_impact(db, project_id, align_tree_id, layer)
     snapshot = _audit_field_values(
         layer,
         ["name", "step", "layer_property", "align", "align_side", "description", "pending_group"],
@@ -1992,7 +2025,15 @@ def delete_layer(
         target_type="layer",
         target_id=layer_id,
         summary=f"Deleted layer {layer_name}",
-        details={"values": snapshot},
+        details={
+            "values": snapshot,
+            "impact": {
+                "relations_deleted": len(impact.direct_relations),
+                "attachments_detached": len(impact.attachment_relations),
+                "overlay_keys": impact.overlay_key_count,
+                "export_rows": impact.export_row_count,
+            },
+        },
     )
     db.commit()
 
@@ -2114,6 +2155,17 @@ def update_relation(
     return relation
 
 
+@router.get("/relations/{relation_id}/impact", response_model=schemas.RelationImpactReport)
+def read_relation_impact(
+    project_id: uuid.UUID,
+    align_tree_id: uuid.UUID,
+    relation_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> schemas.RelationImpactReport:
+    relation = crud.get_relation_or_404(db, project_id, align_tree_id, relation_id)
+    return build_relation_impact(db, project_id, align_tree_id, relation)
+
+
 @router.delete("/relations/{relation_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_relation(
     project_id: uuid.UUID,
@@ -2123,6 +2175,7 @@ def delete_relation(
     db: Session = Depends(get_db),
 ) -> None:
     relation = crud.get_relation_or_404(db, project_id, align_tree_id, relation_id)
+    impact = build_relation_impact(db, project_id, align_tree_id, relation)
     snapshot = _audit_field_values(
         relation,
         [
@@ -2146,6 +2199,11 @@ def delete_relation(
             "outer_size",
         ],
     )
+    tree = db.get(models.AlignTree, align_tree_id)
+    if tree is not None:
+        tree.final_table_cells = {
+            key: value for key, value in tree.final_table_cells.items() if key != str(relation_id)
+        }
     db.delete(relation)
     _audit_graph_mutation(
         db,
@@ -2156,7 +2214,14 @@ def delete_relation(
         target_type="relation",
         target_id=relation_id,
         summary="Deleted layer relation",
-        details={"values": snapshot},
+        details={
+            "values": snapshot,
+            "impact": {
+                "attachments_detached": len(impact.attachment_relations),
+                "overlay_keys": impact.overlay_key_count,
+                "export_rows": impact.export_row_count,
+            },
+        },
     )
     db.commit()
 
