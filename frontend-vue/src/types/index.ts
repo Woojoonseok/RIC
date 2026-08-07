@@ -338,6 +338,66 @@ export interface SnapshotDiff {
   warnings: string[];
   has_changes: boolean;
 }
+export type ReviewTargetType = "layer" | "relation" | "text_box" | "canvas" | "validation_issue" | "snapshot";
+export interface ReviewTargetDraft {
+  target_type: ReviewTargetType;
+  target_id?: string | null;
+  target_key?: string | null;
+  target_label: string;
+  anchor_x?: number | null;
+  anchor_y?: number | null;
+}
+export interface ReviewAttachmentInput {
+  kind: "before" | "after";
+  filename: string;
+  mime_type: "image/png" | "image/jpeg" | "image/webp";
+  data_base64: string;
+}
+export interface ReviewAttachment {
+  id: string;
+  kind: "before" | "after";
+  filename: string;
+  mime_type: string;
+  size_bytes: number;
+}
+export interface ReviewComment {
+  id: string;
+  thread_id: string;
+  parent_comment_id?: string | null;
+  author?: UserSummary | null;
+  author_label: string;
+  body: string;
+  attachments: ReviewAttachment[];
+  created_at: string;
+  updated_at: string;
+}
+export interface ReviewThread {
+  id: string;
+  project_id: string;
+  align_tree_id: string;
+  target_type: ReviewTargetType;
+  target_id?: string | null;
+  target_key?: string | null;
+  target_label: string;
+  anchor_x?: number | null;
+  anchor_y?: number | null;
+  status: "open" | "resolved";
+  created_by?: UserSummary | null;
+  assignee?: UserSummary | null;
+  resolved_by?: UserSummary | null;
+  resolved_at?: string | null;
+  comments: ReviewComment[];
+  created_at: string;
+  updated_at: string;
+}
+export interface ReviewThreadCreate extends ReviewTargetDraft {
+  align_tree_id: string;
+  assignee_actor_id?: string | null;
+  body: string;
+  mentioned_actor_ids?: string[];
+  attachments?: ReviewAttachmentInput[];
+}
+export interface ReviewNotification { id: string; thread_id: string; comment_id: string; target_label: string; author_label: string; body: string; read_at?: string | null; created_at: string }
 export interface LayerMergeRequest { layer_ids: string[]; name?: string | null }
 export interface LayerSplitRequest { orientation?: "vertical" | "horizontal" }
 

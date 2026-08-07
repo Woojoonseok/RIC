@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { AlertTriangle, CheckCircle2, GitCompareArrows, History, Plus, RotateCcw, Trash2, X } from "@lucide/vue";
+import { AlertTriangle, CheckCircle2, GitCompareArrows, History, MessageSquare, Plus, RotateCcw, Trash2, X } from "@lucide/vue";
 import { api } from "../../api/client";
 import { useAppStore } from "../../stores/app";
 import { useGraphStore } from "../../stores/graph";
@@ -50,6 +50,10 @@ function treeFieldLabel(field: string) {
     layer_gds_names: "Layer GDS",
     final_table_cells: "Final Table",
   } as Record<string, string>)[field] ?? field;
+}
+function reviewSnapshot(snapshot: SnapshotSummary) {
+  emit("close");
+  app.openReview({ target_type: "snapshot", target_id: snapshot.id, target_label: `Snapshot · ${snapshot.name}` });
 }
 async function load() {
   if (!project.projectId) return;
@@ -201,7 +205,7 @@ watch([selectedId, targetId], () => {
         <section v-if="selected" class="snapshot-detail">
           <div class="snapshot-detail-heading">
             <div><h3>{{ selected.name }}</h3><p>{{ selected.description || "설명 없음" }}</p></div>
-            <button v-if="project.canEdit" type="button" class="danger ghost" title="스냅샷 삭제" @click="removeSnapshot(selected)"><Trash2 :size="16"/>삭제</button>
+            <div class="snapshot-detail-actions"><button type="button" title="스냅샷 리뷰" @click="reviewSnapshot(selected)"><MessageSquare :size="16"/>리뷰</button><button v-if="project.canEdit" type="button" class="danger ghost" title="스냅샷 삭제" @click="removeSnapshot(selected)"><Trash2 :size="16"/>삭제</button></div>
           </div>
 
           <div class="snapshot-compare-toolbar">

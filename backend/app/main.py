@@ -17,6 +17,7 @@ from .routers import (
     project_reference,
     projects,
     relation_imports,
+    reviews,
     session,
     snapshots,
     users,
@@ -112,6 +113,7 @@ app.include_router(project_reference.router)
 app.include_router(project_layer_master.router)
 app.include_router(layer_master_imports.router)
 app.include_router(relation_imports.router)
+app.include_router(reviews.router)
 app.include_router(snapshots.router)
 app.include_router(workflow.router)
 

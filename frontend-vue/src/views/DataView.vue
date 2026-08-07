@@ -566,7 +566,7 @@ onMounted(async () => {
             <summary>데이터 도구<ChevronDown :size="14"/></summary>
             <div>
               <button type="button" @click="downloadRelationTemplate"><Download :size="15"/>템플릿 다운로드</button>
-              <button type="button" @click="downloadCurrentRelationTable"><Download :size="15"/>Relation Table 다운로드</button>
+              <button type="button" class="relation-table-download" @click="downloadCurrentRelationTable"><Download :size="15"/><span>Relation Table<br>다운로드</span></button>
               <button type="button" :disabled="!project.canEdit" @click="pasteOpen = true"><ClipboardPaste :size="15"/>표 붙여넣기</button>
             </div>
           </details>

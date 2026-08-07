@@ -8,6 +8,7 @@ import {
   Layers3,
   Link2,
   Merge,
+  MessageSquare,
   MoreHorizontal,
   MousePointer2,
   Palette,
@@ -122,6 +123,7 @@ async function splitSelected() {
       <button v-if="splitLayerId" :disabled="!project.canEdit" title="병합 그룹 분리" @click="splitSelected"><Split :size="16"/><span>분리</span></button>
       <button class="danger toolbar-icon-button" :disabled="!project.canEdit || !app.selection.length" title="선택 항목 삭제" aria-label="선택 항목 삭제" @click="graph.deleteSelection"><Trash2 :size="17"/></button>
     </div>
+    <button class="toolbar-command" title="코멘트 및 이슈" @click="app.openReview()"><MessageSquare :size="16"/><span>리뷰</span></button>
     <details class="toolbar-more">
       <summary aria-label="더보기" title="더보기"><MoreHorizontal :size="18"/><ChevronDown :size="13"/></summary>
       <div>

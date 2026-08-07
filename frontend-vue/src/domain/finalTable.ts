@@ -20,6 +20,7 @@ export interface FinalTableRow {
   keyDrawingType: string;
   inner: string;
   outer: string;
+  markerValues: Record<string, string>;
 }
 
 export interface FinalTableData {
@@ -67,19 +68,23 @@ export function buildFinalTable(
   keyDrawingTypes: KeyDrawingType[],
 ): FinalTableData {
   const masterById = new Map(masters.map((master) => [master.id, master]));
-  const layerById = new Map(graph.layers.map((layer) => [layer.id, layer]));
+  const masterByName = new Map(masters.map((master) => [master.name.trim().toLocaleLowerCase("ko"), master]));
   const layoutNameById = new Map(keyLayoutTypes.map((layout) => [layout.id, layout.name]));
   const drawingById = new Map(keyDrawingTypes.map((drawing) => [drawing.id, drawing]));
-  const masterForLayer = (layer: Layer | undefined) => (
-    layer?.layer_master_id ? masterById.get(layer.layer_master_id) : undefined
-  );
-  const numberForLayer = (layer: Layer | undefined) => (
-    formatLayerNumber(masterForLayer(layer)?.layer_number)
-  );
+  const masterForLayer = (layer: Layer | undefined) => {
+    if (!layer) return undefined;
+    const linked = layer.layer_master_id ? masterById.get(layer.layer_master_id) : undefined;
+    return linked ?? masterByName.get(layer.name.trim().toLocaleLowerCase("ko"));
+  };
+  const masterByLayerId = new Map(graph.layers.map((layer) => [layer.id, masterForLayer(layer)]));
+  const numberByLayerId = new Map(graph.layers.map((layer) => [
+    layer.id,
+    formatLayerNumber(masterByLayerId.get(layer.id)?.layer_number),
+  ]));
 
   const layers = graph.layers
     .map((layer, index) => {
-      const master = masterForLayer(layer);
+      const master = masterByLayerId.get(layer.id);
       return {
         index,
         layerId: layer.id,
@@ -113,10 +118,10 @@ export function buildFinalTable(
       const childKey = endpointKey(relation, "child");
       const inner = relation.parent_endpoint_type === "spare"
         ? "SPARE"
-        : numberForLayer(layerById.get(relation.parent_layer_id!));
+        : numberByLayerId.get(relation.parent_layer_id!) ?? "";
       const outer = relation.child_endpoint_type === "spare"
         ? "SPARE"
-        : numberForLayer(layerById.get(relation.child_layer_id!));
+        : numberByLayerId.get(relation.child_layer_id!) ?? "";
       const pair = `${parentKey}\u0000${childKey}`;
       const count = (duplicateCounts.get(pair) ?? 0) + 1;
       duplicateCounts.set(pair, count);
@@ -132,6 +137,15 @@ export function buildFinalTable(
           : "",
         inner,
         outer,
+        markerValues: Object.fromEntries(layers.map((layer) => [
+          layer.layerId,
+          Object.prototype.hasOwnProperty.call(
+            graph.align_tree?.final_table_cells?.[relation.id] ?? {},
+            layer.layerId,
+          )
+            ? graph.align_tree!.final_table_cells![relation.id][layer.layerId]
+            : layer.marker,
+        ])),
       };
     });
 

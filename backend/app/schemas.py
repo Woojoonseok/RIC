@@ -174,6 +174,106 @@ class WorkflowTransitionRequest(BaseModel):
     note: str = Field(min_length=1, max_length=1000)
 
 
+ReviewTargetType = Literal["layer", "relation", "text_box", "canvas", "validation_issue", "snapshot"]
+
+
+class ReviewThreadCreate(BaseModel):
+    align_tree_id: uuid.UUID
+    target_type: ReviewTargetType
+    target_id: uuid.UUID | None = None
+    target_key: str | None = Field(default=None, max_length=240)
+    target_label: str = Field(min_length=1, max_length=240)
+    anchor_x: float | None = None
+    anchor_y: float | None = None
+    assignee_actor_id: uuid.UUID | None = None
+    body: str = Field(min_length=1, max_length=5000)
+    mentioned_actor_ids: list[uuid.UUID] = Field(default_factory=list, max_length=20)
+    attachments: list["ReviewAttachmentCreate"] = Field(default_factory=list, max_length=2)
+
+    @model_validator(mode="after")
+    def validate_target(self) -> "ReviewThreadCreate":
+        if self.target_type in {"layer", "relation", "text_box", "snapshot"} and self.target_id is None:
+            raise ValueError("target_id is required for this review target")
+        if self.target_type == "validation_issue" and not self.target_key:
+            raise ValueError("target_key is required for a validation issue")
+        return self
+
+
+class ReviewThreadUpdate(BaseModel):
+    status: Literal["open", "resolved"] | None = None
+    assignee_actor_id: uuid.UUID | None = None
+    assignee_set: bool = False
+
+
+class ReviewCommentCreate(BaseModel):
+    body: str = Field(min_length=1, max_length=5000)
+    parent_comment_id: uuid.UUID | None = None
+    mentioned_actor_ids: list[uuid.UUID] = Field(default_factory=list, max_length=20)
+    attachments: list["ReviewAttachmentCreate"] = Field(default_factory=list, max_length=2)
+
+
+class ReviewAttachmentCreate(BaseModel):
+    kind: Literal["before", "after"]
+    filename: str = Field(min_length=1, max_length=240)
+    mime_type: Literal["image/png", "image/jpeg", "image/webp"]
+    data_base64: str = Field(min_length=1, max_length=3_000_000)
+
+
+class ReviewAttachmentRead(BaseModel):
+    id: uuid.UUID
+    kind: Literal["before", "after"]
+    filename: str
+    mime_type: str
+    size_bytes: int
+
+
+class ReviewCommentRead(BaseModel):
+    id: uuid.UUID
+    thread_id: uuid.UUID
+    parent_comment_id: uuid.UUID | None = None
+    author: ActorSummary | None = None
+    author_label: str
+    body: str
+    attachments: list[ReviewAttachmentRead] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class ReviewThreadRead(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    align_tree_id: uuid.UUID
+    target_type: ReviewTargetType
+    target_id: uuid.UUID | None = None
+    target_key: str | None = None
+    target_label: str
+    anchor_x: float | None = None
+    anchor_y: float | None = None
+    status: Literal["open", "resolved"]
+    created_by: ActorSummary | None = None
+    assignee: ActorSummary | None = None
+    resolved_by: ActorSummary | None = None
+    resolved_at: datetime | None = None
+    comments: list[ReviewCommentRead] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class ReviewNotificationRead(BaseModel):
+    id: uuid.UUID
+    thread_id: uuid.UUID
+    comment_id: uuid.UUID
+    target_label: str
+    author_label: str
+    body: str
+    read_at: datetime | None = None
+    created_at: datetime
+
+
+class ReviewNotificationReadRequest(BaseModel):
+    notification_ids: list[uuid.UUID] = Field(default_factory=list, max_length=100)
+
+
 class ActorRead(OrmModel):
     id: uuid.UUID
     display_name: str

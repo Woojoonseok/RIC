@@ -151,4 +151,20 @@ describe("final table", () => {
       ["SPAREtoSPARE2", "SPARE", "SPARE"],
     ]);
   });
+
+  it("falls back to the Layer name when an imported Layer lost its master id", () => {
+    const restoredGraph: Graph = {
+      ...graph,
+      layers: graph.layers.map((row) => ({ ...row, layer_master_id: null })),
+      relations: [relation("restored-relation", "2026-01-01")],
+    };
+
+    const table = buildFinalTable(restoredGraph, masters, [], []);
+
+    expect(table.rows[0]).toMatchObject({
+      keyName: "380to390",
+      inner: "38.0",
+      outer: "39.0",
+    });
+  });
 });

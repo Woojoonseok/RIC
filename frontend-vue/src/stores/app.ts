@@ -1,6 +1,6 @@
 import { computed, ref } from "vue";
 import { defineStore } from "pinia";
-import type { AppView, EditorMode, Point, SelectionItem } from "../types";
+import type { AppView, EditorMode, Point, ReviewTargetDraft, SelectionItem } from "../types";
 
 export const useAppStore = defineStore("app", () => {
   const storedVisibility = (key: string) => typeof localStorage === "undefined" || localStorage.getItem(key) !== "0";
@@ -15,6 +15,8 @@ export const useAppStore = defineStore("app", () => {
   const lastCanvasActivity = ref<Point | null>(null);
   const showBoxPresetLegend = ref(storedVisibility("ric-editor-box-preset-legend"));
   const showArrowLegend = ref(storedVisibility("ric-editor-arrow-legend"));
+  const reviewOpen = ref(false);
+  const reviewTarget = ref<ReviewTargetDraft | null>(null);
 
   const selectedLayerIds = computed(() => selection.value.filter((item) => item.kind === "layer").map((item) => item.id));
   const selectedSplitLayerId = computed(() => selectedLayerIds.value.length === 1 ? selectedLayerIds.value[0] : null);
@@ -44,6 +46,8 @@ export const useAppStore = defineStore("app", () => {
   function clearSelection() { selection.value = [] }
   function markCanvasActivity(point: Point) { lastCanvasActivity.value = { ...point } }
   function clearCanvasActivity() { lastCanvasActivity.value = null }
+  function openReview(target: ReviewTargetDraft | null = null) { reviewTarget.value = target; reviewOpen.value = true }
+  function closeReview() { reviewOpen.value = false; reviewTarget.value = null }
   function setLegendVisibility(legend: "box" | "arrow", visible: boolean) {
     if (legend === "box") showBoxPresetLegend.value = visible;
     else showArrowLegend.value = visible;
@@ -57,7 +61,7 @@ export const useAppStore = defineStore("app", () => {
 
   return {
     view, mode, status, busy, selection, labelField, focusRequest, layerMasterPickerOpen, lastCanvasActivity,
-    showBoxPresetLegend, showArrowLegend, selectedLayerIds, selectedSplitLayerId, run, select, clearSelection,
-    markCanvasActivity, clearCanvasActivity, setLegendVisibility,
+    showBoxPresetLegend, showArrowLegend, reviewOpen, reviewTarget, selectedLayerIds, selectedSplitLayerId, run, select, clearSelection,
+    markCanvasActivity, clearCanvasActivity, openReview, closeReview, setLegendVisibility,
   };
 });

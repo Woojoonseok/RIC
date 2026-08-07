@@ -75,6 +75,30 @@ def _validation_gate(db: Session, project_id: uuid.UUID, align_tree_id: uuid.UUI
         )
 
 
+def _review_gate(db: Session, project_id: uuid.UUID, align_tree_id: uuid.UUID) -> None:
+    open_threads = (
+        db.query(models.ReviewThread)
+        .filter(
+            models.ReviewThread.project_id == project_id,
+            models.ReviewThread.align_tree_id == align_tree_id,
+            models.ReviewThread.status == "open",
+        )
+        .order_by(models.ReviewThread.updated_at.desc())
+        .all()
+    )
+    if open_threads:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "Open review threads must be resolved before approval",
+                "reviews": [
+                    {"id": str(row.id), "target_type": row.target_type, "target_label": row.target_label}
+                    for row in open_threads
+                ],
+            },
+        )
+
+
 def _approval_snapshot(
     db: Session,
     context: ProjectContext,
@@ -177,6 +201,7 @@ def approve_review(
     tree = _tree_or_404(db, project_id, align_tree_id)
     _require_state(tree, "in_review")
     _validation_gate(db, project_id, align_tree_id)
+    _review_gate(db, project_id, align_tree_id)
     now = datetime.now(UTC)
     snapshot = _approval_snapshot(db, context, tree, payload.note.strip(), now)
     previous = tree.workflow_status

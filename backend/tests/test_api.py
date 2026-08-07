@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import uuid
 from collections.abc import Generator
 from datetime import datetime, timedelta, timezone
@@ -25,6 +26,7 @@ from app.routers import (
     project_reference,
     projects,
     relation_imports,
+    reviews,
     session,
     snapshots,
     users,
@@ -65,6 +67,7 @@ def client() -> Generator[TestClient, None, None]:
         project_layer_master.router,
         layer_master_imports.router,
         relation_imports.router,
+        reviews.router,
         snapshots.router,
         workflow.router,
     ):
@@ -665,6 +668,86 @@ def test_align_tree_review_approval_publish_and_reopen_workflow(client: TestClie
         json={"name": "Next revision"},
     )
     assert editable_again.status_code == 200, editable_again.text
+
+
+def test_review_threads_comments_assignment_and_approval_gate(client: TestClient) -> None:
+    project_id = create_project(client)
+    tree_id = default_tree_id(client, project_id)
+    layer_id = create_layer(client, project_id, "Review target", tree_id=tree_id)
+    actor_id = client.get("/api/me").json()["id"]
+    mentioned_actor_id = uuid.uuid4()
+    with client.app.state.session_factory() as db:
+        db.add(models.Actor(id=mentioned_actor_id, display_name="Review Partner"))
+        db.add(models.ProjectMember(
+            project_id=uuid.UUID(project_id), actor_id=mentioned_actor_id, role="editor",
+            added_by_actor_id=uuid.UUID(actor_id),
+        ))
+        db.commit()
+    reviews_url = f"/api/projects/{project_id}/review-threads"
+
+    created = client.post(
+        reviews_url,
+        json={
+            "align_tree_id": tree_id,
+            "target_type": "layer",
+            "target_id": layer_id,
+            "target_label": "Layer: Review target",
+            "assignee_actor_id": actor_id,
+            "body": "Check the layer metadata before approval.",
+            "mentioned_actor_ids": [str(mentioned_actor_id)],
+            "attachments": [{
+                "kind": "before",
+                "filename": "before.png",
+                "mime_type": "image/png",
+                "data_base64": base64.b64encode(b"review-image").decode("ascii"),
+            }],
+        },
+    )
+    assert created.status_code == 201, created.text
+    thread = created.json()
+    assert thread["status"] == "open"
+    assert thread["assignee"]["id"] == actor_id
+    assert [row["body"] for row in thread["comments"]] == ["Check the layer metadata before approval."]
+    attachment = thread["comments"][0]["attachments"][0]
+    assert attachment["kind"] == "before"
+    image = client.get(f"{reviews_url}/attachments/{attachment['id']}")
+    assert image.status_code == 200, image.text
+    assert image.content == b"review-image"
+    with client.app.state.session_factory() as db:
+        notification = db.query(models.ReviewNotification).filter(
+            models.ReviewNotification.actor_id == mentioned_actor_id,
+        ).one()
+        assert notification.comment_id == uuid.UUID(thread["comments"][0]["id"])
+
+    notifications = client.get(f"{reviews_url}/notifications")
+    assert notifications.status_code == 200, notifications.text
+    assert notifications.json() == []
+    marked = client.post(f"{reviews_url}/notifications/read", json={"notification_ids": []})
+    assert marked.status_code == 204, marked.text
+
+    replied = client.post(
+        f"{reviews_url}/{thread['id']}/comments",
+        json={"body": "Updated and ready for another look.", "parent_comment_id": thread["comments"][0]["id"]},
+    )
+    assert replied.status_code == 201, replied.text
+    assert len(replied.json()["comments"]) == 2
+    assert replied.json()["comments"][1]["parent_comment_id"] == thread["comments"][0]["id"]
+
+    listed = client.get(reviews_url, params={"align_tree_id": tree_id, "status": "open"})
+    assert listed.status_code == 200, listed.text
+    assert [row["id"] for row in listed.json()] == [thread["id"]]
+
+    workflow_url = f"/api/projects/{project_id}/align-trees/{tree_id}/workflow"
+    assert client.post(f"{workflow_url}/request-review", json={"note": "Review requested"}).status_code == 200
+    blocked = client.post(f"{workflow_url}/approve", json={"note": "Approve"})
+    assert blocked.status_code == 409, blocked.text
+    assert blocked.json()["detail"]["reviews"][0]["id"] == thread["id"]
+
+    resolved = client.patch(f"{reviews_url}/{thread['id']}", json={"status": "resolved"})
+    assert resolved.status_code == 200, resolved.text
+    assert resolved.json()["resolved_by"]["id"] == actor_id
+    approved = client.post(f"{workflow_url}/approve", json={"note": "Approved after review"})
+    assert approved.status_code == 200, approved.text
 
 
 def test_configurable_validation_rules_are_applied_and_manageable(client: TestClient) -> None:

@@ -5,6 +5,7 @@ import type {
   BoxPreset, Graph, KeyDrawingType, KeyLayoutType, KeyShape, LayerMaster, ReferenceReadMap,
   ReferenceResource, RelationStyle,
 } from "../types";
+import { useProjectStore } from "./project";
 
 export const useReferenceStore = defineStore("reference", () => {
   const keyLayoutTypes = ref<KeyLayoutType[]>([]);
@@ -15,6 +16,8 @@ export const useReferenceStore = defineStore("reference", () => {
   const layerMasters = ref<LayerMaster[]>([]);
   const selectedRelationStyleId = ref("");
   const selectedBoxPresetId = ref("");
+  let loadNonce = 0;
+  let pendingLoad: { projectId: string; promise: Promise<boolean> } | null = null;
 
   function replaceById<T extends { id: string }>(rows: T[], row: T) {
     const index = rows.findIndex((item) => item.id === row.id);
@@ -71,18 +74,32 @@ export const useReferenceStore = defineStore("reference", () => {
   }
 
   async function loadAll() {
-    const [layouts, drawings, shapes, styles, presets, masters] = await Promise.all([
-      api.keyLayoutTypes(), api.keyDrawingTypes(), api.keyShapes(), api.relationStyles(), api.boxPresets(), api.layerMasters(),
-    ]);
-    keyLayoutTypes.value = layouts;
-    keyDrawingTypes.value = drawings;
-    keyShapes.value = shapes;
-    relationStyles.value = styles;
-    boxPresets.value = presets;
-    layerMasters.value = masters;
-    if (!styles.some((row) => row.id === selectedRelationStyleId.value)) selectedRelationStyleId.value = styles[0]?.id ?? "";
-    if (!presets.some((row) => row.id === selectedBoxPresetId.value)) {
-      selectedBoxPresetId.value = presets.find((row) => row.is_default)?.id ?? presets[0]?.id ?? "";
+    const project = useProjectStore();
+    const projectId = project.currentProjectId;
+    if (pendingLoad?.projectId === projectId) return pendingLoad.promise;
+    const nonce = ++loadNonce;
+    const promise = (async () => {
+      const [layouts, drawings, shapes, styles, presets, masters] = await Promise.all([
+        api.keyLayoutTypes(), api.keyDrawingTypes(), api.keyShapes(), api.relationStyles(), api.boxPresets(), api.layerMasters(),
+      ]);
+      if (nonce !== loadNonce || project.currentProjectId !== projectId) return false;
+      keyLayoutTypes.value = layouts;
+      keyDrawingTypes.value = drawings;
+      keyShapes.value = shapes;
+      relationStyles.value = styles;
+      boxPresets.value = presets;
+      layerMasters.value = masters;
+      if (!styles.some((row) => row.id === selectedRelationStyleId.value)) selectedRelationStyleId.value = styles[0]?.id ?? "";
+      if (!presets.some((row) => row.id === selectedBoxPresetId.value)) {
+        selectedBoxPresetId.value = presets.find((row) => row.is_default)?.id ?? presets[0]?.id ?? "";
+      }
+      return true;
+    })();
+    pendingLoad = { projectId, promise };
+    try {
+      return await promise;
+    } finally {
+      if (pendingLoad?.promise === promise) pendingLoad = null;
     }
   }
 
