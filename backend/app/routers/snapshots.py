@@ -10,7 +10,7 @@ from .. import crud, models, schemas
 from ..database import get_db
 from ..services.audit import record_project_event
 from ..services.project_access import ProjectContext, get_project_context, project_request_guard
-from .graph import restore_graph
+from .graph import _sync_layer_group, restore_graph
 
 router = APIRouter(
     prefix="/api/projects/{project_id}/align-trees/{align_tree_id}/snapshots",
@@ -45,6 +45,14 @@ def _snapshot_or_404(
 
 def _graph_restore(db: Session, project_id: uuid.UUID, align_tree_id: uuid.UUID) -> schemas.GraphRestore:
     graph = crud.read_graph(db, project_id, align_tree_id)
+    master_ids = {layer.layer_master_id for layer in graph.layers if layer.layer_master_id is not None}
+    master_groups = {
+        row.id: row.group
+        for row in db.query(models.LayerMaster).filter(
+            models.LayerMaster.project_id == project_id,
+            models.LayerMaster.id.in_(master_ids),
+        ).all()
+    } if master_ids else {}
     return schemas.GraphRestore(
         layers=graph.layers,
         layouts=graph.layouts,
@@ -53,6 +61,7 @@ def _graph_restore(db: Session, project_id: uuid.UUID, align_tree_id: uuid.UUID)
         relation_styles=graph.relation_styles,
         relations=graph.relations,
         text_boxes=graph.text_boxes,
+        layer_master_groups=master_groups,
     )
 
 
@@ -150,7 +159,17 @@ def _reference_warnings(db: Session, project_id: uuid.UUID, graph: dict[str, Any
         missing = requested - available
         if missing:
             warnings.append(f"삭제된 {label} 참조 {len(missing)}개는 복원 시 비어 있는 값으로 처리됩니다.")
+    if "layer_master_groups" not in graph:
+        warnings.append("이전 버전 스냅샷에는 Layer 기본정보 Group이 없어 현재 Group 값을 유지합니다.")
     return warnings
+
+
+def _group_change_count(base_graph: dict[str, Any], target_graph: dict[str, Any]) -> int:
+    if "layer_master_groups" not in base_graph or "layer_master_groups" not in target_graph:
+        return 0
+    base = {str(key): value for key, value in base_graph["layer_master_groups"].items()}
+    target = {str(key): value for key, value in target_graph["layer_master_groups"].items()}
+    return sum(base.get(key) != value for key, value in target.items())
 
 
 def _diff(
@@ -170,19 +189,27 @@ def _diff(
     layers = _diff_section(base_entities["layers"], target_entities["layers"])
     relations = _diff_section(base_entities["relations"], target_entities["relations"])
     text_boxes = _diff_section(base_entities["text_boxes"], target_entities["text_boxes"])
+    layer_master_groups_modified = _group_change_count(base_graph, target_graph)
     tree_fields = [field for field in TREE_FIELDS if _clean(base_tree.get(field)) != _clean(target_tree.get(field))]
     changed = any(
         section.added or section.removed or section.modified
         for section in (layers, relations, text_boxes)
-    ) or bool(tree_fields)
+    ) or bool(tree_fields) or layer_master_groups_modified > 0
+    warnings = _reference_warnings(db, project_id, target_graph) if restore_target else []
+    if restore_target and layer_master_groups_modified:
+        warnings.append(
+            f"Layer 기본정보 Group {layer_master_groups_modified}개가 복원되며 "
+            "Editor Merge에도 함께 반영됩니다."
+        )
     return schemas.SnapshotDiff(
         base=base_label,
         target=target_label,
         layers=layers,
         relations=relations,
         text_boxes=text_boxes,
+        layer_master_groups_modified=layer_master_groups_modified,
         tree_fields=tree_fields,
-        warnings=_reference_warnings(db, project_id, target_graph) if restore_target else [],
+        warnings=warnings,
         has_changes=changed,
     )
 
@@ -339,6 +366,32 @@ def restore_snapshot(
     snapshot = _snapshot_or_404(db, project_id, align_tree_id, snapshot_id)
     payload = schemas.GraphRestore.model_validate(snapshot.graph_json)
     restore_graph(project_id, align_tree_id, payload, context, db)
+    snapshot_groups = payload.layer_master_groups
+    if "layer_master_groups" not in snapshot.graph_json:
+        linked_master_ids = {
+            layer.layer_master_id
+            for layer in payload.layers
+            if layer.layer_master_id is not None
+        }
+        snapshot_groups = {
+            master.id: master.group
+            for master in db.query(models.LayerMaster).filter(
+                models.LayerMaster.project_id == project_id,
+                models.LayerMaster.id.in_(linked_master_ids),
+            ).all()
+        } if linked_master_ids else {}
+    for master_id, group in snapshot_groups.items():
+        master = db.get(models.LayerMaster, master_id)
+        if master is None or master.project_id != project_id:
+            continue
+        master.group = (group or "").strip() or None
+        linked_layers = db.query(models.Layer).filter(
+            models.Layer.project_id == project_id,
+            models.Layer.layer_master_id == master.id,
+        ).all()
+        for layer in linked_layers:
+            if layer.align_tree_id is not None:
+                _sync_layer_group(db, project_id, layer.align_tree_id, layer.id, master.group)
     tree = _tree_or_404(db, project_id, align_tree_id)
     for field in TREE_FIELDS:
         if field in snapshot.tree_json:

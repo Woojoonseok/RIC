@@ -302,7 +302,7 @@ export interface Graph { project: Project; align_tree?: AlignTree; layers: Layer
 
 export interface GraphBatchUpdate { layer_presets?: LayerPresetBatchUpdate[]; layouts?: LayoutBatchUpdate[]; styles?: StyleBatchUpdate[]; text_boxes?: TextBoxBatchUpdate[] }
 export interface GraphUpdate { layers?: Layer[]; layouts?: Layout[]; styles?: ShapeStyle[]; box_presets?: BoxPreset[]; relation_styles?: RelationStyle[]; relations?: Relation[]; text_boxes?: TextBox[] }
-export interface GraphRestore { layers: Layer[]; layouts: Layout[]; styles: ShapeStyle[]; box_presets: BoxPreset[]; relation_styles: RelationStyle[]; relations: Relation[]; text_boxes: TextBox[] }
+export interface GraphRestore { layers: Layer[]; layouts: Layout[]; styles: ShapeStyle[]; box_presets: BoxPreset[]; relation_styles: RelationStyle[]; relations: Relation[]; text_boxes: TextBox[]; layer_master_groups?: Record<string, string | null> }
 export interface SnapshotCreate { name: string; description?: string | null }
 export interface SnapshotSummary {
   id: string;
@@ -333,6 +333,7 @@ export interface SnapshotDiff {
   layers: SnapshotDiffSection;
   relations: SnapshotDiffSection;
   text_boxes: SnapshotDiffSection;
+  layer_master_groups_modified: number;
   tree_fields: string[];
   warnings: string[];
   has_changes: boolean;

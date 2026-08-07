@@ -9,6 +9,7 @@ import {
 } from "../src/domain/geometry";
 import { computeDisplayGraph, expandRelationCandidates, isMergedLayer, layerMatchesQuery, relationGroupById, relationTargetLayerId } from "../src/domain/graph";
 import { filterLayerMasterRows, layerImportPositions, layerMasterBaseColumns, layerMasterColumns, layerMasterMatchesQuery, layerMasterPasteRows, layerMasterPayload, layerMasterPriorityColumns, layerMasterRowMatchesQuery, layerMasterRows } from "../src/domain/layerMaster";
+import { applySpreadsheetPaste } from "../src/domain/spreadsheet";
 import { parseTsv } from "../src/domain/tsv";
 import type { AuditEvent, Graph, Layout, Relation } from "../src/types";
 
@@ -435,4 +436,35 @@ describe("group relation expansion", () => {
 describe("API errors and TSV", () => {
   it("describes FastAPI validation details", () => expect(describeErrorDetail([{ loc: ["body", "name"], msg: "Field required" }])).toBe("body.name: Field required"));
   it("parses pasted cells", () => expect(parseTsv("A\tB\r\nC\tD")).toEqual([["A", "B"], ["C", "D"]]));
+});
+
+describe("spreadsheet range paste", () => {
+  it("fills multiple cells, creates missing rows, and resolves option labels", () => {
+    const columns = [
+      { key: "name" },
+      { key: "group" },
+      { key: "open_close", defaultValue: "", options: [
+        { value: "Open", label: "Open (O)", aliases: ["O"] },
+        { value: "Close", label: "Close (X)", aliases: ["X"] },
+      ] },
+      { key: "summary", readonly: true },
+    ];
+    const rows = applySpreadsheetPaste(
+      [{ id: "1", name: "Before", group: "", open_close: "", summary: "keep" }],
+      columns,
+      0,
+      0,
+      [["Layer A", "Front", "Open (O)", "ignored"], ["Layer B", "Back", "O"], ["Layer C", "Back", "X"]],
+    );
+
+    expect(rows).toEqual([
+      { id: "1", name: "Layer A", group: "Front", open_close: "Open", summary: "keep" },
+      { name: "Layer B", group: "Back", open_close: "Open", summary: "" },
+      { name: "Layer C", group: "Back", open_close: "Close", summary: "" },
+    ]);
+  });
+  it("normalizes O and X in Layer information imports", () => {
+    expect(layerMasterPayload({ name: "A", layer_number: "1", pr_open_close: "O" }, [])).toMatchObject({ pr_open_close: "Open" });
+    expect(layerMasterPayload({ name: "B", layer_number: "2", pr_open_close: "x" }, [])).toMatchObject({ pr_open_close: "Close" });
+  });
 });

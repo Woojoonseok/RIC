@@ -241,6 +241,7 @@ watch([selectedId, targetId], () => {
                 <div><RotateCcw :size="18"/><strong>복원 후 변경</strong></div>
                 <p v-for="section in restoreSections" :key="section.label"><span>{{ section.label }}</span><b>추가 {{ section.value.added }}</b><b>삭제 {{ section.value.removed }}</b><b>수정 {{ section.value.modified }}</b></p>
                 <p v-if="restorePreview.tree_fields.length"><span>Editor 기준</span><b>{{ restorePreview.tree_fields.length }}개 변경</b></p>
+                <p v-if="restorePreview.layer_master_groups_modified"><span>Layer 기본정보 Group</span><b>{{ restorePreview.layer_master_groups_modified }}개 변경</b></p>
                 <div v-for="warning in restorePreview.warnings" :key="warning" class="snapshot-warning"><AlertTriangle :size="16"/><span>{{ warning }}</span></div>
               </section>
               <button type="button" @click="restorePreview = null">취소</button>

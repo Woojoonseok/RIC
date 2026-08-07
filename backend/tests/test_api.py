@@ -523,6 +523,91 @@ def test_graph_snapshots_compare_preview_restore_and_delete(client: TestClient) 
     assert [row["name"] for row in client.get(snapshots_url).json()] == ["Before change"]
 
 
+def test_snapshot_restores_layer_master_groups_and_editor_merge(client: TestClient) -> None:
+    project_id = create_project(client)
+    first_tree_id = default_tree_id(client, project_id)
+    snapshots_url = f"/api/projects/{project_id}/align-trees/{first_tree_id}/snapshots"
+    create_layer(client, project_id, "Group A", tree_id=first_tree_id)
+    create_layer(client, project_id, "Group B", 300, tree_id=first_tree_id)
+    masters = {
+        row["name"]: row
+        for row in client.get(f"/api/projects/{project_id}/layer-master").json()
+    }
+
+    for master in masters.values():
+        grouped = client.put(
+            f"/api/projects/{project_id}/layer-master/{master['id']}",
+            json={"group": "SNAP"},
+        )
+        assert grouped.status_code == 200, grouped.text
+    snapshot = client.post(snapshots_url, json={"name": "Grouped state"})
+    assert snapshot.status_code == 201, snapshot.text
+    snapshot_id = snapshot.json()["id"]
+    detail = client.get(f"{snapshots_url}/{snapshot_id}")
+    assert detail.status_code == 200, detail.text
+    assert set(detail.json()["graph"]["layer_master_groups"].values()) == {"SNAP"}
+
+    for master in masters.values():
+        changed = client.put(
+            f"/api/projects/{project_id}/layer-master/{master['id']}",
+            json={"group": "CURRENT"},
+        )
+        assert changed.status_code == 200, changed.text
+    added_after_snapshot = create_layer(client, project_id, "Added later", 600, tree_id=first_tree_id)
+
+    preview = client.post(f"{snapshots_url}/{snapshot_id}/restore/preview")
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["layer_master_groups_modified"] == 2
+    assert preview.json()["layers"]["removed"] == 1
+    assert any("Editor Merge" in warning for warning in preview.json()["warnings"])
+
+    restored = client.post(f"{snapshots_url}/{snapshot_id}/restore")
+    assert restored.status_code == 200, restored.text
+    assert added_after_snapshot not in {row["id"] for row in restored.json()["layers"]}
+    restored_masters = client.get(f"/api/projects/{project_id}/layer-master").json()
+    assert {row["group"] for row in restored_masters if row["name"] in masters} == {"SNAP"}
+    graph = client.get(graph_base(client, project_id, first_tree_id)).json()
+    assert [row["same_group"] for row in graph["relations"] if row["same_group"]] == ["SNAP"]
+
+
+def test_legacy_snapshot_keeps_current_layer_master_group(client: TestClient) -> None:
+    project_id = create_project(client)
+    tree_id = default_tree_id(client, project_id)
+    graph_url = graph_base(client, project_id, tree_id)
+    snapshots_url = f"/api/projects/{project_id}/align-trees/{tree_id}/snapshots"
+    first = create_layer(client, project_id, "Legacy A", tree_id=tree_id)
+    second = create_layer(client, project_id, "Legacy B", 300, tree_id=tree_id)
+    masters = client.get(f"/api/projects/{project_id}/layer-master").json()
+    for layer_id in (first, second):
+        grouped = client.patch(f"{graph_url}/layers/{layer_id}/group", json={"group": "OLD"})
+        assert grouped.status_code == 200, grouped.text
+    snapshot = client.post(snapshots_url, json={"name": "Legacy snapshot"})
+    assert snapshot.status_code == 201, snapshot.text
+    snapshot_id = snapshot.json()["id"]
+    with client.app.state.session_factory() as db:
+        row = db.get(models.GraphSnapshot, uuid.UUID(snapshot_id))
+        graph_json = dict(row.graph_json)
+        graph_json.pop("layer_master_groups", None)
+        row.graph_json = graph_json
+        db.commit()
+
+    for master in masters:
+        changed = client.put(
+            f"/api/projects/{project_id}/layer-master/{master['id']}",
+            json={"group": "CURRENT"},
+        )
+        assert changed.status_code == 200, changed.text
+    preview = client.post(f"{snapshots_url}/{snapshot_id}/restore/preview")
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["layer_master_groups_modified"] == 0
+    assert any("현재 Group 값을 유지" in warning for warning in preview.json()["warnings"])
+
+    restored = client.post(f"{snapshots_url}/{snapshot_id}/restore")
+    assert restored.status_code == 200, restored.text
+    assert [row["same_group"] for row in restored.json()["relations"] if row["same_group"]] == ["CURRENT"]
+    assert {row["group"] for row in client.get(f"/api/projects/{project_id}/layer-master").json()} == {"CURRENT"}
+
+
 def test_align_tree_review_approval_publish_and_reopen_workflow(client: TestClient) -> None:
     project_id = create_project(client)
     tree_id = default_tree_id(client, project_id)

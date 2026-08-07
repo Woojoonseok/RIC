@@ -817,6 +817,7 @@ class GraphRestore(BaseModel):
     relation_styles: list[RelationStyleRead] = Field(default_factory=list)
     relations: list[RelationRead] = Field(default_factory=list)
     text_boxes: list[TextBoxRead] = Field(default_factory=list)
+    layer_master_groups: dict[uuid.UUID, str | None] = Field(default_factory=dict)
 
 
 class SnapshotCreate(BaseModel):
@@ -868,6 +869,7 @@ class SnapshotDiff(BaseModel):
     layers: SnapshotDiffSection
     relations: SnapshotDiffSection
     text_boxes: SnapshotDiffSection
+    layer_master_groups_modified: int = 0
     tree_fields: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     has_changes: bool = False
