@@ -1,6 +1,6 @@
 import { createPinia, setActivePinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api, request } from "../src/api/client";
+import { ApiError, api, configureProjectRequestContext, request } from "../src/api/client";
 import { useProjectStore } from "../src/stores/project";
 import type { Project } from "../src/types";
 
@@ -32,6 +32,10 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  configureProjectRequestContext(
+    () => ({ projectId: "", treeId: "", leaseToken: null, revision: null, readOnly: false }),
+    () => {},
+  );
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -71,5 +75,43 @@ describe("project navigation races", () => {
     expect(store.currentProject?.revision).toBe(3);
     await request<void>("/projects/B/audit-events");
     expect(store.currentProject?.revision).toBe(7);
+  });
+});
+
+describe("project mutation request guards", () => {
+  it("allows locked workflow transitions to carry the edit lease", async () => {
+    configureProjectRequestContext(
+      () => ({ projectId: "project-1", treeId: "tree-1", leaseToken: "lease-1", revision: 12, readOnly: true }),
+      () => {},
+    );
+    let sentHeaders = new Headers();
+    const fetch = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      sentHeaders = init?.headers as Headers;
+      return new Response(JSON.stringify({
+        id: "tree-1",
+        project_id: "project-1",
+        name: "Main",
+        workflow_status: "approved",
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", fetch);
+
+    await request("/projects/project-1/align-trees/tree-1/workflow/approve", { method: "POST" });
+
+    expect(sentHeaders.get("X-Edit-Lease")).toBe("lease-1");
+    expect(sentHeaders.get("If-Match")).toBe("\"12\"");
+  });
+
+  it("keeps non-workflow mutations blocked while the project is read-only", async () => {
+    configureProjectRequestContext(
+      () => ({ projectId: "project-1", treeId: "tree-1", leaseToken: "lease-1", revision: 12, readOnly: true }),
+      () => {},
+    );
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(request("/projects/project-1/align-trees/tree-1/graph/layers/layer-1", { method: "PUT" }))
+      .rejects.toMatchObject({ status: 403 } satisfies Partial<ApiError>);
+    expect(fetch).not.toHaveBeenCalled();
   });
 });

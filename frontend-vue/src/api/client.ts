@@ -70,6 +70,9 @@ function requestNeedsProjectLease(path: string, method: string, active: Workspac
   if (/\/(?:lease|claim-legacy)$/.test(path) || /\/(?:access-requests|members|audit-events|review-threads)(?:\/|$|\?)/.test(path) || /\/validate$/.test(path)) return false;
   return true;
 }
+function isWorkflowTransition(path: string) {
+  return /\/align-trees\/[^/?]+\/workflow\/(?:request-review|reject|approve|publish|reopen)$/.test(path);
+}
 
 export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const method = (options.method ?? "GET").toUpperCase();
@@ -77,7 +80,7 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
   if (options.body !== undefined && !(options.body instanceof FormData) && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   const active = context();
   if (requestNeedsProjectLease(path, method, active)) {
-    if (active?.readOnly) throw new ApiError(403, "현재 프로젝트는 보기 전용입니다.");
+    if (active?.readOnly && (!isWorkflowTransition(path) || !active.leaseToken)) throw new ApiError(403, "현재 프로젝트는 보기 전용입니다.");
     if (active?.leaseToken) headers.set("X-Edit-Lease", active.leaseToken);
     if (active?.revision !== null && active?.revision !== undefined) headers.set("If-Match", `"${active.revision}"`);
   }
