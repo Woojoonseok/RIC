@@ -5,6 +5,7 @@ import { useAppStore } from "../stores/app";
 import { useGraphStore } from "../stores/graph";
 import { useProjectStore } from "../stores/project";
 import type { AppView } from "../types";
+import ReviewDrawer from "../components/editor/ReviewDrawer.vue";
 
 const route = useRoute();
 const app = useAppStore();
@@ -64,5 +65,6 @@ onBeforeRouteLeave(async (to) => {
     <div v-if="loading" class="empty-page">Align Tree를 불러오는 중입니다…</div>
     <div v-else-if="error" class="empty-page"><div><strong>Align Tree를 열 수 없습니다.</strong><p>{{ error }}</p></div></div>
     <RouterView v-else/>
+    <ReviewDrawer :open="app.reviewOpen" @close="app.closeReview"/>
   </section>
 </template>

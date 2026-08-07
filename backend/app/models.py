@@ -4,7 +4,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, Uuid, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, LargeBinary, String, Text, UniqueConstraint, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -606,6 +606,89 @@ class GraphSnapshot(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), server_default=func.now(), index=True
     )
+
+
+class ReviewThread(Base, TimestampMixin):
+    __tablename__ = "review_threads"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    align_tree_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("align_trees.id", ondelete="CASCADE"), index=True)
+    target_type: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    target_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True, index=True)
+    target_key: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    target_label: Mapped[str] = mapped_column(String(240), nullable=False)
+    anchor_x: Mapped[float | None] = mapped_column(Float, nullable=True)
+    anchor_y: Mapped[float | None] = mapped_column(Float, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="open", server_default="open", index=True)
+    created_by_actor_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("actors.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    assignee_actor_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("actors.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    resolved_by_actor_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("actors.id", ondelete="SET NULL"), nullable=True
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    created_by: Mapped[Actor | None] = relationship(foreign_keys=[created_by_actor_id])
+    assignee: Mapped[Actor | None] = relationship(foreign_keys=[assignee_actor_id])
+    resolved_by: Mapped[Actor | None] = relationship(foreign_keys=[resolved_by_actor_id])
+    comments: Mapped[list[ReviewComment]] = relationship(
+        back_populates="thread", cascade="all, delete-orphan", order_by="ReviewComment.created_at"
+    )
+
+
+class ReviewComment(Base, TimestampMixin):
+    __tablename__ = "review_comments"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    thread_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("review_threads.id", ondelete="CASCADE"), index=True)
+    parent_comment_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("review_comments.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    author_actor_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("actors.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    author_label: Mapped[str] = mapped_column(String(120), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+
+    thread: Mapped[ReviewThread] = relationship(back_populates="comments")
+    author: Mapped[Actor | None] = relationship(foreign_keys=[author_actor_id])
+    attachments: Mapped[list[ReviewAttachment]] = relationship(
+        back_populates="comment", cascade="all, delete-orphan", order_by="ReviewAttachment.created_at"
+    )
+
+
+class ReviewAttachment(Base):
+    __tablename__ = "review_attachments"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    comment_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("review_comments.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    filename: Mapped[str] = mapped_column(String(240), nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    comment: Mapped[ReviewComment] = relationship(back_populates="attachments")
+
+
+class ReviewNotification(Base):
+    __tablename__ = "review_notifications"
+    __table_args__ = (
+        UniqueConstraint("comment_id", "actor_id", name="uq_review_notifications_comment_actor"),
+    )
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    thread_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("review_threads.id", ondelete="CASCADE"), index=True)
+    comment_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("review_comments.id", ondelete="CASCADE"), index=True)
+    actor_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("actors.id", ondelete="CASCADE"), index=True)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
 class ChangeHistory(Base, TimestampMixin):

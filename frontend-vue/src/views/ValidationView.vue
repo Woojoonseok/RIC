@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
-import { AlertTriangle, CheckCircle2, Pencil, Play, Plus, Settings2, Trash2, X } from "@lucide/vue";
+import { AlertTriangle, CheckCircle2, MessageSquare, Pencil, Play, Plus, Settings2, Trash2, X } from "@lucide/vue";
 import { useRouter } from "vue-router";
 import { api } from "../api/client";
 import { useAppStore } from "../stores/app";
@@ -125,6 +125,13 @@ async function focus(issue: ValidationIssue) {
   else return;
   await router.push({ name: "tree-editor", params: { projectId: project.currentProjectId, treeId: project.currentTreeId } });
 }
+function reviewIssue(issue: ValidationIssue, index: number) {
+  app.openReview({
+    target_type: "validation_issue",
+    target_key: `${issue.code}:${issue.rule_id || "builtin"}:${issue.layer_id || issue.relation_id || index}`,
+    target_label: `Validation · ${issue.rule_name || issue.code}`,
+  });
+}
 function targetLabel(value: ValidationRuleTarget) { return targetOptions.find((row) => row.value === value)?.label ?? value }
 function ruleLabel(value: ValidationRuleInput["rule_type"]) { return ruleOptions.find((row) => row.value === value)?.label ?? value }
 function fieldLabel(rule: ValidationRule) { return fields[rule.target_type].find((row) => row.value === rule.field_name)?.label ?? rule.field_name }
@@ -169,9 +176,9 @@ onMounted(loadRules);
         <div><strong>{{ graph.rawGraph.validation.ok ? '검증을 통과했습니다' : '확인이 필요한 항목이 있습니다' }}</strong><p>오류 {{ errorCount }} · 경고 {{ warningCount }}</p></div>
       </section>
       <section class="panel validation-results">
-        <button v-for="(issue, index) in graph.rawGraph.validation.issues" :key="`${issue.code}-${index}`" class="issue-row" :class="issue.severity" :disabled="!issue.layer_id && !issue.relation_id" @click="focus(issue)">
-          <b>{{ issue.severity === "error" ? "오류" : "경고" }}</b><span><strong>{{ issue.rule_name || issue.code }}</strong><small>{{ issue.message }}</small></span><em v-if="issue.layer_id || issue.relation_id">Canvas에서 보기</em>
-        </button>
+        <article v-for="(issue, index) in graph.rawGraph.validation.issues" :key="`${issue.code}-${index}`" class="issue-row" :class="issue.severity">
+          <b>{{ issue.severity === "error" ? "오류" : "경고" }}</b><span><strong>{{ issue.rule_name || issue.code }}</strong><small>{{ issue.message }}</small></span><div class="issue-actions"><button v-if="issue.layer_id || issue.relation_id" @click="focus(issue)">Canvas에서 보기</button><button title="이슈 리뷰" @click="reviewIssue(issue, index)"><MessageSquare :size="15"/>리뷰</button></div>
+        </article>
         <p v-if="!graph.rawGraph.validation.issues.length" class="empty">발견된 문제가 없습니다.</p>
       </section>
     </div>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { ArrowDownAZ, ArrowUpAZ, Download, Filter, PanelLeft, PanelRight, Search, X as CloseIcon } from "@lucide/vue";
 import * as XLSX from "xlsx-js-style";
 import { api } from "../api/client";
@@ -8,7 +8,7 @@ import { useGraphStore } from "../stores/graph";
 import { useProjectStore } from "../stores/project";
 import { useReferenceStore } from "../stores/reference";
 import type { FinalTableRow } from "../domain/finalTable";
-import type { AlignTree, RelationUpdate } from "../types";
+import type { RelationUpdate } from "../types";
 
 type FinalField =
   | "key_priority"
@@ -32,6 +32,8 @@ const sortState = ref<{ key: string; direction: "asc" | "desc" } | null>(null);
 const filterMenuPosition = ref({ top: 0, left: 0 });
 const tableView = ref<"left" | "right">("left");
 const tableScroll = ref<HTMLElement | null>(null);
+const includeReviews = ref(false);
+const exporting = ref(false);
 const commonColumns = [
   { key: "keyName", label: "Key 이름" },
   { key: "inner", label: "Inner(아들자)" },
@@ -73,10 +75,7 @@ function columnValue(row: FinalTableRow, key: string): string {
   if (key === "outer") return row.outer;
   if (key.startsWith("layer:")) {
     const layerId = key.slice(6);
-    const layer = finalTable.value?.layers.find((item) => item.layerId === layerId);
-    return graph.rawGraph?.align_tree
-      ? finalCellValue(graph.rawGraph.align_tree, row.relation.id, layerId, layer?.marker ?? "")
-      : "";
+    return row.markerValues[layerId] ?? "";
   }
   return String((row.relation as unknown as Record<string, unknown>)[key] ?? "");
 }
@@ -173,11 +172,11 @@ function isColumnActive(key: string) {
 }
 function setTableView(view: "left" | "right") {
   if (tableView.value === view) return;
+  tableScroll.value?.scrollTo({ left: 0, top: 0 });
   tableView.value = view;
-  columnFilters.value = {};
-  sortState.value = null;
-  closeFilter();
-  void nextTick(() => tableScroll.value?.scrollTo({ left: 0, top: 0 }));
+  if (Object.keys(columnFilters.value).length) columnFilters.value = {};
+  if (sortState.value) sortState.value = null;
+  if (activeFilterKey.value) closeFilter();
 }
 
 function value(event: Event) {
@@ -200,11 +199,6 @@ async function saveLayerText(field: LayerTextField, layerId: string, nextValue: 
   );
 }
 
-function finalCellValue(tree: AlignTree, relationId: string, layerId: string, fallback: string) {
-  const row = tree.final_table_cells?.[relationId];
-  return row && Object.prototype.hasOwnProperty.call(row, layerId) ? row[layerId] : fallback;
-}
-
 async function saveFinalCell(relationId: string, layerId: string, nextValue: string) {
   if (!graph.rawGraph?.align_tree) return;
   const current = graph.rawGraph.align_tree.final_table_cells ?? {};
@@ -223,6 +217,18 @@ async function saveFinalCell(relationId: string, layerId: string, nextValue: str
   );
 }
 
+function limitEditableCell(event: Event) {
+  const cell = event.currentTarget as HTMLElement;
+  const text = cell.textContent ?? "";
+  if (text.length > 160) cell.textContent = text.slice(0, 160);
+}
+
+async function saveEditableFinalCell(row: FinalTableRow, layerId: string, event: FocusEvent) {
+  const nextValue = (event.currentTarget as HTMLElement).textContent?.trim() ?? "";
+  if (nextValue === (row.markerValues[layerId] ?? "")) return;
+  await saveFinalCell(row.relation.id, layerId, nextValue);
+}
+
 async function saveRelationField(relationId: string, field: FinalField, nextValue: string) {
   const body: RelationUpdate = { [field]: nextValue || null };
   await graph.mutateGraph(
@@ -231,19 +237,23 @@ async function saveRelationField(relationId: string, field: FinalField, nextValu
   );
 }
 
-function exportFinalExcel() {
+async function exportFinalExcel() {
   if (!graph.rawGraph?.align_tree || !finalTable.value) return;
   const table = document.querySelector<HTMLTableElement>(".final-table");
   if (!table) return;
+  exporting.value = true;
   const merges: XLSX.Range[] = [];
+  const cellClasses: string[][][] = [];
   const headerRowIndex = tableView.value === "right" ? 3 : 0;
   const matrix = Array.from(table.rows).map((row, rowIndex) => {
     const values: string[] = [];
+    cellClasses[rowIndex] = [];
     let columnIndex = 0;
     for (const cell of Array.from(row.cells)) {
       const input = cell.querySelector<HTMLInputElement>("input");
       const cellValue = input ? input.value : cell.textContent?.trim() ?? "";
       values[columnIndex] = cellValue;
+      cellClasses[rowIndex][columnIndex] = Array.from(cell.classList);
       for (let offset = 1; offset < cell.colSpan; offset += 1) {
         values[columnIndex + offset] = "";
       }
@@ -270,12 +280,13 @@ function exportFinalExcel() {
       const address = XLSX.utils.encode_cell({ r: rowIndex, c: columnIndex });
       const cell = sheet[address];
       if (!cell) continue;
-      const isMetaSpacer = cell.classList.contains("final-table-meta-spacer");
+      const classes = cellClasses[rowIndex]?.[columnIndex] || [];
+      const isMetaSpacer = classes.includes("final-table-meta-spacer");
       const isMetaCell = rowIndex < headerRowIndex && !isMetaSpacer;
       const isHeader = rowIndex === headerRowIndex;
-      const isGeneratedKey = cell.classList.contains("generated-key");
-      const isNumberCell = cell.classList.contains("number-cell");
-      const isMarkerCell = cell.classList.contains("marker-cell");
+      const isGeneratedKey = classes.includes("generated-key");
+      const isNumberCell = classes.includes("number-cell");
+      const isMarkerCell = classes.includes("marker-cell");
       const marker = String(cell.v ?? "").trim().toUpperCase();
       cell.s = {
         font: {
@@ -319,12 +330,38 @@ function exportFinalExcel() {
     sheet["!autofilter"] = { ref: `A${headerNumber}:${XLSX.utils.encode_col(matrix[headerRowIndex].length - 1)}${matrix.length}` };
   }
   XLSX.utils.book_append_sheet(workbook, sheet, "Overlay_Key_Table");
-  XLSX.writeFile(workbook, `${graph.rawGraph.project.name}_Overlay_Key_Table.xlsx`);
+  try {
+    if (includeReviews.value) {
+      const reviews = await api.listReviewThreads(project.currentProjectId, project.projectId);
+      const reviewRows = [["상태", "대상 유형", "대상", "담당자", "작성자", "댓글", "답글 대상", "첨부", "작성 시각"]];
+      for (const review of reviews) {
+        for (const comment of review.comments) {
+          reviewRows.push([
+            review.status === "open" ? "미해결" : "해결",
+            review.target_type,
+            review.target_label,
+            review.assignee?.display_name || "",
+            comment.author?.display_name || comment.author_label,
+            comment.body,
+            comment.parent_comment_id || "",
+            comment.attachments.map((attachment) => `${attachment.kind === "before" ? "변경 전" : "변경 후"}: ${attachment.filename}`).join("\n"),
+            new Date(comment.created_at).toLocaleString(),
+          ]);
+        }
+      }
+      const reviewSheet = XLSX.utils.aoa_to_sheet(reviewRows);
+      reviewSheet["!cols"] = [{ wch: 10 }, { wch: 14 }, { wch: 34 }, { wch: 16 }, { wch: 16 }, { wch: 56 }, { wch: 36 }, { wch: 36 }, { wch: 22 }];
+      reviewSheet["!autofilter"] = { ref: `A1:I${Math.max(1, reviewRows.length)}` };
+      XLSX.utils.book_append_sheet(workbook, reviewSheet, "Reviews");
+    }
+    XLSX.writeFile(workbook, `${graph.rawGraph.project.name}_Overlay_Key_Table.xlsx`);
+  } finally {
+    exporting.value = false;
+  }
 }
 
 onMounted(async () => {
-  await reference.loadAll();
-  referenceReady.value = true;
+  referenceReady.value = await reference.loadAll();
 });
 </script>
 
@@ -341,7 +378,8 @@ onMounted(async () => {
           <button type="button" :class="{ active: tableView === 'left' }" title="왼쪽 컬럼 보기" @click="setTableView('left')"><PanelLeft :size="15"/><span>왼쪽</span></button>
           <button type="button" :class="{ active: tableView === 'right' }" title="오른쪽 컬럼 보기" @click="setTableView('right')"><PanelRight :size="15"/><span>오른쪽</span></button>
         </div>
-        <button class="primary final-export-primary" @click="exportFinalExcel"><Download :size="16"/>Overlay Key Excel</button>
+        <label class="final-export-review-option"><input v-model="includeReviews" type="checkbox"><span>리뷰 포함</span></label>
+        <button class="primary final-export-primary" :disabled="exporting" @click="exportFinalExcel"><Download :size="16"/>{{ exporting ? '내보내는 중' : 'Overlay Key Excel' }}</button>
       </div>
     </div>
 
@@ -442,16 +480,17 @@ onMounted(async () => {
                 :key="`${row.relation.id}-${layer.layerId}`"
                 class="marker-cell"
                 :class="{
-                  open: finalCellValue(graph.rawGraph.align_tree, row.relation.id, layer.layerId, layer.marker) === 'O',
-                  close: finalCellValue(graph.rawGraph.align_tree, row.relation.id, layer.layerId, layer.marker) === 'X',
+                  open: row.markerValues[layer.layerId] === 'O',
+                  close: row.markerValues[layer.layerId] === 'X',
                 }"
+                :contenteditable="project.canEdit"
+                :tabindex="project.canEdit ? 0 : -1"
+                role="textbox"
+                @input="limitEditableCell"
+                @keydown.enter.prevent="($event.currentTarget as HTMLElement).blur()"
+                @blur="saveEditableFinalCell(row, layer.layerId, $event)"
               >
-                <input
-                  :value="finalCellValue(graph.rawGraph.align_tree, row.relation.id, layer.layerId, layer.marker)"
-                  :disabled="!project.canEdit"
-                  maxlength="160"
-                  @change="saveFinalCell(row.relation.id, layer.layerId, value($event))"
-                >
+                {{ row.markerValues[layer.layerId] }}
               </td>
             </tr>
             <tr v-if="!displayedRows.length">

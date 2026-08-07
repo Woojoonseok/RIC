@@ -1,6 +1,8 @@
 import { createPinia, setActivePinia } from "pinia";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { api } from "../src/api/client";
 import { useReferenceStore } from "../src/stores/reference";
+import { useProjectStore } from "../src/stores/project";
 import type { KeyLayoutType, LayerMaster } from "../src/types";
 
 function layer(id: string, name: string): LayerMaster {
@@ -22,7 +24,25 @@ function layer(id: string, name: string): LayerMaster {
   };
 }
 
-beforeEach(() => setActivePinia(createPinia()));
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done });
+  return { promise, resolve };
+}
+
+beforeEach(() => {
+  const values = new Map<string, string>();
+  vi.stubGlobal("sessionStorage", {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value),
+  });
+  setActivePinia(createPinia());
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 describe("Layer Master ordering", () => {
   it("keeps existing rows in place and appends a newly saved row", () => {
@@ -50,5 +70,31 @@ describe("Reference ordering", () => {
 
     expect(store.keyLayoutTypes.map((row) => row.id)).toEqual(["1", "2", "3"]);
     expect(store.keyLayoutTypes[0].name).toBe("Layout 1 edited");
+  });
+
+  it("does not let a late project response replace the current project's references", async () => {
+    const oldMasters = deferred<LayerMaster[]>();
+    const newMasters = deferred<LayerMaster[]>();
+    const project = useProjectStore();
+    const store = useReferenceStore();
+    vi.spyOn(api, "keyLayoutTypes").mockResolvedValue([]);
+    vi.spyOn(api, "keyDrawingTypes").mockResolvedValue([]);
+    vi.spyOn(api, "keyShapes").mockResolvedValue([]);
+    vi.spyOn(api, "relationStyles").mockResolvedValue([]);
+    vi.spyOn(api, "boxPresets").mockResolvedValue([]);
+    vi.spyOn(api, "layerMasters").mockImplementation(() => (
+      project.currentProjectId === "A" ? oldMasters.promise : newMasters.promise
+    ));
+
+    project.currentProjectId = "A";
+    const loadingOld = store.loadAll();
+    project.currentProjectId = "B";
+    const loadingNew = store.loadAll();
+    newMasters.resolve([layer("new", "Project B Layer")]);
+    await loadingNew;
+    oldMasters.resolve([layer("old", "Project A Layer")]);
+    await loadingOld;
+
+    expect(store.layerMasters.map((row) => row.id)).toEqual(["new"]);
   });
 });

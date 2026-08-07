@@ -6,7 +6,7 @@ import type {
   ProjectAccessRequest, ProjectCreate, ProjectMember, ProjectRole, ProjectUpdate, ReferenceCreateMap,
   ReferenceReadMap, ReferenceResource, ReferenceUpdateMap, Relation, RelationCreate, RelationImpactReport, RelationStyle,
   RelationImportCommitResult, RelationImportPreview, RelationImportRequest, RelationUpdate, ShapeStyle, StyleUpdate, TextBox, TextBoxCreate, TextBoxUpdate, ValidationReport, ValidationRule, ValidationRuleInput,
-  SnapshotCreate, SnapshotDetail, SnapshotDiff, SnapshotSummary,
+  ReviewAttachmentInput, ReviewNotification, ReviewThread, ReviewThreadCreate, SnapshotCreate, SnapshotDetail, SnapshotDiff, SnapshotSummary,
   UserSummary,
 } from "../types";
 
@@ -67,7 +67,7 @@ function layerMasterRoot() { return `${projectRoot()}/layer-master` }
 function requestNeedsProjectLease(path: string, method: string, active: WorkspaceRequestContext | null) {
   if (!active?.projectId || method === "GET" || method === "HEAD" || method === "OPTIONS") return false;
   if (!path.startsWith(`/projects/${active.projectId}`)) return false;
-  if (/\/(?:lease|claim-legacy)$/.test(path) || /\/(?:access-requests|members|audit-events)(?:\/|$|\?)/.test(path) || /\/validate$/.test(path)) return false;
+  if (/\/(?:lease|claim-legacy)$/.test(path) || /\/(?:access-requests|members|audit-events|review-threads)(?:\/|$|\?)/.test(path) || /\/validate$/.test(path)) return false;
   return true;
 }
 
@@ -181,6 +181,13 @@ export const api = {
   previewSnapshotRestore: (treeId: string, id: string) => request<SnapshotDiff>(`${treeRoot(treeId)}/snapshots/${id}/restore/preview`, json("POST")),
   restoreSnapshot: (treeId: string, id: string) => request<Graph>(`${treeRoot(treeId)}/snapshots/${id}/restore`, json("POST")),
   deleteSnapshot: (treeId: string, id: string) => request<void>(`${treeRoot(treeId)}/snapshots/${id}`, json("DELETE")),
+  listReviewThreads: (projectId: string, treeId: string, status?: "open" | "resolved") => request<ReviewThread[]>(`/projects/${projectId}/review-threads?align_tree_id=${encodeURIComponent(treeId)}${status ? `&status=${status}` : ""}`),
+  listReviewAssignees: (projectId: string) => request<UserSummary[]>(`/projects/${projectId}/review-threads/assignees`),
+  createReviewThread: (projectId: string, body: ReviewThreadCreate) => request<ReviewThread>(`/projects/${projectId}/review-threads`, json("POST", body)),
+  addReviewComment: (projectId: string, threadId: string, body: string, parentCommentId?: string | null, mentionedActorIds: string[] = [], attachments: ReviewAttachmentInput[] = []) => request<ReviewThread>(`/projects/${projectId}/review-threads/${threadId}/comments`, json("POST", { body, parent_comment_id: parentCommentId || null, mentioned_actor_ids: mentionedActorIds, attachments })),
+  updateReviewThread: (projectId: string, threadId: string, body: { status?: "open" | "resolved"; assignee_actor_id?: string | null; assignee_set?: boolean }) => request<ReviewThread>(`/projects/${projectId}/review-threads/${threadId}`, json("PATCH", body)),
+  listReviewNotifications: (projectId: string) => request<ReviewNotification[]>(`/projects/${projectId}/review-threads/notifications`),
+  markReviewNotificationsRead: (projectId: string, notificationIds: string[] = []) => request<void>(`/projects/${projectId}/review-threads/notifications/read`, json("POST", { notification_ids: notificationIds })),
 
   keyLayoutTypes: () => request<KeyLayoutType[]>(`${referenceRoot()}/key-layout-types`),
   keyDrawingTypes: () => request<KeyDrawingType[]>(`${referenceRoot()}/key-drawing-types`),
@@ -201,6 +208,10 @@ export const api = {
   previewLayerMasterImport: (body: LayerMasterImportRequest) => request<LayerMasterImportPreview>(`${layerMasterRoot()}/import/preview`, json("POST", body)),
   commitLayerMasterImport: (body: LayerMasterImportRequest) => request<LayerMasterImportCommitResult>(`${layerMasterRoot()}/import/commit`, json("POST", body)),
 };
+
+export function reviewAttachmentUrl(projectId: string, attachmentId: string) {
+  return `${API_BASE}/projects/${projectId}/review-threads/attachments/${attachmentId}`;
+}
 
 export const referenceApi = {
   listBoxPresets: api.boxPresets,
