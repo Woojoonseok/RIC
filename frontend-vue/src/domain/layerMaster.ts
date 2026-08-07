@@ -136,8 +136,8 @@ function baseColumns(presets: BoxPreset[]): GridColumn[] {
       width: 130,
       options: [
         { value: "", label: "선택 안 함" },
-        { value: "Open", label: "Open (O)" },
-        { value: "Close", label: "Close (X)" },
+        { value: "Open", label: "Open (O)", aliases: ["O"] },
+        { value: "Close", label: "Close (X)", aliases: ["X"] },
       ],
     },
     { key: "group", label: "Group", width: 130 },
@@ -188,6 +188,12 @@ export function layerMasterRows(masters: LayerMaster[], layouts: KeyLayoutType[]
 
 export function layerMasterPayload(row: LayerMasterGridRow, layouts: KeyLayoutType[]): LayerMasterCreate {
   const text = (key: string) => String(row[key] || "") || null;
+  const openCloseValue = String(row.pr_open_close || "").trim().toLowerCase();
+  const openClose = ["o", "open", "open (o)"].includes(openCloseValue)
+    ? "Open"
+    : ["x", "close", "close (x)"].includes(openCloseValue)
+      ? "Close"
+      : text("pr_open_close");
   return {
     name: String(row.name || "").trim(),
     layer_number: String(row.layer_number || "").trim(),
@@ -197,7 +203,7 @@ export function layerMasterPayload(row: LayerMasterGridRow, layouts: KeyLayoutTy
     dev_wf: text("dev_wf"),
     pr_type: text("pr_type"),
     light_source: text("light_source"),
-    pr_open_close: text("pr_open_close"),
+    pr_open_close: openClose,
     group: text("group"),
     validation_rule: text("validation_rule"),
     comment: text("comment"),

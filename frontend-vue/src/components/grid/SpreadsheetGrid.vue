@@ -2,13 +2,15 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { Filter } from "@lucide/vue";
 import { cloneJson } from "../../domain/clone";
+import { applySpreadsheetPaste } from "../../domain/spreadsheet";
 import { parseTsv, toTsv } from "../../domain/tsv";
 
-export interface GridOption { value: string; label: string }
+export interface GridOption { value: string; label: string; aliases?: string[] }
 export interface GridColumn { key: string; label: string; width?: number; readonly?: boolean; options?: GridOption[]; defaultValue?: unknown; action?: boolean; sticky?: boolean; highlightEmpty?: boolean }
 const props = defineProps<{ columns: GridColumn[]; rows: Array<Record<string, unknown>>; rowKey?: string; selectedRows?: string[]; selectAllRows?: boolean; emptyHint?: string; autoCommit?: boolean; readonly?: boolean; filterable?: boolean; filteredColumns?: string[] }>();
 const emit = defineEmits<{ commit: [rows: Array<Record<string, unknown>>]; rowSelect: [id: string, additive: boolean]; rowSelection: [ids: string[]]; cellAction: [row: Record<string, unknown>, key: string]; addRow: []; columnFilter: [key: string, event: MouseEvent] }>();
 const draft = ref<Array<Record<string, unknown>>>(cloneJson(props.rows));
+const sheetElement = ref<HTMLElement | null>(null);
 const active = ref({ row: 0, col: 0 });
 const anchor = ref({ row: 0, col: 0 });
 const editing = ref(false);
@@ -50,6 +52,7 @@ function stopCellDrag() {
 }
 function startCellDrag(row: number, col: number, event: PointerEvent) {
   if (event.button !== 0 || (event.target as HTMLElement).closest("input, select, button")) return;
+  sheetElement.value?.focus({ preventScroll: true });
   activate(row, col, event.shiftKey);
   draggingCells.value = true;
   window.addEventListener("pointerup", stopCellDrag);
@@ -96,14 +99,25 @@ function clearSelection() {
   for (let row = s.r1; row <= s.r2; row += 1) for (let col = s.c1; col <= s.c2; col += 1) if (!props.columns[col].readonly) draft.value[row][props.columns[col].key] = props.columns[col].defaultValue ?? "";
   if (props.autoCommit) commit();
 }
-async function paste() {
+function onPaste(event: ClipboardEvent) {
   if (props.readonly) return;
-  const cells = parseTsv(await navigator.clipboard.readText());
-  while (draft.value.length < active.value.row + cells.length) draft.value.push(Object.fromEntries(props.columns.map((column) => [column.key, ""])));
-  cells.forEach((row, rowOffset) => row.forEach((value, colOffset) => {
-    const column = props.columns[active.value.col + colOffset];
-    if (column && !column.readonly && (!column.options || column.options.some((option) => option.value === value))) draft.value[active.value.row + rowOffset][column.key] = value;
-  }));
+  const text = event.clipboardData?.getData("text/plain");
+  if (!text) return;
+  const cells = parseTsv(text);
+  if (!cells.length) return;
+  const target = event.target as HTMLElement;
+  const isSingleEditorCell = target.matches("input, textarea")
+    && cells.length === 1
+    && cells[0].length === 1;
+  if (isSingleEditorCell) return;
+  event.preventDefault();
+  editing.value = false;
+  draft.value = applySpreadsheetPaste(draft.value, props.columns, active.value.row, active.value.col, cells);
+  anchor.value = { ...active.value };
+  active.value = {
+    row: active.value.row + cells.length - 1,
+    col: Math.min(props.columns.length - 1, active.value.col + Math.max(...cells.map((row) => row.length)) - 1),
+  };
   if (props.autoCommit) commit();
 }
 function onKey(event: KeyboardEvent) {
@@ -113,7 +127,6 @@ function onKey(event: KeyboardEvent) {
   }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c") { void copy(); event.preventDefault(); return }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "x") { void copy(true); event.preventDefault(); return }
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v") { void paste(); event.preventDefault(); return }
   if (event.key === "Delete") { clearSelection(); event.preventDefault(); return }
   if (event.key === "F2" || event.key === "Enter") {
     const column = props.columns[active.value.col];
@@ -165,7 +178,7 @@ onBeforeUnmount(stopCellDrag);
 </script>
 
 <template>
-  <div class="sheet" tabindex="0" @keydown="onKey">
+  <div ref="sheetElement" class="sheet" tabindex="0" @keydown="onKey" @paste="onPaste">
     <div class="sheet-row sheet-header" :style="{ gridTemplateColumns: gridColumns }">
       <div class="sheet-head row-number" @click="selectAll">
         <button
