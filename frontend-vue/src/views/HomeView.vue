@@ -15,6 +15,8 @@ const createOpen = ref(route.query.create === "1");
 const name = ref("");
 const description = ref("");
 const displayName = ref("");
+const claimingId = ref<string | null>(null);
+const claimError = ref<{ projectId: string; message: string } | null>(null);
 
 const rows = computed(() => project.publicProjects.filter((row) => {
   const matches = `${row.name} ${row.description ?? ""} ${creatorName(row)}`.toLowerCase().includes(query.value.trim().toLowerCase());
@@ -42,8 +44,16 @@ async function createProject() {
 
 async function claimLegacy(row: Project) {
   if (!row.is_legacy_unclaimed || !confirm(`기존 프로젝트 “${row.name}”을 내 프로젝트로 가져올까요?`)) return;
-  const claimed = await project.claimLegacyProject(row.id);
-  await router.push({ name: "project-home", params: { projectId: claimed.id } });
+  claimingId.value = row.id;
+  claimError.value = null;
+  try {
+    const claimed = await project.claimLegacyProject(row.id);
+    await router.push({ name: "project-home", params: { projectId: claimed.id } });
+  } catch (error) {
+    claimError.value = { projectId: row.id, message: error instanceof Error ? error.message : String(error) };
+  } finally {
+    claimingId.value = null;
+  }
 }
 
 async function saveDisplayName() {
@@ -78,7 +88,10 @@ onMounted(() => void project.bootstrap());
         <div class="project-post-meta"><span class="access-badge" :class="role(row) || (row.access_request_status === 'pending' ? 'pending' : 'public')">{{ accessLabel(row) }}</span><small>{{ new Date(row.updated_at).toLocaleDateString() }}</small></div>
         <RouterLink :to="{ name: 'project-home', params: { projectId: row.id } }" class="project-post-link"><h2>{{ row.name }}</h2><p>{{ row.description || '프로젝트 소개가 아직 없습니다.' }}</p></RouterLink>
         <div class="project-post-stats"><span>생성자 <b>{{ creatorName(row) }}</b></span><span>멤버 <b>{{ row.member_count ?? 0 }}</b></span><span>Key Editor <b>2</b></span></div>
-        <button v-if="row.is_legacy_unclaimed" class="primary subtle legacy-claim" @click="claimLegacy(row)">기존 프로젝트 가져오기</button>
+        <template v-if="row.is_legacy_unclaimed">
+          <button class="primary subtle legacy-claim" :disabled="claimingId === row.id" @click="claimLegacy(row)">{{ claimingId === row.id ? '가져오는 중...' : '기존 프로젝트 가져오기' }}</button>
+          <p v-if="claimError?.projectId === row.id" class="legacy-claim-error" role="alert">{{ claimError.message }}</p>
+        </template>
       </article>
       <div v-if="!rows.length" class="panel board-empty"><strong>조건에 맞는 프로젝트가 없습니다.</strong><p>새 프로젝트 게시물을 만들어 작업을 시작해 보세요.</p></div>
     </div>

@@ -14,6 +14,8 @@ const requestRole = ref<"viewer" | "editor">("viewer");
 const requestMessage = ref("");
 const requesting = ref(false);
 const refreshing = ref(false);
+const claiming = ref(false);
+const claimError = ref("");
 const current = computed(() => project.currentProject);
 const creator = computed(() => current.value?.creator_display_name ?? current.value?.creator?.display_name ?? "사내 사용자");
 const editingActorId = computed(() => current.value?.lock_holder_actor_id ?? null);
@@ -63,9 +65,18 @@ async function requestAccess() {
 
 async function claimLegacy() {
   if (!current.value?.is_legacy_unclaimed || !confirm("이 기존 프로젝트를 내 프로젝트로 가져올까요?")) return;
-  await project.claimLegacyProject(current.value.id);
-  await project.loadProject(current.value.id);
-  await loadMemberHome();
+  const projectId = current.value.id;
+  claiming.value = true;
+  claimError.value = "";
+  try {
+    await project.claimLegacyProject(projectId);
+    await project.loadProject(projectId);
+    await loadMemberHome();
+  } catch (error) {
+    claimError.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    claiming.value = false;
+  }
 }
 
 watch(() => project.hasMembership, () => void loadMemberHome());
@@ -125,7 +136,7 @@ onBeforeUnmount(() => {
 
     <section v-else class="panel access-gate">
       <div class="access-gate-icon"><UserRound :size="36"/></div>
-      <div v-if="current.is_legacy_unclaimed"><p class="eyebrow">LEGACY PROJECT</p><h2>소유자가 지정되지 않은 기존 프로젝트입니다.</h2><p>이 프로젝트의 담당자라면 가져온 뒤 멤버와 Align Tree를 관리할 수 있습니다.</p><button class="primary" @click="claimLegacy">기존 프로젝트 가져오기</button></div>
+      <div v-if="current.is_legacy_unclaimed"><p class="eyebrow">LEGACY PROJECT</p><h2>소유자가 지정되지 않은 기존 프로젝트입니다.</h2><p>이 프로젝트의 담당자라면 가져온 뒤 멤버와 Align Tree를 관리할 수 있습니다.</p><button class="primary" :disabled="claiming" @click="claimLegacy">{{ claiming ? '가져오는 중...' : '기존 프로젝트 가져오기' }}</button><p v-if="claimError" class="legacy-claim-error" role="alert">{{ claimError }}</p></div>
       <div v-else-if="project.accessRequestStatus === 'pending'"><p class="eyebrow">ACCESS REQUESTED</p><h2>사용 신청이 승인 대기 중입니다.</h2><p>프로젝트 Owner 또는 Admin이 승인하면 내부 메뉴가 열립니다.</p><button @click="router.push('/')">프로젝트 게시판으로</button></div>
       <div v-else><p class="eyebrow">MEMBERS ONLY</p><h2>이 프로젝트의 사용 권한을 신청하세요.</h2><p>Project Dashboard의 공개 정보는 볼 수 있지만 기준정보, Layer 정보와 Key Editor는 멤버만 접근할 수 있습니다.</p><div class="access-request-form"><label>요청 권한<select v-model="requestRole"><option value="viewer">보기 권한</option><option value="editor">편집 권한</option></select></label><label>신청 메시지<textarea v-model="requestMessage" placeholder="참여 목적이나 담당 업무를 적어주세요."></textarea></label><button class="primary" :disabled="requesting" @click="requestAccess">{{ requesting ? '신청 중…' : '사용 신청' }}</button></div></div>
     </section>

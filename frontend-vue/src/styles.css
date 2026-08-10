@@ -888,6 +888,7 @@ a { color: inherit; }
 .project-post-stats { display: grid; grid-template-columns: 1fr auto auto; gap: 12px; border-top: 1px solid #eaecf0; padding-top: 12px; color: #98a2b3; font-size: 10px; }
 .project-post-stats b { color: #475467; }
 .legacy-claim { margin-top: 12px; }
+.legacy-claim-error { margin: 8px 0 0; color: #b42318; font-size: 11px; line-height: 1.45; }
 .board-empty { grid-column: 1 / -1; padding: 50px; text-align: center; }
 .access-badge.pending { background: #fffaeb; color: #b54708; }
 .access-badge.public { background: #f2f4f7; color: #667085; }

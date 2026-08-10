@@ -156,7 +156,10 @@ def claim_legacy_project(
     db: Session = Depends(get_db),
 ) -> schemas.ProjectPublicRead:
     if not settings.allow_legacy_project_claims:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Legacy project claims are disabled")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="기존 프로젝트 가져오기가 비활성화되어 있습니다. 서버의 ALLOW_LEGACY_PROJECT_CLAIMS 설정을 확인하세요.",
+        )
     updated = (
         db.query(models.Project)
         .filter(
@@ -177,7 +180,10 @@ def claim_legacy_project(
     )
     if updated != 1:
         db.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Project is not available for legacy claim")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="이미 가져온 프로젝트이거나 소유권 정보가 올바르지 않습니다.",
+        )
     project = db.get(models.Project, project_id)
     assert project is not None
     member = (
