@@ -46,6 +46,7 @@ def project_public_read(db: Session, project: models.Project, actor: models.Acto
         is_locked=active_lease,
         locked_by_me=bool(active_lease and lease and lease.actor_id == actor.id),
         lock_expires_at=lease.expires_at if active_lease and lease else None,
+        lock_holder_actor_id=(lease.actor_id if active_lease and lease and role is not None else None),
         lock_holder_display_name=(
             lease.actor.display_name if active_lease and lease and role is not None else None
         ),

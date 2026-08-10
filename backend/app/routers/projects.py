@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hmac
 import uuid
 from datetime import datetime, timezone
 
@@ -13,7 +12,6 @@ from ..services.audit import record_project_event
 from ..services.identity import get_current_actor
 from ..services.project_access import (
     ProjectContext,
-    as_utc,
     get_project_context,
     require_project_admin_mutation,
     require_project_mutation,
@@ -159,31 +157,6 @@ def claim_legacy_project(
 ) -> schemas.ProjectPublicRead:
     if not settings.allow_legacy_project_claims:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Legacy project claims are disabled")
-    # A claim requires this exact signed-cookie Actor to predate the project's
-    # migration and to arrive from the same HMACed network observed then. A
-    # newly-created Actor can never claim a legacy project. Raw IPs are never
-    # read from or written to the database here.
-    migration_cutoff = (
-        db.query(models.ProjectAuditEvent.created_at)
-        .filter(
-            models.ProjectAuditEvent.project_id == project_id,
-            models.ProjectAuditEvent.event_type == "project.migrated_v2",
-        )
-        .order_by(models.ProjectAuditEvent.created_at)
-        .scalar()
-    )
-    eligible = (
-        migration_cutoff is not None
-        and as_utc(actor.created_at) <= as_utc(migration_cutoff)
-        and actor.last_ip_hash is not None
-        and actor.legacy_claim_ip_hash is not None
-        and hmac.compare_digest(actor.last_ip_hash, actor.legacy_claim_ip_hash)
-    )
-    if not eligible:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="This network identity is not eligible to claim the legacy project",
-        )
     updated = (
         db.query(models.Project)
         .filter(
@@ -207,7 +180,21 @@ def claim_legacy_project(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Project is not available for legacy claim")
     project = db.get(models.Project, project_id)
     assert project is not None
-    db.add(models.ProjectMember(project_id=project.id, actor_id=actor.id, role="owner", added_by_actor_id=actor.id))
+    member = (
+        db.query(models.ProjectMember)
+        .filter(models.ProjectMember.project_id == project.id, models.ProjectMember.actor_id == actor.id)
+        .one_or_none()
+    )
+    if member is None:
+        db.add(models.ProjectMember(project_id=project.id, actor_id=actor.id, role="owner", added_by_actor_id=actor.id))
+    else:
+        member.role = "owner"
+        member.added_by_actor_id = actor.id
+    db.query(models.ProjectAccessRequest).filter(
+        models.ProjectAccessRequest.project_id == project.id,
+        models.ProjectAccessRequest.requester_actor_id == actor.id,
+        models.ProjectAccessRequest.status == "pending",
+    ).update({models.ProjectAccessRequest.status: "cancelled"}, synchronize_session=False)
     record_project_event(
         db,
         project_id=project.id,

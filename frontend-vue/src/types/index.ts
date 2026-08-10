@@ -27,6 +27,7 @@ export interface Project {
   locked?: boolean;
   locked_by_me?: boolean;
   lock_expires_at?: string | null;
+  lock_holder_actor_id?: string | null;
   lock_holder_display_name?: string | null;
   creator_id?: string | null;
   creator_display_name?: string | null;
