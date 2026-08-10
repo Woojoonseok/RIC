@@ -1646,6 +1646,7 @@ def test_public_project_metadata_is_visible_but_internal_data_requires_membershi
     assert owner_view.json()["member_count"] == 1
     assert owner_view.json()["is_locked"] is True
     assert owner_view.json()["locked_by_me"] is True
+    assert owner_view.json()["lock_holder_actor_id"] == owner_id
     assert owner_view.json()["lock_holder_display_name"] == owner_view.json()["creator"]["display_name"]
 
     owner_members = client.get(f"/api/projects/{project_id}/members")
@@ -1663,6 +1664,7 @@ def test_public_project_metadata_is_visible_but_internal_data_requires_membershi
     assert public_project["align_tree_count"] == 1
     assert public_project["member_count"] == 1
     assert public_project["is_locked"] is True
+    assert public_project["lock_holder_actor_id"] is None
     assert public_project["lock_holder_display_name"] is None
 
     assert client.get(f"/api/projects/{project_id}").status_code == 200
@@ -2023,49 +2025,18 @@ def test_dev_migration_promotes_only_active_legacy_grants() -> None:
         assert all(db.get(models.Actor, actor_id).legacy_claim_ip_hash for actor_id in actor_ids.values())
 
 
-def test_legacy_claim_requires_same_pre_migration_actor_and_ip_snapshot(
+def test_legacy_claim_requires_opt_in_and_allows_new_server_actor(
     client: TestClient,
     monkeypatch,
 ) -> None:  # type: ignore[no-untyped-def]
-    monkeypatch.setattr(settings, "allow_legacy_project_claims", True)
-    old_actor_id, old_cookie = current_actor(client)
+    old_actor_id, _old_cookie = current_actor(client)
     project_id = create_project(client)
     migration_time = datetime.now(timezone.utc) - timedelta(days=1)
 
     with client.app.state.session_factory() as db:
         project = db.get(models.Project, uuid.UUID(project_id))
         actor = db.get(models.Actor, uuid.UUID(old_actor_id))
-        assert project is not None and actor is not None and actor.last_ip_hash is not None
-        db.query(models.ProjectMember).filter(models.ProjectMember.project_id == project.id).delete()
-        project.owner_actor_id = None
-        project.created_by_actor_id = None
-        project.creator_display_name = "Legacy Import"
-        project.is_legacy_unclaimed = True
-        actor.created_at = migration_time - timedelta(days=1)
-        actor.legacy_claim_ip_hash = actor.last_ip_hash
-        db.add(
-            models.ProjectAuditEvent(
-                project_id=project.id,
-                actor_label_snapshot="System",
-                event_type="project.migrated_v2",
-                target_type="project",
-                target_id=project.id,
-                summary="Migration boundary",
-                details_json={},
-                created_at=migration_time,
-            )
-        )
-        db.commit()
-
-    use_actor(client, old_cookie)
-    claimed = client.post(f"/api/projects/{project_id}/claim-legacy")
-    assert claimed.status_code == 200, claimed.text
-    assert claimed.json()["my_role"] == "owner"
-
-    second_project_id = create_project(client)
-    with client.app.state.session_factory() as db:
-        project = db.get(models.Project, uuid.UUID(second_project_id))
-        assert project is not None
+        assert project is not None and actor is not None
         db.query(models.ProjectMember).filter(models.ProjectMember.project_id == project.id).delete()
         project.owner_actor_id = None
         project.created_by_actor_id = None
@@ -2086,15 +2057,22 @@ def test_legacy_claim_requires_same_pre_migration_actor_and_ip_snapshot(
         db.commit()
 
     new_actor_id, _new_cookie = create_anonymous_actor(client)
-    with client.app.state.session_factory() as db:
-        new_actor = db.get(models.Actor, uuid.UUID(new_actor_id))
-        assert new_actor is not None and new_actor.last_ip_hash is not None
-        # Even granting a matching frozen hash cannot make a post-migration
-        # cookie Actor eligible.
-        new_actor.legacy_claim_ip_hash = new_actor.last_ip_hash
-        db.commit()
-    denied = client.post(f"/api/projects/{second_project_id}/claim-legacy")
+    requested = client.post(
+        f"/api/projects/{project_id}/access-requests",
+        json={"requested_role": "editor", "message": "Moved server owner"},
+    )
+    assert requested.status_code == 201, requested.text
+    denied = client.post(f"/api/projects/{project_id}/claim-legacy")
     assert denied.status_code == 403, denied.text
+
+    monkeypatch.setattr(settings, "allow_legacy_project_claims", True)
+    claimed = client.post(f"/api/projects/{project_id}/claim-legacy")
+    assert claimed.status_code == 200, claimed.text
+    assert claimed.json()["my_role"] == "owner"
+    assert claimed.json()["creator"]["id"] == new_actor_id
+    with client.app.state.session_factory() as db:
+        access_request = db.get(models.ProjectAccessRequest, uuid.UUID(requested.json()["id"]))
+        assert access_request is not None and access_request.status == "cancelled"
 
 
 def test_project_patch_requires_admin_role_and_a_live_lease(client: TestClient) -> None:

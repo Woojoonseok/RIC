@@ -902,15 +902,42 @@ a { color: inherit; }
 .project-summary-card > strong { margin-top: 3px; font-size: 27px; }
 .project-summary-card > small { margin-top: auto; color: #667085; }
 .summary-save-state { color: #067647; font-size: 18px !important; }
-.project-home-grid { display: grid; grid-template-columns: minmax(300px, .8fr) minmax(450px, 1.2fr); gap: 14px; max-width: 1320px; margin: auto; }
-.project-quick-start, .project-history { padding: 20px; }
-.project-quick-start > .panel-heading, .project-history > .panel-heading { margin-bottom: 13px; }
+.project-editor-status > strong { overflow: hidden; font-size: 18px; text-overflow: ellipsis; white-space: nowrap; }
+.project-editor-status.active { border-color: #a6f4c5; background: #f6fef9; }
+.project-editor-status.active > span, .project-editor-status.active > strong { color: #067647; }
+.project-dashboard-links { display: grid; grid-template-columns: repeat(3, 1fr); max-width: 1320px; margin: 0 auto 16px; border-block: 1px solid #d0d5dd; background: #fff; }
+.project-dashboard-links a { display: flex; min-width: 0; align-items: center; gap: 10px; padding: 12px 16px; color: #344054; text-decoration: none; }
+.project-dashboard-links a + a { border-left: 1px solid #eaecf0; }
+.project-dashboard-links a > svg { flex: 0 0 auto; color: #175cd3; }
+.project-dashboard-links a > span { display: grid; min-width: 0; gap: 2px; }
+.project-dashboard-links a strong, .project-dashboard-links a small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-dashboard-links a small { color: #667085; font-size: 9px; }
+.project-home-grid { display: grid; grid-template-columns: minmax(420px, .95fr) minmax(450px, 1.05fr); align-items: start; gap: 14px; max-width: 1320px; margin: auto; }
+.project-team, .project-history { padding: 20px; }
+.project-team > .panel-heading, .project-history > .panel-heading { margin-bottom: 13px; }
+.project-team .panel-heading > div, .project-history .panel-heading > div { display: flex; align-items: center; gap: 9px; }
+.project-team .panel-heading h2, .project-history .panel-heading h2 { margin: 0; }
+.project-team .panel-heading small { display: block; margin-top: 3px; color: #98a2b3; font-size: 9px; }
 .project-history > .panel-heading small { display: block; margin-top: 4px; color: #98a2b3; font-size: 9px; }
-.project-quick-start > a { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 10px; border-top: 1px solid #eaecf0; padding: 15px 2px; text-decoration: none; }
-.project-quick-start > a > span { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: #eff4ff; color: #175cd3; font-size: 10px; font-weight: 800; }
-.project-quick-start > a div { display: grid; gap: 3px; }
-.project-quick-start > a small { color: #667085; }
-.project-quick-start > a > b { color: #98a2b3; }
+.project-role-summary { display: grid; grid-template-columns: repeat(4, 1fr); border-block: 1px solid #eaecf0; }
+.project-role-summary > div { display: grid; gap: 3px; border-right: 1px solid #eaecf0; padding: 10px 8px; text-align: center; }
+.project-role-summary > div:last-child { border-right: 0; }
+.project-role-summary span { color: #667085; font-size: 9px; }
+.project-role-summary strong { color: #344054; font-size: 17px; }
+.project-member-list { max-height: 360px; overflow: auto; }
+.project-member-list article { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto auto; align-items: center; gap: 9px; border-bottom: 1px solid #f2f4f7; padding: 10px 2px; }
+.project-member-list article.editing { background: #f6fef9; }
+.project-member-avatar { display: grid; width: 32px; height: 32px; place-items: center; border-radius: 6px; background: #f2f4f7; color: #344054; font-size: 11px; font-weight: 800; }
+.project-member-list article > div:nth-child(2) { display: grid; min-width: 0; gap: 2px; }
+.project-member-list article > div:nth-child(2) strong, .project-member-list article > div:nth-child(2) small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-member-list article > div:nth-child(2) small { color: #98a2b3; font-size: 9px; }
+.project-role-badge { border-radius: 4px; padding: 4px 6px; font-size: 9px; font-weight: 750; }
+.project-role-badge.owner { background: #eef4ff; color: #3538cd; }
+.project-role-badge.admin { background: #fff4ed; color: #b93815; }
+.project-role-badge.editor { background: #ecfdf3; color: #067647; }
+.project-role-badge.viewer { background: #f2f4f7; color: #475467; }
+.editing-badge { display: inline-flex; align-items: center; gap: 5px; color: #067647; font-size: 9px; white-space: nowrap; }
+.editing-badge i { width: 7px; height: 7px; border-radius: 50%; background: #12b76a; }
 .project-history ol { max-height: 330px; overflow: auto; margin: 0; padding: 0; list-style: none; }
 .project-history li { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: center; gap: 10px; border-top: 1px solid #f2f4f7; padding: 12px 2px; }
 .project-history li > i { width: 7px; height: 7px; border-radius: 50%; background: #84adff; }
@@ -1131,6 +1158,13 @@ a { color: inherit; }
   .sidebar-count { position: absolute; margin: -27px 0 0 25px; }
   .workspace-presence { display: grid; grid-template-columns: 1fr; place-items: center; min-height: 38px; padding: 7px; }
   .board-create-panel, .project-home-summary, .tree-create-panel { grid-template-columns: 1fr; }
+  .project-dashboard-links { grid-template-columns: 1fr; }
+  .project-dashboard-links a + a { border-top: 1px solid #eaecf0; border-left: 0; }
+  .project-role-summary { grid-template-columns: repeat(2, 1fr); }
+  .project-role-summary > div:nth-child(2) { border-right: 0; }
+  .project-role-summary > div:nth-child(-n+2) { border-bottom: 1px solid #eaecf0; }
+  .project-member-list article { grid-template-columns: 34px minmax(0, 1fr) auto; }
+  .project-member-list .editing-badge { grid-column: 2 / -1; }
   .editor-choice-grid { grid-template-columns: 1fr; }
   .align-tree-title { align-items: stretch; flex-direction: column; }
   .align-tree-title > button { align-self: flex-start; }

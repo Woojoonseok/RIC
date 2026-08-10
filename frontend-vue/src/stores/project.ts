@@ -316,6 +316,20 @@ export const useProjectStore = defineStore("project", () => {
     if (currentProjectId.value === projectId) auditEvents.value = events.filter(isChangeAuditEvent);
   }
 
+  async function refreshCurrentProject() {
+    if (!currentProjectId.value) return;
+    const projectId = currentProjectId.value;
+    const loaded = await api.getProject(projectId);
+    if (currentProjectId.value === projectId) syncProject(loaded);
+  }
+
+  async function loadMembers() {
+    if (!currentProjectId.value || !hasMembership.value) { members.value = []; return }
+    const projectId = currentProjectId.value;
+    const nextMembers = await api.listProjectMembers(projectId);
+    if (currentProjectId.value === projectId && hasMembership.value) members.value = nextMembers;
+  }
+
   async function loadMembersAndRequests() {
     if (!currentProjectId.value || !canAdminProject.value) { members.value = []; accessRequests.value = []; return }
     const projectId = currentProjectId.value;
@@ -538,7 +552,7 @@ export const useProjectStore = defineStore("project", () => {
     members, accessRequests, userCandidates, auditEvents, loadingProject, bootstrapped, lease, leaseState, clientInstanceId, autosaveState, autosaveLabel, lastSavedAt,
     currentRole, currentRevision, hasMembership, canAdminProject, canEditProject, workflowStatus, workflowLocked, canEdit, readOnly, readOnlyReason, accessRequestStatus,
     bootstrap, updateDisplayName, loadPublicProjects, loadProjects, createProject, branchProject, loadProject, selectProject, clearProjectSelection, updateProject, deleteProject,
-    requestAccess, claimLegacyProject, loadAuditEvents, loadMembersAndRequests, reviewAccessRequest, searchUsers, addMember, updateMemberRole, removeMember,
+    requestAccess, claimLegacyProject, loadAuditEvents, refreshCurrentProject, loadMembers, loadMembersAndRequests, reviewAccessRequest, searchUsers, addMember, updateMemberRole, removeMember,
     loadAlignTrees, createAlignTree, updateAlignTree, deleteAlignTree, ensureEditLease, acquireEdit, activateTree, activateProject, releaseLease,
     syncProject, syncTree, setRevision, registerWorkspaceReset, markSaving, markSaved, markSaveError, flushAutosave, handleMutationError,
   };
