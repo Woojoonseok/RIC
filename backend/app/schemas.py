@@ -425,6 +425,7 @@ class LayoutUpdate(BaseModel):
     width: float | None = Field(default=None, ge=60)
     height: float | None = Field(default=None, ge=36)
     z_index: int | None = None
+    pinned: bool | None = None
 
 
 class LayoutBatchUpdate(LayoutUpdate):
@@ -441,6 +442,20 @@ class LayoutRead(OrmModel):
     width: float
     height: float
     z_index: int
+    pinned: bool = False
+
+
+class AutoLayoutRequest(BaseModel):
+    scope: Literal["all", "selected"] = "all"
+    layer_ids: list[uuid.UUID] = Field(default_factory=list)
+    preset: Literal["top_down", "left_right", "compact", "spacious"] = "top_down"
+    route_relations: bool = True
+
+    @model_validator(mode="after")
+    def require_selected_layers(self) -> "AutoLayoutRequest":
+        if self.scope == "selected" and not self.layer_ids:
+            raise ValueError("layer_ids is required when scope is selected")
+        return self
 
 
 class StyleUpdate(BaseModel):

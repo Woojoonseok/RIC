@@ -33,6 +33,7 @@ import { useProjectStore } from "../../stores/project";
 import { useReferenceStore } from "../../stores/reference";
 import type { LayerMaster } from "../../types";
 import LayerMasterPickerModal from "./LayerMasterPickerModal.vue";
+import AutoLayoutModal from "./AutoLayoutModal.vue";
 import SnapshotManagerModal from "./SnapshotManagerModal.vue";
 import WorkflowControl from "./WorkflowControl.vue";
 
@@ -42,6 +43,8 @@ const project = useProjectStore();
 const reference = useReferenceStore();
 const layerPickerOpen = ref(false);
 const snapshotOpen = ref(false);
+const autoLayoutOpen = ref(false);
+const moreMenu = ref<HTMLDetailsElement | null>(null);
 const splitLayerId = computed(() => {
   const layerId = app.selectedSplitLayerId;
   return layerId && graph.rawGraph && isMergedLayer(graph.rawGraph, layerId) ? layerId : null;
@@ -92,6 +95,10 @@ async function splitSelected() {
   await graph.mutateGraph("Layer 분할", () => api.split(project.projectId, layerId));
   app.selection = [{ kind: "layer", id: layerId }];
 }
+function openAutoLayout() {
+  moreMenu.value?.removeAttribute("open");
+  autoLayoutOpen.value = true;
+}
 </script>
 
 <template>
@@ -124,14 +131,14 @@ async function splitSelected() {
       <button class="danger toolbar-icon-button" :disabled="!project.canEdit || !app.selection.length" title="선택 항목 삭제" aria-label="선택 항목 삭제" @click="graph.deleteSelection"><Trash2 :size="17"/></button>
     </div>
     <button class="toolbar-command" title="코멘트 및 이슈" @click="app.openReview()"><MessageSquare :size="16"/><span>리뷰</span></button>
-    <details class="toolbar-more">
+    <details ref="moreMenu" class="toolbar-more">
       <summary aria-label="더보기" title="더보기"><MoreHorizontal :size="18"/><ChevronDown :size="13"/></summary>
       <div>
         <button :disabled="!graph.displayGraph" @click="exportSvg(graph.displayGraph!)"><FileImage :size="15"/>SVG 내보내기</button>
         <button :disabled="!graph.displayGraph" @click="exportPptx(graph.displayGraph!, app.labelField)"><Presentation :size="15"/>PowerPoint 내보내기</button>
         <button :disabled="!graph.displayGraph?.layers.length" @click="selectAll"><MousePointer2 :size="15"/>전체 선택</button>
         <button @click="snapshotOpen = true"><History :size="15"/>스냅샷</button>
-        <button :disabled="!project.canEdit" @click="graph.mutateGraph('자동 배치', () => api.autoLayout(project.projectId))"><WandSparkles :size="15"/>자동 배치</button>
+        <button :disabled="!project.canEdit" @click="openAutoLayout"><WandSparkles :size="15"/>자동 배치</button>
         <button @click="graph.reloadGraph"><RefreshCw :size="15"/>새로고침</button>
       </div>
     </details>
@@ -142,4 +149,5 @@ async function splitSelected() {
     @close="layerPickerOpen = false"
   />
   <SnapshotManagerModal :open="snapshotOpen" @close="snapshotOpen = false"/>
+  <AutoLayoutModal :open="autoLayoutOpen" @close="autoLayoutOpen = false"/>
 </template>

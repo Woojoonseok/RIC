@@ -1,5 +1,5 @@
 import type {
-  AlignTree, AlignTreeCreate, AnonymousSession, AuditEvent, BoxPreset, EditLease, Graph, GraphBatchUpdate,
+  AlignTree, AlignTreeCreate, AnonymousSession, AuditEvent, AutoLayoutRequest, BoxPreset, EditLease, Graph, GraphBatchUpdate,
   GraphRestore, KeyDrawingType, KeyLayoutType, KeyShape, Layer, LayerCreate, LayerMaster, LayerMasterCreate,
   LayerMasterImportCommitResult, LayerMasterImportPreview, LayerMasterImportRequest, LayerMasterUpdate,
   LayerImpactReport, LayerMergeRequest, LayerSplitRequest, LayerUpdate, Layout, LayoutUpdate, Project,
@@ -157,7 +157,7 @@ export const api = {
   restoreGraph: (treeId: string, body: GraphRestore) => request<Graph>(`${graphRoot(treeId)}/restore`, json("PATCH", body)),
   batchGraph: (treeId: string, body: GraphBatchUpdate) => request<Graph>(`${graphRoot(treeId)}/batch`, json("PATCH", body)),
   validate: (treeId: string) => request<ValidationReport>(`${treeRoot(treeId)}/validate`, json("POST")),
-  autoLayout: (treeId: string) => request<Graph>(`${graphRoot(treeId)}/auto-layout`, json("POST")),
+  autoLayout: (treeId: string, body: AutoLayoutRequest) => request<Graph>(`${graphRoot(treeId)}/auto-layout`, json("POST", body)),
   createLayer: (treeId: string, body: LayerCreate) => request<Layer>(`${graphRoot(treeId)}/layers`, json("POST", body)),
   updateLayer: (treeId: string, id: string, body: LayerUpdate) => request<Layer>(`${graphRoot(treeId)}/layers/${id}`, json("PUT", body)),
   deleteLayer: (treeId: string, id: string) => request<void>(`${graphRoot(treeId)}/layers/${id}`, json("DELETE")),

@@ -154,9 +154,15 @@ export interface LayerUpdate {
   description?: string | null; metadata_json?: Record<string, unknown>; box_preset_id?: string | null;
 }
 
-export interface Layout { id: string; project_id: string; layer_id: string; x: number; y: number; width: number; height: number; z_index: number }
-export interface LayoutUpdate { x?: number; y?: number; width?: number; height?: number; z_index?: number }
+export interface Layout { id: string; project_id: string; layer_id: string; x: number; y: number; width: number; height: number; z_index: number; pinned?: boolean }
+export interface LayoutUpdate { x?: number; y?: number; width?: number; height?: number; z_index?: number; pinned?: boolean }
 export interface LayoutBatchUpdate extends LayoutUpdate { layer_id: string }
+export interface AutoLayoutRequest {
+  scope: "all" | "selected";
+  layer_ids: string[];
+  preset: "top_down" | "left_right" | "compact" | "spacious";
+  route_relations: boolean;
+}
 
 export interface ShapeStyle { id: string; project_id: string; layer_id: string; fill_color: string; stroke_color: string; text_color: string; font_size: number; stroke_width: number }
 export interface StyleUpdate { fill_color?: string; stroke_color?: string; text_color?: string; font_size?: number; stroke_width?: number }

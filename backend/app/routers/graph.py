@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -402,6 +402,7 @@ def restore_graph(
                 width=layout.width,
                 height=layout.height,
                 z_index=layout.z_index,
+                pinned=layout.pinned,
             ))
     for style in payload.styles:
         if style.layer_id in layer_ids:
@@ -2319,6 +2320,7 @@ def delete_text_box(
 def auto_layout(
     project_id: uuid.UUID,
     align_tree_id: uuid.UUID,
+    payload: schemas.AutoLayoutRequest = Body(default=schemas.AutoLayoutRequest()),
     context: ProjectContext = Depends(project_request_guard),
     db: Session = Depends(get_db),
 ) -> schemas.GraphRead:
@@ -2331,7 +2333,23 @@ def auto_layout(
             models.GraphLayout.align_tree_id == align_tree_id,
         ).all()
     }
-    apply_auto_layout(db, project_id, align_tree_id)
+    relation_fields = ["source_port", "target_port", "waypoints"]
+    relations_before = {
+        row.id: _audit_field_values(row, relation_fields)
+        for row in db.query(models.LayerRelation).filter(
+            models.LayerRelation.project_id == project_id,
+            models.LayerRelation.align_tree_id == align_tree_id,
+        ).all()
+    }
+    apply_auto_layout(
+        db,
+        project_id,
+        align_tree_id,
+        scope=payload.scope,
+        selected_layer_ids=set(payload.layer_ids),
+        preset=payload.preset,
+        route_relations=payload.route_relations,
+    )
     db.flush()
     for row in db.query(models.GraphLayout).filter(
         models.GraphLayout.project_id == project_id,
@@ -2349,6 +2367,24 @@ def auto_layout(
                 target_type="layer",
                 target_id=row.layer_id,
                 summary="Updated layer layout with automatic layout",
+                details={"before": previous, "after": after},
+            )
+    for row in db.query(models.LayerRelation).filter(
+        models.LayerRelation.project_id == project_id,
+        models.LayerRelation.align_tree_id == align_tree_id,
+    ).all():
+        previous = relations_before.get(row.id, {field: None for field in relation_fields})
+        after = _audit_field_values(row, relation_fields)
+        if previous != after:
+            _audit_graph_mutation(
+                db,
+                context,
+                project_id,
+                align_tree_id,
+                event_type="relation.updated",
+                target_type="relation",
+                target_id=row.id,
+                summary="Routed relation with automatic layout",
                 details={"before": previous, "after": after},
             )
     db.commit()
