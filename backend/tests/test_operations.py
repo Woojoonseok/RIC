@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import sqlite3
+import uuid
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, select
 
+from app import models
 from app.database import Settings, validate_runtime_settings
 from app.services.database_backup import (
     backup_sqlite_database,
@@ -13,6 +15,7 @@ from app.services.database_backup import (
     verify_sqlite_backup,
 )
 from app.services.migrations import migration_status, upgrade_database
+from app.services.database_transfer import transfer_database
 
 
 def test_fresh_and_existing_databases_reach_alembic_head(tmp_path: Path) -> None:
@@ -52,6 +55,79 @@ def test_sqlite_backup_verify_and_restore(tmp_path: Path) -> None:
 def test_backup_rejects_non_sqlite_database(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="SQLite"):
         backup_sqlite_database("postgresql://localhost/ric", tmp_path / "backup.db")
+
+
+def test_database_transfer_copies_rows_and_restores_self_reference(tmp_path: Path) -> None:
+    source_engine = create_engine(f"sqlite:///{tmp_path / 'source.db'}")
+    target_engine = create_engine(f"sqlite:///{tmp_path / 'target.db'}")
+    upgrade_database(source_engine)
+    upgrade_database(target_engine)
+
+    actor_id = uuid.uuid4()
+    project_id = uuid.uuid4()
+    tree_id = uuid.uuid4()
+    thread_id = uuid.uuid4()
+    comment_id = uuid.uuid4()
+    with source_engine.begin() as connection:
+        connection.execute(models.Actor.__table__.insert(), {"id": actor_id, "display_name": "Migrated user"})
+        connection.execute(
+            models.Project.__table__.insert(),
+            {
+                "id": project_id,
+                "name": "Migrated project",
+                "creator_display_name": "Migrated user",
+                "owner_actor_id": actor_id,
+            },
+        )
+        connection.execute(
+            models.AlignTree.__table__.insert(),
+            {"id": tree_id, "project_id": project_id, "name": "Default tree"},
+        )
+        connection.execute(
+            models.ReviewThread.__table__.insert(),
+            {
+                "id": thread_id,
+                "project_id": project_id,
+                "align_tree_id": tree_id,
+                "target_type": "canvas",
+                "target_label": "Canvas",
+            },
+        )
+        connection.execute(
+            models.ReviewComment.__table__.insert(),
+            {
+                "id": comment_id,
+                "thread_id": thread_id,
+                "parent_comment_id": comment_id,
+                "author_actor_id": actor_id,
+                "author_label": "Migrated user",
+                "body": "Keep the reference",
+            },
+        )
+
+    report = transfer_database(source_engine, target_engine)
+
+    assert report.total_rows == 5
+    with target_engine.connect() as connection:
+        migrated_parent = connection.execute(
+            select(models.ReviewComment.parent_comment_id).where(models.ReviewComment.id == comment_id)
+        ).scalar_one()
+    assert migrated_parent == comment_id
+
+
+def test_database_transfer_rejects_nonempty_target(tmp_path: Path) -> None:
+    source_engine = create_engine(f"sqlite:///{tmp_path / 'source.db'}")
+    target_engine = create_engine(f"sqlite:///{tmp_path / 'target.db'}")
+    upgrade_database(source_engine)
+    upgrade_database(target_engine)
+    with target_engine.begin() as connection:
+        connection.execute(
+            models.Actor.__table__.insert(),
+            {"id": uuid.uuid4(), "display_name": "Existing target user"},
+        )
+
+    with pytest.raises(RuntimeError, match="Target database must be empty"):
+        transfer_database(source_engine, target_engine)
 
 
 def production_settings(**overrides: object) -> Settings:

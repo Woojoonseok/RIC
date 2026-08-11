@@ -73,6 +73,16 @@ $env:DATABASE_URL = "postgresql+psycopg://ric:ric@localhost:5432/ric"
 python -m uvicorn app.main:app --app-dir backend --reload
 ```
 
+기존 SQLite 데이터를 빈 PostgreSQL로 이관할 때는 백엔드를 중지한 뒤 아래 명령을 한 번 실행한다. 원본 SQLite는 읽기만 하며, 실행 전에 `backups/`에 검증된 백업을 만든다. 대상 DB에 데이터가 있으면 이관은 중단된다.
+
+```powershell
+$env:PYTHONPATH = "backend"
+$env:POSTGRES_DATABASE_URL = "postgresql+psycopg://ric:ric@localhost:5432/ric"
+backend\.venv\Scripts\python.exe backend\scripts\database.py migrate-postgres --source-url "sqlite:///./ric-dev.db" --confirm MIGRATE
+```
+
+테이블별 행 수 검증까지 성공하면 `.env`의 `DATABASE_URL`을 `POSTGRES_DATABASE_URL`과 같은 값으로 바꾸고 백엔드를 다시 시작한다. 전환 확인 전까지 `ric-dev.db`와 생성된 백업은 삭제하지 않는다.
+
 ## 구현된 주요 기능
 
 - 프로젝트 CRUD와 전체 Graph restore/batch update

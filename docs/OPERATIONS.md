@@ -49,6 +49,16 @@ python -m alembic upgrade head
 
 ## PostgreSQL backup and restore
 
+SQLite에서 빈 PostgreSQL로 최초 이관:
+
+```powershell
+$env:PYTHONPATH = "backend"
+$env:POSTGRES_DATABASE_URL = "postgresql+psycopg://ric:ric@localhost:5432/ric"
+backend\.venv\Scripts\python.exe backend\scripts\database.py migrate-postgres --source-url "sqlite:///./ric-dev.db" --confirm MIGRATE
+```
+
+명령은 SQLite 백업 생성, 대상 Alembic migration, 데이터 복사, 테이블별 행 수 검증을 순서대로 수행한다. 대상 애플리케이션 테이블에 한 행이라도 있으면 중단한다. 성공 후 `.env`의 `DATABASE_URL`을 PostgreSQL URL로 변경하고 `/api/ready`를 확인한다.
+
 운영 PostgreSQL에서는 공급자 snapshot과 `pg_dump`를 함께 사용한다. 비밀번호는 명령행에 넣지 않고 `.pgpass` 또는 secret 환경변수를 사용한다.
 
 ```bash
