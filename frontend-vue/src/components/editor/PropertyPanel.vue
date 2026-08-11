@@ -124,6 +124,7 @@ onMounted(() => reference.loadAll());
       <div class="property-title"><div><strong>{{ selectedLayers.length }} Layers</strong><small>다중 편집</small></div></div>
       <section class="property-section">
         <h3>위치 및 크기</h3>
+        <label class="property-check"><input type="checkbox" :checked="selectedLayers.every((row) => graph.rawGraph?.layouts.find((layout) => layout.layer_id === row.id)?.pinned)" @change="updateSelectedLayouts({ pinned: ($event.target as HTMLInputElement).checked })">자동 배치에서 위치 고정</label>
         <div class="property-grid">
           <label>Width<input type="number" min="60" value="180" @change="updateSelectedLayouts({ width: numberValue($event) })"></label>
           <label>Height<input type="number" min="36" value="72" @change="updateSelectedLayouts({ height: numberValue($event) })"></label>
@@ -152,6 +153,7 @@ onMounted(() => reference.loadAll());
       </section>
       <section v-if="layout" class="property-section">
         <h3>위치 및 크기</h3>
+        <label class="property-check"><input type="checkbox" :checked="layout.pinned" @change="updateLayout({ pinned: ($event.target as HTMLInputElement).checked })">자동 배치에서 위치 고정</label>
         <div class="property-grid">
           <label>X<input type="number" :value="layout.x" @change="updateLayout({ x: numberValue($event) })"></label>
           <label>Y<input type="number" :value="layout.y" @change="updateLayout({ y: numberValue($event) })"></label>

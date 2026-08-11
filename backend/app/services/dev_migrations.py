@@ -153,6 +153,18 @@ def _add_text_box_columns(target_engine: Engine) -> None:
             )
 
 
+def _add_graph_layout_columns(target_engine: Engine) -> None:
+    if not target_engine.url.drivername.startswith("sqlite"):
+        return
+    inspector = inspect(target_engine)
+    if "graph_layouts" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("graph_layouts")}
+    if "pinned" not in columns:
+        with target_engine.begin() as connection:
+            connection.execute(text("ALTER TABLE graph_layouts ADD COLUMN pinned BOOLEAN NOT NULL DEFAULT 0"))
+
+
 def _unique_columns(target_engine: Engine, table_name: str) -> set[tuple[str, ...]]:
     return {
         tuple(constraint.get("column_names") or ())
@@ -487,6 +499,7 @@ def run_local_dev_migrations(target_engine: Engine | None = None) -> None:
     _add_project_columns(active_engine)
     _add_align_tree_columns(active_engine)
     _add_text_box_columns(active_engine)
+    _add_graph_layout_columns(active_engine)
     _rebuild_scoped_tables(active_engine)
     models.Base.metadata.create_all(bind=active_engine)
     _migrate_project_rows(active_engine)

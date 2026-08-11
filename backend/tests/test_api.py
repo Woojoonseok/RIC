@@ -263,6 +263,69 @@ def test_project_graph_validation_restore_and_layout(client: TestClient) -> None
     assert next(row for row in restored.json()["layouts"] if row["layer_id"] == first)["x"] != 999
 
 
+def test_advanced_auto_layout_respects_pins_scope_and_routes(client: TestClient) -> None:
+    project_id = create_project(client)
+    tree_id = default_tree_id(client, project_id)
+    base = graph_base(client, project_id, tree_id)
+    first = create_layer(client, project_id, "A", 0, tree_id=tree_id)
+    pinned = create_layer(client, project_id, "B", 300, tree_id=tree_id)
+    last = create_layer(client, project_id, "C", 600, tree_id=tree_id)
+    client.post(f"{base}/relations", json={"parent_layer_id": first, "child_layer_id": pinned})
+    client.post(f"{base}/relations", json={"parent_layer_id": pinned, "child_layer_id": last})
+    pin_response = client.patch(
+        f"{base}/layers/{pinned}/layout",
+        json={"x": 340, "y": 240, "pinned": True},
+    )
+    assert pin_response.status_code == 200, pin_response.text
+
+    laid_out = client.post(
+        f"{base}/auto-layout",
+        json={
+            "scope": "all",
+            "preset": "left_right",
+            "route_relations": True,
+        },
+    )
+    assert laid_out.status_code == 200, laid_out.text
+    graph = laid_out.json()
+    layouts = {row["layer_id"]: row for row in graph["layouts"]}
+    assert (layouts[pinned]["x"], layouts[pinned]["y"], layouts[pinned]["pinned"]) == (340, 240, True)
+    assert layouts[first]["x"] < layouts[last]["x"]
+    assert all(relation["source_port"] in {"left", "right"} for relation in graph["relations"])
+    assert all(
+        point_a["x"] == point_b["x"] or point_a["y"] == point_b["y"]
+        for relation in graph["relations"]
+        for point_a, point_b in zip(
+            relation["waypoints"], relation["waypoints"][1:], strict=False
+        )
+    )
+
+    first_before = (layouts[first]["x"], layouts[first]["y"])
+    pinned_before = (layouts[pinned]["x"], layouts[pinned]["y"])
+    selected = client.post(
+        f"{base}/auto-layout",
+        json={
+            "scope": "selected",
+            "layer_ids": [last],
+            "preset": "compact",
+            "route_relations": False,
+        },
+    )
+    assert selected.status_code == 200, selected.text
+    selected_layouts = {row["layer_id"]: row for row in selected.json()["layouts"]}
+    assert (selected_layouts[first]["x"], selected_layouts[first]["y"]) == first_before
+    assert (selected_layouts[pinned]["x"], selected_layouts[pinned]["y"]) == pinned_before
+
+
+def test_advanced_auto_layout_requires_a_selected_layer(client: TestClient) -> None:
+    project_id = create_project(client)
+    response = client.post(
+        f"{graph_base(client, project_id)}/auto-layout",
+        json={"scope": "selected", "layer_ids": []},
+    )
+    assert response.status_code == 422
+
+
 def test_layer_impact_analysis_and_delete_cleanup(client: TestClient) -> None:
     project_id = create_project(client)
     tree_id = default_tree_id(client, project_id)

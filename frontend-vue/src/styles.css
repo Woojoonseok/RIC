@@ -258,6 +258,33 @@ h1, h2, strong, .brand { font-family: "Manrope", sans-serif; }
 .toolbar-more[open] summary { border-color: #84adff; color: #175cd3; box-shadow: 0 0 0 3px #eff4ff; }
 .toolbar-more > div { position: absolute; top: calc(100% + 7px); right: 0; z-index: 50; display: grid; min-width: 150px; gap: 3px; border: 1px solid #d0d5dd; border-radius: 10px; background: #fff; box-shadow: 0 12px 28px rgba(16,24,40,.16); padding: 6px; }
 .toolbar-more > div button { display: inline-flex; width: 100%; align-items: center; gap: 8px; border-color: transparent; text-align: left; }
+.layout-modal-backdrop { position: fixed; inset: 0; z-index: 120; display: grid; place-items: center; background: rgba(16,24,40,.45); padding: 20px; }
+.layout-modal { width: min(560px, 100%); max-height: calc(100vh - 40px); overflow: auto; border: 1px solid #d0d5dd; border-radius: 8px; background: #fff; box-shadow: 0 20px 48px rgba(16,24,40,.24); }
+.layout-modal > header, .layout-modal > footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 20px; }
+.layout-modal > header { border-bottom: 1px solid #eaecf0; }
+.layout-modal > header h2 { margin: 0 0 4px; font-size: 18px; }
+.layout-modal > header p { margin: 0; color: #667085; font-size: 12px; }
+.layout-modal > footer { justify-content: flex-end; border-top: 1px solid #eaecf0; }
+.layout-icon-button { display: grid; flex: 0 0 36px; width: 36px; height: 36px; place-items: center; padding: 0; }
+.layout-modal-body { display: grid; gap: 18px; padding: 20px; }
+.layout-modal fieldset { margin: 0; border: 0; padding: 0; }
+.layout-modal legend { margin-bottom: 9px; color: #344054; font-size: 12px; font-weight: 700; }
+.layout-segmented { display: grid; grid-template-columns: 1fr 1fr; }
+.layout-segmented button { border-radius: 0; }
+.layout-segmented button:first-child { border-radius: 6px 0 0 6px; }
+.layout-segmented button:last-child { border-radius: 0 6px 6px 0; }
+.layout-segmented button + button { border-left: 0; }
+.layout-segmented button.active, .layout-presets button.active { border-color: #84adff; background: #eff4ff; color: #175cd3; }
+.layout-presets { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.layout-presets button { display: flex; min-height: 62px; align-items: center; gap: 10px; padding: 10px 12px; text-align: left; }
+.layout-presets button > span, .layout-toggle > span, .layout-pin-row > span { display: grid; gap: 2px; }
+.layout-presets b, .layout-toggle b, .layout-pin-row b { font-size: 12px; }
+.layout-presets small, .layout-toggle small, .layout-pin-row small { color: #667085; font-size: 11px; }
+.layout-toggle { display: flex; align-items: center; gap: 11px; border-top: 1px solid #eaecf0; padding-top: 16px; }
+.layout-toggle input, .property-check input { flex: 0 0 auto; min-width: auto; accent-color: #175cd3; }
+.layout-pin-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; border: 1px solid #eaecf0; border-radius: 7px; padding: 12px; }
+.layout-pin-row button { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+.property-check { display: flex !important; grid-template-columns: none !important; flex-direction: row !important; align-items: center; gap: 8px; margin-bottom: 10px; color: #475467; font-size: 12px; }
 .editor-workspace { position: relative; display: grid; grid-template-columns: 230px minmax(0, 1fr) 280px; min-height: 0; }
 .editor-workspace.layers-hidden { grid-template-columns: minmax(0, 1fr) 280px; }
 .editor-workspace.properties-hidden { grid-template-columns: 230px minmax(0, 1fr); }
@@ -421,6 +448,9 @@ h1, h2, strong, .brand { font-family: "Manrope", sans-serif; }
 .layer-node { cursor: move; }
 .layer-node text, .text-box text { pointer-events: none; user-select: none; }
 .layer-node.selected rect:first-of-type { filter: drop-shadow(0 0 5px rgba(46,144,250,.55)); }
+.layer-node.pinned rect:first-of-type { stroke-dasharray: 7 4; }
+.layer-pin { color: #475467; pointer-events: none; }
+.layer-pin svg { display: block; }
 .connect-mode .layer-node { cursor: crosshair; }
 .layer-node.connect-source rect:first-of-type { stroke: #1570ef; stroke-width: 4; filter: drop-shadow(0 0 7px rgba(46,144,250,.45)); }
 .layer-node.connect-candidate rect:first-of-type { stroke: #12b76a; stroke-width: 3; filter: drop-shadow(0 0 5px rgba(18,183,106,.25)); }

@@ -539,6 +539,7 @@ class GraphLayout(Base, TimestampMixin):
     width: Mapped[float] = mapped_column(Float, default=180)
     height: Mapped[float] = mapped_column(Float, default=72)
     z_index: Mapped[int] = mapped_column(Integer, default=0)
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
     project: Mapped[Project] = relationship(back_populates="layouts")
     layer: Mapped[Layer] = relationship(back_populates="layout")
