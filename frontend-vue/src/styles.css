@@ -195,6 +195,11 @@ h1, h2, strong, .brand { font-family: "Manrope", sans-serif; }
 .data-stack > .panel { padding: 18px; }
 .data-stack .panel-heading { margin-bottom: 12px; }
 .data-stack .panel-heading span { color: #667085; font-size: 12px; }
+.sheet-command-bar { display: flex; min-height: 34px; align-items: center; justify-content: space-between; border: 1px solid #d0d5dd; border-bottom: 0; background: #f8fafc; padding: 3px 7px; }
+.sheet-history-actions { display: flex; gap: 2px; }
+.sheet-history-actions button { display: grid; width: 27px; height: 27px; place-items: center; border-color: transparent; background: transparent; padding: 0; color: #475467; }
+.sheet-history-actions button:not(:disabled):hover { background: #eaecf0; }
+.sheet-selection-count { color: #475467; font-size: 11px; font-weight: 600; }
 .sheet { overflow: auto; max-height: 320px; border: 1px solid #d0d5dd; outline: none; }
 .sheet-row { display: grid; width: max-content; min-width: 100%; }
 .sheet-header { position: sticky; top: 0; z-index: 3; }
