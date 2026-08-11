@@ -69,6 +69,7 @@ def create_layer(
         project_id=project_id,
         align_tree_id=align_tree_id,
         name=payload.name,
+        color=payload.color,
         step=payload.step,
         layer_property=payload.layer_property,
         align=payload.align,

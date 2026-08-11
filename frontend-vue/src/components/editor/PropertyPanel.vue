@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { api } from "../../api/client";
 import { formatLayerNumber } from "../../domain/finalTable";
 import { isMergedLayer, relationGroupById } from "../../domain/graph";
@@ -19,7 +19,25 @@ const selectedLayers = computed(() => app.selection.filter((item) => item.kind =
   const layer = graph.rawGraph?.layers.find((row) => row.id === item.id); return layer ? [layer] : [];
 }));
 const item = computed(() => app.selection.length === 1 ? app.selection[0] : null);
-const layer = computed(() => selectedLayers.value.length === 1 ? selectedLayers.value[0] : null);
+const selectedLayer = computed(() => selectedLayers.value.length === 1 ? selectedLayers.value[0] : null);
+const editingMergedLayerId = ref<string | null>(null);
+const mergedLayers = computed(() => {
+  const selected = selectedLayer.value;
+  if (!selected) return [];
+  const ids = Object.values(graph.groupToLayerIds).find((group) => group.includes(selected.id));
+  return ids?.flatMap((id) => {
+    const row = graph.rawGraph?.layers.find((candidate) => candidate.id === id);
+    return row ? [row] : [];
+  }) ?? [];
+});
+const layer = computed(() => {
+  if (editingMergedLayerId.value) {
+    const member = mergedLayers.value.find((row) => row.id === editingMergedLayerId.value);
+    if (member) return member;
+  }
+  return selectedLayer.value;
+});
+watch(() => item.value?.kind === "layer" ? item.value.id : null, () => { editingMergedLayerId.value = null });
 const canSplitLayer = computed(() => Boolean(
   layer.value && graph.rawGraph && isMergedLayer(graph.rawGraph, layer.value.id),
 ));
@@ -145,9 +163,26 @@ onMounted(() => reference.loadAll());
     </div>
     <div v-else-if="layer" class="property-form">
       <div class="property-title"><span class="layer-dot"/><div><strong>{{ layer.name }}</strong><small>Layer</small></div></div>
+      <section v-if="mergedLayers.length > 1" class="property-section merged-layer-section">
+        <h3>Merged Layers</h3>
+        <p>편집할 Layer를 선택하세요.</p>
+        <div class="merged-layer-members">
+          <button
+            v-for="member in mergedLayers"
+            :key="member.id"
+            type="button"
+            :class="{ active: member.id === layer.id }"
+            @click="editingMergedLayerId = member.id"
+          >
+            <span class="layer-dot" :style="{ background: member.color }"/>
+            <span><strong :style="{ color: member.color }">{{ member.name }}</strong><small>{{ member.step || 'Step 미지정' }}</small></span>
+          </button>
+        </div>
+      </section>
       <section class="property-section">
         <h3>기본 정보</h3>
         <label>이름<input :value="layer.name" @change="updateLayer({ name: value($event) })"></label>
+        <ColorPickerField label="Color" :model-value="layer.color" @update:model-value="updateLayer({ color: $event })"/>
         <label>Step<input :value="layer.step" @change="updateLayer({ step: value($event) || null })"></label>
         <label>Group<input :value="layer.pending_group" @change="graph.mutateGraph('그룹 저장', () => api.updateGroup(project.projectId, layer!.id, value($event) || null))"></label>
       </section>

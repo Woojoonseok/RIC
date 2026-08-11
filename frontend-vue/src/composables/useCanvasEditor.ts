@@ -6,7 +6,7 @@ import { useAppStore } from "../stores/app";
 import { useGraphStore } from "../stores/graph";
 import { useProjectStore } from "../stores/project";
 import { useReferenceStore } from "../stores/reference";
-import type { CanvasObjectType, Layout, Point, PortName, Relation, TextBox } from "../types";
+import type { CanvasObjectType, Layer, Layout, Point, PortName, Relation, TextBox } from "../types";
 
 export type CanvasDragState =
   | { type: "pan"; startClient: Point; origin: Point }
@@ -519,6 +519,21 @@ export function useCanvasEditor() {
   function layerLabel(layer: { name: string; step: string | null }) {
     return app.labelField === "step" ? layer.step?.trim() || layer.name : layer.name;
   }
+  function layerLabelLines(layer: Layer) {
+    const mergedIds = Array.isArray(layer.metadata_json.merged_layer_ids)
+      ? layer.metadata_json.merged_layer_ids.filter((id): id is string => typeof id === "string")
+      : [];
+    const members = mergedIds.length
+      ? mergedIds.flatMap((id) => {
+          const member = raw.value?.layers.find((row) => row.id === id);
+          return member ? [member] : [];
+        })
+      : [layer];
+    return members.flatMap((member) => layerLabel(member).split("\n").map((text) => ({
+      text,
+      color: member.color,
+    })));
+  }
   function relationAppearance(relation: Relation) {
     return relationStroke(relation.relation_style_id ? relationStyles.value.get(relation.relation_style_id) : undefined, relation.relation_type, relation.same_group);
   }
@@ -593,7 +608,7 @@ export function useCanvasEditor() {
     app, graphStore, project, svg, viewBox, snapEnabled, query, pointer, drag, marquee, previewLayouts, previewTexts,
     previewWaypoints, connect, portSnap, relationSnap, relationPaths, graph, raw, layouts, styles, relationStyles, selectedLayers,
     decorativeShapes, annotationTexts, shapePreview,
-    selectedRelation, selectedTexts, ports, viewBoxString, portPoint, portHandlePoint, layerLabel, nodePointerDown, textPointerDown, canvasDown,
+    selectedRelation, selectedTexts, ports, viewBoxString, portPoint, portHandlePoint, layerLabel, layerLabelLines, nodePointerDown, textPointerDown, canvasDown,
     pointerMove, pointerUp, wheel, startConnect, relationPointerDown, relationAppearance,
     editableWaypoints, addWaypoint, waypointDown, deleteWaypoint, focusSearch, editLayer, editTextBox, fit, zoom,
   };

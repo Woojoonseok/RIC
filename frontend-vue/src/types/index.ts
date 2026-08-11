@@ -140,17 +140,17 @@ export interface AuditEvent {
 }
 
 export interface Layer {
-  id: string; project_id: string; name: string; step: string | null; layer_property: string | null;
+  id: string; project_id: string; name: string; color: string; step: string | null; layer_property: string | null;
   align: string | null; align_side: string | null; description: string | null; metadata_json: Record<string, unknown>;
   box_preset_id: string | null; pending_group: string | null; layer_master_id?: string | null; created_at?: string; updated_at?: string;
 }
 export interface LayerCreate {
-  name: string; step?: string | null; layer_property?: string | null; align?: string | null; align_side?: string | null;
+  name: string; color?: string; step?: string | null; layer_property?: string | null; align?: string | null; align_side?: string | null;
   description?: string | null; metadata_json?: Record<string, unknown>; box_preset_id?: string | null;
   layer_master_id?: string | null; x?: number; y?: number; width?: number; height?: number;
 }
 export interface LayerUpdate {
-  name?: string; step?: string | null; layer_property?: string | null; align?: string | null; align_side?: string | null;
+  name?: string; color?: string; step?: string | null; layer_property?: string | null; align?: string | null; align_side?: string | null;
   description?: string | null; metadata_json?: Record<string, unknown>; box_preset_id?: string | null;
 }
 
