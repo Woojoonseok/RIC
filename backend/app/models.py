@@ -265,6 +265,7 @@ class Layer(Base, TimestampMixin):
         ForeignKey("layer_masters.id", ondelete="CASCADE"), nullable=True, index=True
     )
     name: Mapped[str] = mapped_column(String(160), nullable=False)
+    color: Mapped[str] = mapped_column(String(7), default="#101828", server_default="#101828")
     step: Mapped[str | None] = mapped_column(String(120))
     layer_property: Mapped[str | None] = mapped_column(String(160))
     align: Mapped[str | None] = mapped_column(String(160))

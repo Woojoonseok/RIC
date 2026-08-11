@@ -272,7 +272,7 @@ def _rebuild_scoped_tables(target_engine: Engine) -> None:
     graph_specs: tuple[
         tuple[type[models.Base], set[str], tuple[str, ...] | None, set[str] | None], ...
     ] = (
-        (models.Layer, {"align_tree_id", "layer_master_id", "box_preset_id", "pending_group"}, ("align_tree_id", "name"), None),
+        (models.Layer, {"align_tree_id", "layer_master_id", "box_preset_id", "pending_group", "color"}, ("align_tree_id", "name"), None),
         (
             models.LayerRelation,
             {

@@ -14,7 +14,7 @@ import { parseTsv } from "../src/domain/tsv";
 import type { AuditEvent, Graph, Layout, Relation } from "../src/types";
 
 const project = { id: "p", name: "P", description: null, created_at: "", updated_at: "" };
-const layer = (id: string, name: string) => ({ id, project_id: "p", name, step: null, layer_property: null, align: null, align_side: null, description: null, metadata_json: {}, box_preset_id: null, pending_group: null, created_at: "", updated_at: "" });
+const layer = (id: string, name: string) => ({ id, project_id: "p", name, color: "#101828", step: null, layer_property: null, align: null, align_side: null, description: null, metadata_json: {}, box_preset_id: null, pending_group: null, created_at: "", updated_at: "" });
 const layout = (id: string, x: number, y = 0): Layout => ({ id: `l${id}`, project_id: "p", layer_id: id, x, y, width: 100, height: 50, z_index: 0 });
 const relation = (id: string, parent: string | null, child: string | null, sameGroup: string | null = null): Relation => ({
   id, project_id: "p", parent_endpoint_type: "layer", child_endpoint_type: "layer",

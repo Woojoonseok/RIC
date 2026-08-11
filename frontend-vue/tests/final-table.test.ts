@@ -38,12 +38,12 @@ const graph: Graph = {
   project: { id: "project", name: "Test", description: null, created_at: "", updated_at: "" },
   layers: [
     {
-      id: "layer-39", project_id: "project", name: "L39", step: null, layer_property: null,
+      id: "layer-39", project_id: "project", name: "L39", color: "#101828", step: null, layer_property: null,
       align: null, align_side: null, description: null, metadata_json: {}, box_preset_id: null,
       pending_group: null, layer_master_id: "master-39",
     },
     {
-      id: "layer-38", project_id: "project", name: "L38", step: null, layer_property: null,
+      id: "layer-38", project_id: "project", name: "L38", color: "#101828", step: null, layer_property: null,
       align: null, align_side: null, description: null, metadata_json: {}, box_preset_id: null,
       pending_group: null, layer_master_id: "master-38",
     },

@@ -321,6 +321,7 @@ class LeaseRead(BaseModel):
 
 class LayerBase(BaseModel):
     name: str = Field(min_length=1, max_length=160)
+    color: str = Field(default="#101828", pattern=r"^#[0-9a-fA-F]{6}$")
     step: str | None = None
     layer_property: str | None = None
     align: str | None = None
@@ -340,6 +341,7 @@ class LayerCreate(LayerBase):
 
 class LayerUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=160)
+    color: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
     step: str | None = None
     layer_property: str | None = None
     align: str | None = None

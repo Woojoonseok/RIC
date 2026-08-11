@@ -18,6 +18,7 @@ const targetLabels: Record<string, string> = {
 
 const fieldLabels: Record<string, string> = {
   name: "이름",
+  color: "Layer 이름 색상",
   description: "설명",
   text: "내용",
   symbol: "기호",

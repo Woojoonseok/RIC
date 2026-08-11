@@ -3,6 +3,7 @@ import { computed, ref } from "vue";
 import { layerMatchesQuery } from "../../domain/graph";
 import { useAppStore } from "../../stores/app";
 import { useGraphStore } from "../../stores/graph";
+import type { Layer } from "../../types";
 
 const app = useAppStore();
 const graph = useGraphStore();
@@ -18,6 +19,16 @@ function selectIssue(issue: { layer_id?: string | null; relation_id?: string | n
   if (issue.layer_id) selectLayer(issue.layer_id, false);
   else if (issue.relation_id) app.select({ kind: "relation", id: issue.relation_id });
 }
+function mergedNameLayers(layer: Layer) {
+  const ids = Array.isArray(layer.metadata_json.merged_layer_ids)
+    ? layer.metadata_json.merged_layer_ids.filter((id): id is string => typeof id === "string")
+    : [];
+  if (!ids.length) return [layer];
+  return ids.flatMap((id) => {
+    const member = graph.rawGraph?.layers.find((row) => row.id === id);
+    return member ? [member] : [];
+  });
+}
 </script>
 
 <template>
@@ -28,7 +39,7 @@ function selectIssue(issue: { layer_id?: string | null; relation_id?: string | n
     </div>
     <input v-model="query" class="side-search" :placeholder="app.labelField === 'step' ? 'Step 검색' : 'Layer 검색'">
     <button v-for="layer in layers" :key="layer.id" class="layer-item" :class="{ active: app.selection.some((row) => row.kind === 'layer' && row.id === layer.id) }" @click="selectLayer(layer.id, $event.ctrlKey || $event.metaKey || $event.shiftKey)">
-      <span class="layer-dot"/><span><strong>{{ layer.name.replaceAll('\n', ' · ') }}</strong><small>{{ layer.step || 'Step 미지정' }}</small></span><em v-if="graph.groupSizeByLayerId[layer.id]">{{ graph.groupSizeByLayerId[layer.id] }}</em>
+      <span class="layer-dot"/><span><strong><template v-for="(member, index) in mergedNameLayers(layer)" :key="member.id"><span :style="{ color: member.color }">{{ member.name }}</span><template v-if="index < mergedNameLayers(layer).length - 1"> · </template></template></strong><small>{{ layer.step || 'Step 미지정' }}</small></span><em v-if="graph.groupSizeByLayerId[layer.id]">{{ graph.groupSizeByLayerId[layer.id] }}</em>
     </button>
     <p v-if="!layers.length" class="empty">Layer가 없습니다.</p>
     <div v-if="graph.rawGraph?.validation.issues.length" class="side-validation">

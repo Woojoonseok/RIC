@@ -249,6 +249,7 @@ def _dump_layer(layer: models.Layer, layout: models.GraphLayout | None, style: m
     return {
         "id": str(layer.id),
         "name": layer.name,
+        "color": layer.color,
         "step": layer.step,
         "layer_property": layer.layer_property,
         "align": layer.align,
@@ -378,6 +379,7 @@ def restore_graph(
                 layer.layer_master_id if layer.layer_master_id in layer_master_ids else None
             ),
             name=layer.name,
+            color=layer.color,
             step=layer.step,
             layer_property=layer.layer_property,
             align=layer.align,
@@ -1470,6 +1472,7 @@ def split_layer(
             layer.name = _unique_layer_name(
                 db, project_id, align_tree_id, str(item.get("name") or "Layer"), ignore_id=layer_id
             )
+            layer.color = str(item.get("color") or "#101828")
             layer.step = item.get("step")
             layer.layer_property = item.get("layer_property")
             layer.align = item.get("align")
@@ -1499,6 +1502,7 @@ def split_layer(
             project_id=project_id,
             align_tree_id=align_tree_id,
             name=_unique_layer_name(db, project_id, align_tree_id, str(item.get("name") or "Layer")),
+            color=str(item.get("color") or "#101828"),
             step=item.get("step"),
             layer_property=item.get("layer_property"),
             align=item.get("align"),

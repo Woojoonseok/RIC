@@ -142,6 +142,24 @@ def create_tree(client: TestClient, project_id: str, name: str) -> str:
     return response.json()["id"]
 
 
+def test_layer_color_round_trip_survives_merge(client: TestClient) -> None:
+    project_id = create_project(client)
+    base = graph_base(client, project_id)
+    first = create_layer(client, project_id, "Blue")
+    second = create_layer(client, project_id, "Green", 300)
+
+    updated = client.put(f"{base}/layers/{first}", json={"color": "#2563eb"})
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["color"] == "#2563eb"
+    updated = client.put(f"{base}/layers/{second}", json={"color": "#16a34a"})
+    assert updated.status_code == 200, updated.text
+
+    merged = client.post(f"{base}/layers/merge", json={"layer_ids": [first, second]})
+    assert merged.status_code == 200, merged.text
+    colors = {row["id"]: row["color"] for row in merged.json()["layers"]}
+    assert colors == {first: "#2563eb", second: "#16a34a"}
+
+
 def test_decorative_canvas_shape_round_trip(client: TestClient) -> None:
     project_id = create_project(client)
     tree_id = default_tree_id(client, project_id)

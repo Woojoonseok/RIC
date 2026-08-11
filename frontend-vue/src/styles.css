@@ -390,6 +390,13 @@ h1, h2, strong, .brand { font-family: "Manrope", sans-serif; }
 .property-section { margin: 0; border-top: 1px solid #eaecf0; padding: 14px 0 6px; }
 .property-section:first-of-type { border-top: 0; padding-top: 0; }
 .property-section h3 { margin: 0 0 12px; color: #344054; font-size: 11px; font-weight: 750; }
+.merged-layer-section > p { margin: -5px 0 10px; color: #667085; font-size: 10px; }
+.merged-layer-members { display: grid; gap: 5px; }
+.merged-layer-members > button { display: grid; grid-template-columns: 8px minmax(0, 1fr); align-items: center; gap: 8px; width: 100%; border-color: #eaecf0; background: #fff; padding: 8px; text-align: left; }
+.merged-layer-members > button.active { border-color: #84adff; background: #eff4ff; box-shadow: 0 0 0 1px #d1e9ff; }
+.merged-layer-members > button > span:last-child { display: grid; min-width: 0; }
+.merged-layer-members strong, .merged-layer-members small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.merged-layer-members small { margin-top: 2px; color: #98a2b3; font-size: 9px; }
 .layer-impact-summary { margin: 0 -2px 14px; border-top: 1px solid #d0d5dd; border-bottom: 1px solid #d0d5dd; padding: 11px 2px; }
 .layer-impact-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; }
 .layer-impact-heading > div { display: flex; align-items: center; gap: 6px; color: #344054; font-size: 11px; }
