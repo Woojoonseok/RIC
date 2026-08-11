@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { onBeforeRouteLeave } from "vue-router";
 import { AlertTriangle, CheckCircle2, ChevronDown, ClipboardPaste, Download, Plus, Search, Trash2, Users, X } from "@lucide/vue";
 import * as XLSX from "xlsx-js-style";
 import { api } from "../api/client";
@@ -9,7 +10,7 @@ import { parseTsv } from "../domain/tsv";
 import { useAppStore } from "../stores/app";
 import { useProjectStore } from "../stores/project";
 import { useReferenceStore } from "../stores/reference";
-import type { LayerMasterImportPreview, LayerMasterImportRequest } from "../types";
+import type { LayerMaster, LayerMasterImportPreview, LayerMasterImportRequest } from "../types";
 
 type Row = Record<string, unknown>;
 interface PastePreview extends LayerMasterImportPreview { request: LayerMasterImportRequest }
@@ -34,7 +35,10 @@ const filterDraft = ref<string[]>([]);
 const filterSearch = ref("");
 const filterMenuPosition = ref({ top: 0, left: 0 });
 const persistedRows = new Map<string, string>();
+const pendingCreates = new Map<string, Promise<LayerMaster>>();
 let writeQueue: Promise<void> = Promise.resolve();
+let activeSaves = 0;
+let saveHadError = false;
 const basicColumns = computed(() => layerMasterBaseColumns(reference.boxPresets));
 const priorityColumns = computed(() => layerMasterPriorityColumns(reference.keyLayoutTypes));
 const importColumns = computed(() => layerMasterColumns(reference.keyLayoutTypes, reference.boxPresets));
@@ -78,6 +82,17 @@ function enqueueWrite<T>(job: () => Promise<T>) {
   const run = writeQueue.then(job, job);
   writeQueue = run.then(() => undefined, () => undefined);
   return run;
+}
+async function waitForPendingSaves() {
+  while (activeSaves > 0) {
+    await writeQueue;
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+  }
+}
+function warnBeforeUnload(event: BeforeUnloadEvent) {
+  if (activeSaves <= 0) return;
+  event.preventDefault();
+  event.returnValue = "";
 }
 async function load() {
   await reference.loadAll();
@@ -135,44 +150,65 @@ function openPriorities(row: Row) {
   priorityQuery.value = String(row.layer_number || row.name || "");
   activeTab.value = "priorities";
 }
-async function commit(nextRows: Row[]) {
+async function commit(nextRows: Row[], rowIndexes: number[] = []) {
   if (!project.canEdit) return;
-  busy.value = true;
-  project.markSaving();
   let completed = 0;
   const missingNumber = nextRows.find(
     (row) => String(row.name || "").trim() && !String(row.layer_number || "").trim(),
   );
   if (missingNumber) {
-    busy.value = false;
     status.value = "Layer 번호는 필수입니다.";
     app.status = status.value;
-    project.markSaved();
     return;
   }
-  const targets = nextRows.filter((row) => String(row.name || "").trim() && (!row.id || persistedRows.get(String(row.id)) !== rowSignature(row)));
+  const targets = nextRows
+    .map((row, index) => ({ row, rowIndex: rowIndexes[index] ?? index }))
+    .filter(({ row }) => String(row.name || "").trim() && (!row.id || persistedRows.get(String(row.id)) !== rowSignature(row)));
   if (!targets.length) {
-    busy.value = false;
     status.value = "변경사항 없음";
-    project.markSaved();
     return;
   }
+  if (activeSaves === 0) saveHadError = false;
+  activeSaves += 1;
+  busy.value = true;
+  project.markSaving();
   try {
-    for (const row of targets) {
+    for (const { row, rowIndex } of targets) {
       const body = layerMasterPayload(row, reference.keyLayoutTypes);
-      const saved = row.id
-        ? await enqueueWrite(() => api.updateLayerMaster(String(row.id), body))
-        : await enqueueWrite(() => api.createLayerMaster(body));
+      let saved: LayerMaster;
+      if (row.id) {
+        saved = await enqueueWrite(() => api.updateLayerMaster(String(row.id), body));
+      } else {
+        const key = String(row.__gridKey || `row-${rowIndex}`);
+        const pending = pendingCreates.get(key);
+        const create = pending ?? enqueueWrite(() => api.createLayerMaster(body));
+        if (!pending) pendingCreates.set(key, create);
+        try {
+          const created = await create;
+          saved = pending
+            ? await enqueueWrite(() => api.updateLayerMaster(created.id, body))
+            : created;
+        } finally {
+          if (!pending && pendingCreates.get(key) === create) pendingCreates.delete(key);
+        }
+      }
       reference.syncLayerMaster(saved);
       persistedRows.set(saved.id, JSON.stringify(body));
+      const normalized = layerMasterRows([saved], reference.keyLayoutTypes, reference.boxPresets)[0];
+      grid.value?.acceptSavedRow(rowIndex, row, normalized);
       completed += 1;
     }
     status.value = `${completed}개 Layer 정보 저장 완료`;
-    project.markSaved();
   } catch (error) {
+    saveHadError = true;
     status.value = `${completed}/${targets.length}개 저장 후 실패: ${error instanceof Error ? error.message : String(error)}`;
     project.handleMutationError(error);
-  } finally { busy.value = false; app.status = status.value }
+  } finally {
+    activeSaves -= 1;
+    busy.value = activeSaves > 0;
+    if (!busy.value && !saveHadError) project.markSaved();
+    app.status = status.value;
+  }
 }
 async function groupSelected() {
   if (!project.canEdit || selected.value.length < 2) return;
@@ -286,6 +322,12 @@ watch(
   { immediate: true },
 );
 watch(pasteText, () => { pastePreview.value = null });
+onBeforeRouteLeave(async () => {
+  await waitForPendingSaves();
+  return true;
+});
+onMounted(() => window.addEventListener("beforeunload", warnBeforeUnload));
+onBeforeUnmount(() => window.removeEventListener("beforeunload", warnBeforeUnload));
 </script>
 
 <template>
