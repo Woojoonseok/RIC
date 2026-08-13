@@ -14,6 +14,9 @@ export const useReferenceStore = defineStore("reference", () => {
   const relationStyles = ref<RelationStyle[]>([]);
   const boxPresets = ref<BoxPreset[]>([]);
   const layerMasters = ref<LayerMaster[]>([]);
+  const loading = ref(false);
+  const loaded = ref(false);
+  const loadError = ref("");
   const selectedRelationStyleId = ref("");
   const selectedBoxPresetId = ref("");
   let loadNonce = 0;
@@ -78,6 +81,8 @@ export const useReferenceStore = defineStore("reference", () => {
     const projectId = project.currentProjectId;
     if (pendingLoad?.projectId === projectId) return pendingLoad.promise;
     const nonce = ++loadNonce;
+    loading.value = true;
+    loadError.value = "";
     const promise = (async () => {
       const [layouts, drawings, shapes, styles, presets, masters] = await Promise.all([
         api.keyLayoutTypes(), api.keyDrawingTypes(), api.keyShapes(), api.relationStyles(), api.boxPresets(), api.layerMasters(),
@@ -89,6 +94,7 @@ export const useReferenceStore = defineStore("reference", () => {
       relationStyles.value = styles;
       boxPresets.value = presets;
       layerMasters.value = masters;
+      loaded.value = true;
       if (!styles.some((row) => row.id === selectedRelationStyleId.value)) selectedRelationStyleId.value = styles[0]?.id ?? "";
       if (!presets.some((row) => row.id === selectedBoxPresetId.value)) {
         selectedBoxPresetId.value = presets.find((row) => row.is_default)?.id ?? presets[0]?.id ?? "";
@@ -98,7 +104,11 @@ export const useReferenceStore = defineStore("reference", () => {
     pendingLoad = { projectId, promise };
     try {
       return await promise;
+    } catch (error) {
+      if (nonce === loadNonce) loadError.value = error instanceof Error ? error.message : "기준정보를 불러오지 못했습니다.";
+      throw error;
     } finally {
+      if (nonce === loadNonce) loading.value = false;
       if (pendingLoad?.promise === promise) pendingLoad = null;
     }
   }
@@ -108,7 +118,7 @@ export const useReferenceStore = defineStore("reference", () => {
   }
 
   return {
-    keyLayoutTypes, keyDrawingTypes, keyShapes, relationStyles, boxPresets, layerMasters,
+    keyLayoutTypes, keyDrawingTypes, keyShapes, relationStyles, boxPresets, layerMasters, loading, loaded, loadError,
     selectedRelationStyleId, selectedBoxPresetId, syncFromGraph, loadAll,
     syncReferenceRow, removeReferenceRow, syncLayerMaster, removeLayerMasters, loadLayerMasters,
   };

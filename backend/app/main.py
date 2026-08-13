@@ -9,6 +9,7 @@ from . import models
 from .database import SessionLocal, engine, settings, validate_runtime_settings
 from .routers import (
     align_trees,
+    align_key_rows,
     graph,
     layer_master_imports,
     leases,
@@ -20,6 +21,7 @@ from .routers import (
     reviews,
     session,
     snapshots,
+    system_admin,
     users,
     validation,
     validation_rules,
@@ -105,6 +107,7 @@ app.include_router(users.router)
 app.include_router(projects.router)
 app.include_router(project_governance.router)
 app.include_router(align_trees.router)
+app.include_router(align_key_rows.router)
 app.include_router(leases.router)
 app.include_router(graph.router)
 app.include_router(validation.router)
@@ -115,6 +118,7 @@ app.include_router(layer_master_imports.router)
 app.include_router(relation_imports.router)
 app.include_router(reviews.router)
 app.include_router(snapshots.router)
+app.include_router(system_admin.router)
 app.include_router(workflow.router)
 
 # Keep SQLAlchemy model imports reachable for metadata registration.

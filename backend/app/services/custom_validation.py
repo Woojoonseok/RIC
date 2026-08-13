@@ -35,6 +35,19 @@ def _message(rule: models.ValidationRule, row: Any, value: Any, default: str) ->
     return message
 
 
+LAYER_MASTER_FIELDS = {
+    "mask_main_fld", "mask_sl_fld", "pr_wf", "dev_wf", "pr_type", "light_source",
+    "pr_open_close", "group", "validation_rule", "comment",
+}
+
+
+def _rule_value(rule: models.ValidationRule, row: Any, masters: dict[uuid.UUID, models.LayerMaster]) -> Any:
+    if rule.target_type == "layer" and rule.field_name in LAYER_MASTER_FIELDS:
+        master = masters.get(row.layer_master_id) if row.layer_master_id else None
+        return getattr(master, rule.field_name, None) if master else None
+    return getattr(row, rule.field_name, None)
+
+
 def evaluate_validation_rules(
     db: Session,
     project_id: uuid.UUID,
@@ -53,13 +66,17 @@ def evaluate_validation_rules(
         "relation": relations,
         "align_tree": [tree],
     }
+    master_ids = {row.layer_master_id for row in layers if row.layer_master_id}
+    masters = {
+        row.id: row for row in db.query(models.LayerMaster).filter(models.LayerMaster.id.in_(master_ids)).all()
+    } if master_ids else {}
     issues: list[schemas.ValidationIssue] = []
     for rule in rules:
         rows = targets.get(rule.target_type, [])
         if rule.rule_type == "unique":
             values: dict[str, list[Any]] = defaultdict(list)
             for row in rows:
-                value = getattr(row, rule.field_name, None)
+                value = _rule_value(rule, row, masters)
                 if not _blank(value):
                     values[str(value).strip().casefold()].append(row)
             failing = [row for duplicate_rows in values.values() if len(duplicate_rows) > 1 for row in duplicate_rows]
@@ -67,7 +84,7 @@ def evaluate_validation_rules(
             failing = []
             allowed = {value.casefold() for value in rule.expected_values}
             for row in rows:
-                value = getattr(row, rule.field_name, None)
+                value = _rule_value(rule, row, masters)
                 missing_required = rule.rule_type == "required" and _blank(value)
                 outside_allowed = (
                     rule.rule_type == "allowed_values"
@@ -77,7 +94,7 @@ def evaluate_validation_rules(
                 if missing_required or outside_allowed:
                     failing.append(row)
         for row in failing:
-            value = getattr(row, rule.field_name, None)
+            value = _rule_value(rule, row, masters)
             default = (
                 f"{_target_label(rule.target_type, row)} requires {rule.field_name}."
                 if rule.rule_type == "required"

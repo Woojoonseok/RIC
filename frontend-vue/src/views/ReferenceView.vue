@@ -249,6 +249,9 @@ onBeforeUnmount(() => {
       <div><p class="eyebrow">PROJECT REFERENCE DATA</p><h1>기준정보</h1><p>{{ project.currentProject?.name }} 프로젝트의 공정 기준과 Editor 스타일입니다.</p></div>
       <span class="status-pill" :class="{ busy: busy || pendingSaves }"><i></i>{{ !project.canEdit ? '보기 전용' : busy ? '처리 중…' : status }}</span>
     </div>
+    <div v-if="reference.loading && !reference.loaded" class="panel data-loading">기준정보를 불러오는 중입니다.</div>
+    <div v-else-if="reference.loadError && !reference.loaded" class="panel data-error"><p>{{ reference.loadError }}</p><button @click="load">다시 시도</button></div>
+    <template v-else>
     <nav class="resource-tabs" aria-label="기준정보 종류">
       <button v-for="(config, key) in resources" :key="key" :class="{ active: active === key }" @click="active = key; query = ''">
         <span>{{ config.label }}</span><b>{{ drafts[key].length }}</b>
@@ -289,5 +292,6 @@ onBeforeUnmount(() => {
         <div v-if="!visibleRows.length" class="reference-empty">{{ query ? '검색 결과가 없습니다.' : '등록된 기준정보가 없습니다. 새 행을 추가해 주세요.' }}</div>
       </div>
     </div>
+    </template>
   </section>
 </template>

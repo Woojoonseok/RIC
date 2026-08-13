@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { readableLayerColor } from "./propertyOptions";
 import { layerMatchesQuery } from "../../domain/graph";
 import { useAppStore } from "../../stores/app";
 import { useGraphStore } from "../../stores/graph";
@@ -39,7 +40,7 @@ function mergedNameLayers(layer: Layer) {
     </div>
     <input v-model="query" class="side-search" :placeholder="app.labelField === 'step' ? 'Step 검색' : 'Layer 검색'">
     <button v-for="layer in layers" :key="layer.id" class="layer-item" :class="{ active: app.selection.some((row) => row.kind === 'layer' && row.id === layer.id) }" @click="selectLayer(layer.id, $event.ctrlKey || $event.metaKey || $event.shiftKey)">
-      <span class="layer-dot"/><span><strong><template v-for="(member, index) in mergedNameLayers(layer)" :key="member.id"><span :style="{ color: member.color }">{{ member.name }}</span><template v-if="index < mergedNameLayers(layer).length - 1"> · </template></template></strong><small>{{ layer.step || 'Step 미지정' }}</small></span><em v-if="graph.groupSizeByLayerId[layer.id]">{{ graph.groupSizeByLayerId[layer.id] }}</em>
+      <span class="layer-dot"/><span><strong><template v-for="(member, index) in mergedNameLayers(layer)" :key="member.id"><span :style="{ color: readableLayerColor(member.color) }">{{ member.name }}</span><template v-if="index < mergedNameLayers(layer).length - 1"> · </template></template></strong><small>{{ layer.step || 'Layer 번호 미지정' }}</small></span><em v-if="graph.groupSizeByLayerId[layer.id]">{{ graph.groupSizeByLayerId[layer.id] }}</em>
     </button>
     <p v-if="!layers.length" class="empty">Layer가 없습니다.</p>
     <div v-if="graph.rawGraph?.validation.issues.length" class="side-validation">

@@ -2,7 +2,6 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { onBeforeRouteLeave } from "vue-router";
 import { AlertTriangle, CheckCircle2, ChevronDown, ClipboardPaste, Download, Plus, Search, Trash2, Users, X } from "@lucide/vue";
-import * as XLSX from "xlsx-js-style";
 import { api } from "../api/client";
 import SpreadsheetGrid from "../components/grid/SpreadsheetGrid.vue";
 import { filterLayerMasterRows, layerMasterBaseColumns, layerMasterColumns, layerMasterPasteRows, layerMasterPayload, layerMasterPriorityColumns, layerMasterRows } from "../domain/layerMaster";
@@ -304,7 +303,8 @@ async function commitPaste() {
     pasteBusy.value = false;
   }
 }
-function downloadTemplate() {
+async function downloadTemplate() {
+  const XLSX = await import("xlsx-js-style");
   const worksheet = XLSX.utils.aoa_to_sheet([
     importColumns.value.map((column) => column.label),
   ]);
@@ -336,6 +336,9 @@ onBeforeUnmount(() => window.removeEventListener("beforeunload", warnBeforeUnloa
       <div><p class="eyebrow">PROJECT LAYER DATA</p><h1>Layer 정보</h1><p>{{ project.currentProject?.name }} 프로젝트의 Layer 기준정보입니다. Editor에는 필요한 Layer만 직접 가져올 수 있습니다.</p></div>
       <span class="status-pill" :class="{ busy }">{{ !project.canEdit ? '보기 전용' : busy ? '처리 중…' : status }}</span>
     </div>
+    <div v-if="reference.loading && !reference.loaded" class="panel data-loading">Layer 정보를 불러오는 중입니다.</div>
+    <div v-else-if="reference.loadError && !reference.loaded" class="panel data-error"><p>{{ reference.loadError }}</p><button @click="load">다시 시도</button></div>
+    <template v-else>
     <div class="layer-master-summary panel">
       <div class="layer-master-metrics">
         <div><b>{{ reference.layerMasters.length }}</b><span>등록 Layer</span></div>
@@ -489,5 +492,6 @@ onBeforeUnmount(() => window.removeEventListener("beforeunload", warnBeforeUnloa
         <button type="button" class="primary" @click="applyColumnFilter">적용</button>
       </div>
     </section>
+    </template>
   </section>
 </template>

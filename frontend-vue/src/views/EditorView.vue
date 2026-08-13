@@ -10,6 +10,12 @@ import { useGraphStore } from "../stores/graph";
 const graph = useGraphStore();
 const layersOpen = ref(localStorage.getItem("ric-editor-layers-hidden") !== "1");
 const propertiesOpen = ref(localStorage.getItem("ric-editor-properties-hidden") !== "1");
+const propertiesExpanded = ref(false);
+
+function closeProperties() {
+  propertiesExpanded.value = false;
+  propertiesOpen.value = false;
+}
 
 onMounted(() => graph.reloadGraph());
 watch(layersOpen, (open) => localStorage.setItem("ric-editor-layers-hidden", open ? "0" : "1"));
@@ -34,7 +40,18 @@ watch(propertiesOpen, (open) => localStorage.setItem("ric-editor-properties-hidd
         <span>›</span> Layers
       </button>
       <CanvasEditor/>
-      <PropertyPanel v-if="propertiesOpen" @collapse="propertiesOpen = false"/>
+      <button
+        v-if="propertiesExpanded"
+        class="property-workspace-backdrop"
+        aria-label="배경을 눌러 확대 속성 편집 닫기"
+        @click="propertiesExpanded = false"
+      />
+      <PropertyPanel
+        v-if="propertiesOpen"
+        :expanded="propertiesExpanded"
+        @collapse="closeProperties"
+        @toggle-expanded="propertiesExpanded = !propertiesExpanded"
+      />
       <button
         v-else
         class="editor-panel-reveal reveal-properties"

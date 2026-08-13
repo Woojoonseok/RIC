@@ -531,7 +531,7 @@ export function useCanvasEditor() {
       : [layer];
     return members.flatMap((member) => layerLabel(member).split("\n").map((text) => ({
       text,
-      color: member.color,
+      color: member.color || "#101828",
     })));
   }
   function relationAppearance(relation: Relation) {

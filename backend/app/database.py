@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     trust_proxy_headers: bool = False
     trusted_proxy_ips: str = "127.0.0.1,::1"
     allow_legacy_project_claims: bool = False
+    system_admin_actor_ids: str = ""
     edit_lease_ttl_seconds: int = 90
     run_database_migrations: bool = True
 

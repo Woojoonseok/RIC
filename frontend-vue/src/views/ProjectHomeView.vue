@@ -16,12 +16,16 @@ const requesting = ref(false);
 const refreshing = ref(false);
 const claiming = ref(false);
 const claimError = ref("");
+const showLayoutHistory = ref(false);
 const current = computed(() => project.currentProject);
 const creator = computed(() => current.value?.creator_display_name ?? current.value?.creator?.display_name ?? "사내 사용자");
 const editingActorId = computed(() => current.value?.lock_holder_actor_id ?? null);
 const activeEditorName = computed(() => current.value?.lock_holder_display_name ?? "편집 중인 사용자 없음");
 const roleOrder: ProjectRole[] = ["owner", "admin", "editor", "viewer"];
 const roleLabels: Record<ProjectRole, string> = { owner: "Owner", admin: "Admin", editor: "Editor", viewer: "Viewer" };
+const visibleAuditEvents = computed(() => project.auditEvents.filter((event) => (
+  showLayoutHistory.value || !event.event_type?.includes("layout")
+)).slice(0, 30));
 let refreshTimer: number | null = null;
 
 const membersByRole = computed(() => Object.fromEntries(roleOrder.map((role) => [
@@ -127,9 +131,10 @@ onBeforeUnmount(() => {
         </section>
 
         <section class="panel project-history">
-          <div class="panel-heading"><div><History :size="18"/><div><p class="eyebrow">HISTORY</p><h2>최근 변경</h2><small>접속·열기·닫기 기록은 제외합니다.</small></div></div><button class="icon-button" title="변경 이력 새로고침" @click="project.loadAuditEvents"><RefreshCw :size="16"/></button></div>
-          <p v-if="!project.auditEvents.length" class="empty">아직 기록된 변경이 없습니다.</p>
-          <ol><li v-for="event in project.auditEvents" :key="event.id"><i/><div><strong>{{ auditEventTitle(event) }}</strong><small v-if="auditEventChanges(event).length">{{ auditEventChanges(event).join(' · ') }}</small><span>{{ auditActorName(event) }}<template v-if="event.align_tree_id"> · Align Tree</template></span></div><time>{{ new Date(event.created_at).toLocaleString() }}</time></li></ol>
+          <div class="panel-heading"><div><History :size="18"/><div><p class="eyebrow">HISTORY</p><h2>최근 변경</h2><small>접속 기록과 반복 위치 이동은 기본적으로 숨깁니다.</small></div></div><button class="icon-button" title="변경 이력 새로고침" @click="project.loadAuditEvents"><RefreshCw :size="16"/></button></div>
+          <label class="history-layout-toggle"><input v-model="showLayoutHistory" type="checkbox">위치 이동 기록 포함</label>
+          <p v-if="!visibleAuditEvents.length" class="empty">아직 기록된 변경이 없습니다.</p>
+          <ol><li v-for="event in visibleAuditEvents" :key="event.id"><i/><div><strong>{{ auditEventTitle(event) }}</strong><small v-if="auditEventChanges(event).length">{{ auditEventChanges(event).join(' · ') }}</small><span>{{ auditActorName(event) }}<template v-if="event.align_tree_id"> · Align Tree</template></span></div><time>{{ new Date(event.created_at).toLocaleString() }}</time></li></ol>
         </section>
       </div>
     </template>

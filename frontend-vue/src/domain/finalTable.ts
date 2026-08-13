@@ -32,7 +32,7 @@ export function formatLayerNumber(value: string | null | undefined): string {
   const text = String(value ?? "").trim();
   if (!text) return "";
   const numeric = Number(text);
-  return Number.isFinite(numeric) ? numeric.toFixed(1) : text;
+  return Number.isFinite(numeric) ? String(numeric) : text;
 }
 
 export function openCloseMarker(value: string | null | undefined): string {
@@ -47,7 +47,7 @@ function drawingLabel(row: KeyDrawingType | undefined): string {
 }
 
 function keyNumber(value: string): string {
-  return value.replace(/\./g, "");
+  return value;
 }
 
 function endpointKey(relation: Relation, side: "parent" | "child"): string {

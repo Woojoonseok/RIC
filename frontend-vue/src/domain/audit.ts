@@ -103,7 +103,7 @@ const directTitles: Record<string, string> = {
   "snapshot.restored": "Editor 스냅샷 복원",
   "snapshot.deleted": "Editor 스냅샷 삭제",
   "workflow.in_review": "Editor 검토 요청",
-  "workflow.draft": "Editor Draft 전환",
+  "workflow.draft": "Editor 초안 전환",
   "workflow.approved": "Editor 승인",
   "workflow.published": "Editor 공식 배포",
   "member.added": "프로젝트 멤버 추가",

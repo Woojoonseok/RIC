@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..database import get_db
-from .identity import get_current_actor, hash_token
+from .identity import get_current_actor, hash_token, is_system_admin
 
 AccessRole = Literal["owner", "admin", "editor", "viewer"]
 ROLE_RANK: dict[AccessRole, int] = {"viewer": 1, "editor": 2, "admin": 3, "owner": 4}
@@ -39,6 +39,8 @@ class ProjectContext:
 
 
 def access_role_for(db: Session, project: models.Project, actor_id: uuid.UUID) -> AccessRole | None:
+    if is_system_admin(actor_id):
+        return "owner"
     membership = (
         db.query(models.ProjectMember)
         .filter(models.ProjectMember.project_id == project.id, models.ProjectMember.actor_id == actor_id)
