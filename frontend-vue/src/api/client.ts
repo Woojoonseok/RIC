@@ -8,6 +8,7 @@ import type {
   RelationImportCommitResult, RelationImportPreview, RelationImportRequest, RelationUpdate, ShapeStyle, StyleUpdate, TextBox, TextBoxCreate, TextBoxUpdate, ValidationReport, ValidationRule, ValidationRuleInput,
   ReviewAttachmentInput, ReviewNotification, ReviewThread, ReviewThreadCreate, SnapshotCreate, SnapshotDetail, SnapshotDiff, SnapshotSummary,
   UserSummary,
+  SystemAdminProject, SystemAdminProjectUpdate,
 } from "../types";
 
 // Same-origin by default: Vite proxies /api in development and production is
@@ -119,6 +120,9 @@ function auditEventPath(projectId: string, options: AuditEventQuery = {}) {
 export const api = {
   me: () => request<AnonymousSession>("/me"),
   updateMe: (displayName: string) => request<AnonymousSession>("/me", json("PATCH", { display_name: displayName })),
+  listSystemAdminProjects: (includeDeleted = false) => request<SystemAdminProject[]>(`/system-admin/projects?include_deleted=${includeDeleted}`),
+  updateSystemAdminProject: (id: string, body: SystemAdminProjectUpdate) => request<SystemAdminProject>(`/system-admin/projects/${id}`, json("PATCH", body)),
+  deleteSystemAdminProject: (id: string) => request<void>(`/system-admin/projects/${id}`, json("DELETE")),
 
   listProjects: () => request<Project[]>("/projects"),
   createProject: (body: ProjectCreate) => request<Project>("/projects", json("POST", body)),

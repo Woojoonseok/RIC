@@ -12,12 +12,14 @@ const LayerMasterView = () => import("../views/LayerMasterView.vue");
 const ProjectHomeView = () => import("../views/ProjectHomeView.vue");
 const ProjectSettingsView = () => import("../views/ProjectSettingsView.vue");
 const ReferenceView = () => import("../views/ReferenceView.vue");
+const SystemAdminView = () => import("../views/SystemAdminView.vue");
 const ValidationView = () => import("../views/ValidationView.vue");
 
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: "/", name: "home", component: HomeView },
+    { path: "/system-admin", name: "system-admin", component: SystemAdminView },
     {
       path: "/projects/:projectId",
       component: ProjectLayout,

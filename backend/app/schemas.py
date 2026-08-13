@@ -30,6 +30,10 @@ class ProjectUpdate(BaseModel):
     description: str | None = None
 
 
+class SystemAdminProjectUpdate(ProjectUpdate):
+    is_public: bool | None = None
+
+
 class ProjectRead(OrmModel):
     id: uuid.UUID
     name: str
@@ -59,6 +63,11 @@ class ProjectPublicRead(ProjectRead):
     member_count: int = 0
     is_public: bool = True
     is_legacy_unclaimed: bool = False
+
+
+class SystemAdminProjectRead(ProjectPublicRead):
+    owner: ActorSummary | None = None
+    deleted_at: datetime | None = None
 
 
 class ActorUpdate(BaseModel):
@@ -279,6 +288,7 @@ class ActorRead(OrmModel):
     id: uuid.UUID
     display_name: str
     identity_provider: Literal["anonymous"] = "anonymous"
+    is_system_admin: bool = False
 
 
 class ShareLinkCreate(BaseModel):

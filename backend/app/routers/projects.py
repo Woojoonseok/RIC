@@ -4,12 +4,13 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..database import get_db, settings
 from ..services.audit import record_project_event
-from ..services.identity import get_current_actor
+from ..services.identity import get_current_actor, is_system_admin
 from ..services.project_access import (
     ProjectContext,
     get_project_context,
@@ -22,9 +23,18 @@ from ..services.project_reference import clone_project_reference_data, ensure_pr
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
 
-def _public_project_or_404(db: Session, project_id: uuid.UUID) -> models.Project:
+def _visible_project_or_404(db: Session, project_id: uuid.UUID, actor: models.Actor) -> models.Project:
     project = db.get(models.Project, project_id)
-    if project is None or project.deleted_at is not None or not project.is_public:
+    has_access = project is not None and (
+        project.is_public
+        or is_system_admin(actor)
+        or project.owner_actor_id == actor.id
+        or db.query(models.ProjectMember.id).filter(
+            models.ProjectMember.project_id == project_id,
+            models.ProjectMember.actor_id == actor.id,
+        ).first() is not None
+    )
+    if project is None or project.deleted_at is not None or not has_access:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
     return project
 
@@ -34,9 +44,16 @@ def list_projects(
     actor: models.Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ) -> list[schemas.ProjectPublicRead]:
+    query = db.query(models.Project).filter(models.Project.deleted_at.is_(None))
+    if not is_system_admin(actor):
+        member_project_ids = db.query(models.ProjectMember.project_id).filter(models.ProjectMember.actor_id == actor.id)
+        query = query.filter(or_(
+            models.Project.is_public.is_(True),
+            models.Project.owner_actor_id == actor.id,
+            models.Project.id.in_(member_project_ids),
+        ))
     projects = (
-        db.query(models.Project)
-        .filter(models.Project.is_public.is_(True), models.Project.deleted_at.is_(None))
+        query
         .order_by(models.Project.updated_at.desc(), models.Project.created_at.desc())
         .all()
     )
@@ -221,7 +238,7 @@ def read_project(
     actor: models.Actor = Depends(get_current_actor),
     db: Session = Depends(get_db),
 ) -> schemas.ProjectPublicRead:
-    return project_public_read(db, _public_project_or_404(db, project_id), actor)
+    return project_public_read(db, _visible_project_or_404(db, project_id, actor), actor)
 
 
 @router.patch("/{project_id}", response_model=schemas.ProjectPublicRead)

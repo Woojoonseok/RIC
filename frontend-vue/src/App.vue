@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ShieldCheck } from "@lucide/vue";
 import { onBeforeUnmount, onMounted } from "vue";
 import { useAppStore } from "./stores/app";
 import { useGraphStore } from "./stores/graph";
@@ -46,7 +47,10 @@ onBeforeUnmount(() => {
   <div class="app-shell">
     <header class="app-header global-header">
       <RouterLink class="brand" to="/"><span class="brand-mark">R</span><span><strong>RIC</strong><small>PROJECT · ALIGN TREE</small></span></RouterLink>
-      <div class="global-identity"><span>현재 사용자</span><strong>{{ project.session?.display_name || '사내 익명 사용자' }}</strong></div>
+      <div class="global-header-actions">
+        <RouterLink v-if="project.session?.is_system_admin" class="system-admin-link" :to="{ name: 'system-admin' }"><ShieldCheck :size="16"/>최상위 관리자</RouterLink>
+        <div class="global-identity"><span>현재 사용자</span><strong>{{ project.session?.display_name || '사내 익명 사용자' }}</strong></div>
+      </div>
     </header>
     <main class="app-main"><RouterView/></main>
     <footer class="status-bar"><span :data-busy="app.busy"><i/>{{ app.status }}</span><span v-if="project.currentProjectId"><b :class="`autosave-${project.autosaveState}`">{{ project.autosaveLabel }}</b><template v-if="project.currentTree"> · {{ project.currentTree.name }}</template></span><span v-else>Vue 3 · FastAPI</span></footer>

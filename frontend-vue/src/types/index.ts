@@ -42,7 +42,12 @@ export interface Project {
 }
 export interface ProjectCreate { name: string; description?: string | null }
 export interface ProjectUpdate { name?: string; description?: string | null }
-export interface AnonymousSession { id: string; display_name?: string; identity_provider?: "anonymous" | string; ip_hint?: string | null }
+export interface SystemAdminProject extends Project {
+  owner?: { id: string; display_name: string } | null;
+  deleted_at?: string | null;
+}
+export interface SystemAdminProjectUpdate extends ProjectUpdate { is_public?: boolean }
+export interface AnonymousSession { id: string; display_name?: string; identity_provider?: "anonymous" | string; ip_hint?: string | null; is_system_admin?: boolean }
 export interface EditLease {
   project_id?: string;
   lease_token: string;

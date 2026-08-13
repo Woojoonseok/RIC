@@ -21,6 +21,7 @@ from .routers import (
     reviews,
     session,
     snapshots,
+    system_admin,
     users,
     validation,
     validation_rules,
@@ -117,6 +118,7 @@ app.include_router(layer_master_imports.router)
 app.include_router(relation_imports.router)
 app.include_router(reviews.router)
 app.include_router(snapshots.router)
+app.include_router(system_admin.router)
 app.include_router(workflow.router)
 
 # Keep SQLAlchemy model imports reachable for metadata registration.

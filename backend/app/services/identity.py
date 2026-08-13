@@ -74,6 +74,12 @@ def hash_token(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def is_system_admin(actor: models.Actor | uuid.UUID) -> bool:
+    actor_id = actor.id if isinstance(actor, models.Actor) else actor
+    configured = {value.strip().lower() for value in settings.system_admin_actor_ids.split(",") if value.strip()}
+    return str(actor_id).lower() in configured
+
+
 def _cookie_signature(actor_id: uuid.UUID) -> str:
     digest = hmac.new(
         settings.identity_secret.encode("utf-8"), str(actor_id).encode("ascii"), hashlib.sha256
@@ -153,4 +159,12 @@ def get_current_actor(
     # Request-scoped services that build nested graph responses can recover
     # the access role without threading Actor through every legacy helper.
     db.info["current_actor_id"] = actor.id
+    return actor
+
+
+def require_system_admin(actor: models.Actor = Depends(get_current_actor)) -> models.Actor:
+    if not is_system_admin(actor):
+        from fastapi import HTTPException, status
+
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="System administrator access is required")
     return actor

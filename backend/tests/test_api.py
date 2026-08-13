@@ -30,6 +30,7 @@ from app.routers import (
     reviews,
     session,
     snapshots,
+    system_admin,
     users,
     validation,
     validation_rules,
@@ -71,6 +72,7 @@ def client() -> Generator[TestClient, None, None]:
         relation_imports.router,
         reviews.router,
         snapshots.router,
+        system_admin.router,
         workflow.router,
     ):
         app.include_router(router)
@@ -142,6 +144,52 @@ def create_tree(client: TestClient, project_id: str, name: str) -> str:
     response = client.post(f"/api/projects/{project_id}/align-trees", json={"name": name})
     assert response.status_code == 201, response.text
     return response.json()["id"]
+
+
+def test_system_admin_can_manage_every_project(client: TestClient) -> None:
+    admin_id = client.get("/api/me").json()["id"]
+    previous_admin_ids = settings.system_admin_actor_ids
+    settings.system_admin_actor_ids = admin_id
+    try:
+        assert client.get("/api/me").json()["is_system_admin"] is True
+        project_id = create_project(client)
+
+        listed = client.get("/api/system-admin/projects")
+        assert listed.status_code == 200, listed.text
+        assert [row["id"] for row in listed.json()] == [project_id]
+
+        updated = client.patch(
+            f"/api/system-admin/projects/{project_id}",
+            json={"name": "Managed globally", "is_public": False},
+        )
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["name"] == "Managed globally"
+        assert updated.json()["is_public"] is False
+
+        invalid_visibility = client.patch(
+            f"/api/system-admin/projects/{project_id}",
+            json={"is_public": None},
+        )
+        assert invalid_visibility.status_code == 422
+
+        with client.app.state.session_factory() as db:
+            outsider = models.Actor(display_name="Outsider")
+            db.add(outsider)
+            db.commit()
+            db.refresh(outsider)
+            outsider_id = outsider.id
+
+        client.cookies.set(settings.identity_cookie_name, _encode_actor_cookie(outsider_id))
+        assert client.get("/api/system-admin/projects").status_code == 403
+        assert all(row["id"] != project_id for row in client.get("/api/projects").json())
+
+        client.cookies.set(settings.identity_cookie_name, _encode_actor_cookie(uuid.UUID(admin_id)))
+        assert client.get(f"/api/projects/{project_id}").status_code == 200
+        deleted = client.delete(f"/api/system-admin/projects/{project_id}")
+        assert deleted.status_code == 204, deleted.text
+        assert client.get(f"/api/projects/{project_id}").status_code == 404
+    finally:
+        settings.system_admin_actor_ids = previous_admin_ids
 
 
 def test_align_key_rows_round_trip(client: TestClient) -> None:
