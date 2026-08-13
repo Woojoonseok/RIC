@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Maximize2 } from "@lucide/vue";
 import { computed, onMounted, ref, watch } from "vue";
 import { api } from "../../api/client";
 import { formatLayerNumber } from "../../domain/finalTable";
@@ -9,12 +10,15 @@ import { useProjectStore } from "../../stores/project";
 import { useReferenceStore } from "../../stores/reference";
 import type { LayerUpdate, LayoutUpdate, PortName, Relation, RelationUpdate, StyleUpdate, TextBoxUpdate } from "../../types";
 import ColorPickerField from "./ColorPickerField.vue";
+import LayerCanvasSettings from "./LayerCanvasSettings.vue";
 import LayerImpactSummary from "./LayerImpactSummary.vue";
+import LayerMasterPropertySection from "./LayerMasterPropertySection.vue";
+import { COLOR_SWATCHES, readableLayerColor } from "./propertyOptions";
 import RelationImpactSummary from "./RelationImpactSummary.vue";
 
 const app = useAppStore(); const graph = useGraphStore(); const project = useProjectStore(); const reference = useReferenceStore();
-const emit = defineEmits<{ collapse: [] }>();
-const COLOR_SWATCHES = ["#ffffff", "#fef3c7", "#dbeafe", "#dcfce7", "#ffe4e6", "#e5e7eb", "#111827", "#2563eb", "#dc2626"];
+const props = withDefaults(defineProps<{ expanded?: boolean }>(), { expanded: false });
+const emit = defineEmits<{ collapse: []; toggleExpanded: [] }>();
 const selectedLayers = computed(() => app.selection.filter((item) => item.kind === "layer").flatMap((item) => {
   const layer = graph.rawGraph?.layers.find((row) => row.id === item.id); return layer ? [layer] : [];
 }));
@@ -37,12 +41,14 @@ const layer = computed(() => {
   }
   return selectedLayer.value;
 });
+const layerMaster = computed(() => {
+  const masterId = layer.value?.layer_master_id;
+  return masterId ? reference.layerMasters.find((row) => row.id === masterId) ?? null : null;
+});
 watch(() => item.value?.kind === "layer" ? item.value.id : null, () => { editingMergedLayerId.value = null });
 const canSplitLayer = computed(() => Boolean(
   layer.value && graph.rawGraph && isMergedLayer(graph.rawGraph, layer.value.id),
 ));
-const layout = computed(() => layer.value ? graph.rawGraph?.layouts.find((row) => row.layer_id === layer.value!.id) : null);
-const style = computed(() => layer.value ? graph.rawGraph?.styles.find((row) => row.layer_id === layer.value!.id) : null);
 const selectedRelation = computed(() => item.value?.kind === "relation"
   ? graph.rawGraph?.relations.find((row) => (
       row.id === item.value!.id
@@ -58,8 +64,6 @@ const relationGroup = computed(() => (
 const text = computed(() => item.value?.kind === "text" ? graph.rawGraph?.text_boxes.find((row) => row.id === item.value!.id) : null);
 const isDecorativeShape = computed(() => Boolean(text.value && (text.value.shape_type ?? "text") !== "text"));
 async function updateLayer(body: LayerUpdate) { if (layer.value) await graph.mutateGraph("Layer 저장", () => api.updateLayer(project.projectId, layer.value!.id, body)) }
-async function updateLayout(body: LayoutUpdate) { if (layer.value) await graph.mutateGraph("배치 저장", () => api.updateLayout(project.projectId, layer.value!.id, body)) }
-async function updateStyle(body: StyleUpdate) { if (layer.value) await graph.mutateGraph("스타일 저장", () => api.updateStyle(project.projectId, layer.value!.id, body)) }
 async function updateRelation(relationId: string, body: RelationUpdate) {
   await graph.mutateGraph("관계 저장", () => api.updateRelation(project.projectId, relationId, body));
 }
@@ -88,7 +92,7 @@ async function updateSelectedStyles(body: StyleUpdate) {
 async function updateSelectedLayouts(body: LayoutUpdate) {
   await graph.mutateGraph("다중 배치 저장", () => api.batchGraph(project.projectId, { layouts: selectedLayers.value.map((row) => ({ layer_id: row.id, ...body })) }));
 }
-async function applyBoxPreset(event: Event) {
+async function applySelectedBoxPreset(event: Event) {
   const presetId = value(event);
   const preset = reference.boxPresets.find((row) => row.id === presetId);
   if (!preset || !selectedLayers.value.length) return;
@@ -97,6 +101,10 @@ async function applyBoxPreset(event: Event) {
   await graph.mutateGraph("Box Type 적용", () => api.batchGraph(project.projectId, {
     layer_presets: layers.map((row) => ({ layer_id: row.id, box_preset_id: preset.id })),
   }));
+}
+function closeExpandedOrClearSelection() {
+  if (props.expanded) emit("toggleExpanded");
+  else app.clearSelection();
 }
 function selectedPort(event: Event): PortName {
   const value = (event.target as HTMLSelectElement).value;
@@ -127,16 +135,36 @@ onMounted(() => reference.loadAll());
 </script>
 
 <template>
-  <aside class="property-panel">
+  <aside class="property-panel" :class="{ expanded: props.expanded }" tabindex="-1" @keydown.esc="props.expanded && emit('toggleExpanded')">
     <div class="side-heading">
       <span>PROPERTIES</span>
       <div>
-        <button v-if="app.selection.length" aria-label="선택 해제" title="선택 해제" @click="app.clearSelection()">×</button>
-        <button class="panel-collapse-button" aria-label="Properties 패널 닫기" title="Properties 패널 닫기" @click="emit('collapse')">›</button>
+        <button
+          v-if="app.selection.length && !props.expanded"
+          class="property-expand-button"
+          aria-label="속성 편집 확대"
+          title="넓게 편집하기"
+          @click="emit('toggleExpanded')"
+        >
+          <Maximize2 :size="15"/>
+        </button>
+        <button
+          v-if="app.selection.length"
+          :aria-label="props.expanded ? '확대 속성 편집 닫기' : '선택 해제'"
+          :title="props.expanded ? '오른쪽 패널로 돌아가기' : '선택 해제'"
+          @click="closeExpandedOrClearSelection"
+        >×</button>
+        <button v-if="!props.expanded" class="panel-collapse-button" aria-label="Properties 패널 닫기" title="Properties 패널 닫기" @click="emit('collapse')">›</button>
       </div>
     </div>
-    <LayerImpactSummary v-if="layer" :layer-id="layer.id"/>
-    <RelationImpactSummary v-else-if="selectedRelation" :relation-id="selectedRelation.id"/>
+    <details v-if="layer" class="property-impact-details">
+      <summary>변경 영향도 보기</summary>
+      <LayerImpactSummary :layer-id="layer.id"/>
+    </details>
+    <details v-else-if="selectedRelation" class="property-impact-details">
+      <summary>변경 영향도 보기</summary>
+      <RelationImpactSummary :relation-id="selectedRelation.id"/>
+    </details>
     <fieldset class="property-fieldset" :disabled="!project.canEdit">
     <div v-if="selectedLayers.length > 1" class="property-form multi-property">
       <div class="property-title"><div><strong>{{ selectedLayers.length }} Layers</strong><small>다중 편집</small></div></div>
@@ -150,7 +178,7 @@ onMounted(() => reference.loadAll());
       </section>
       <section class="property-section">
         <h3>스타일</h3>
-        <label>Box Type<select :value="selectedLayers.every((row) => row.box_preset_id === selectedLayers[0]?.box_preset_id) ? selectedLayers[0]?.box_preset_id || '' : ''" @change="applyBoxPreset"><option value="" disabled>{{ selectedLayers.every((row) => row.box_preset_id === selectedLayers[0]?.box_preset_id) ? '선택' : '여러 Box Type' }}</option><option v-for="preset in reference.boxPresets" :key="preset.id" :value="preset.id">{{ preset.name }}</option></select></label>
+        <label>Box Type<select :value="selectedLayers.every((row) => row.box_preset_id === selectedLayers[0]?.box_preset_id) ? selectedLayers[0]?.box_preset_id || '' : ''" @change="applySelectedBoxPreset"><option value="" disabled>{{ selectedLayers.every((row) => row.box_preset_id === selectedLayers[0]?.box_preset_id) ? '선택' : '여러 Box Type' }}</option><option v-for="preset in reference.boxPresets" :key="preset.id" :value="preset.id">{{ preset.name }}</option></select></label>
         <ColorPickerField label="Fill" model-value="#dbeafe" @update:model-value="updateSelectedStyles({ fill_color: $event })"/>
         <div class="color-swatches"><button v-for="color in COLOR_SWATCHES" :key="color" type="button" class="color-swatch" :style="{ background: color }" :aria-label="`Fill ${color}`" :title="color" @click="updateSelectedStyles({ fill_color: color })"/></div>
         <ColorPickerField label="Stroke" model-value="#2563eb" @update:model-value="updateSelectedStyles({ stroke_color: $event })"/>
@@ -161,7 +189,7 @@ onMounted(() => reference.loadAll());
       </section>
       <button @click="graph.mutateGraph('Layer 병합', () => api.merge(project.projectId, { layer_ids: selectedLayers.map(row => row.id) }))">Merge Layers</button>
     </div>
-    <div v-else-if="layer" class="property-form">
+    <div v-else-if="layer" class="property-form layer-property-form">
       <div class="property-title"><span class="layer-dot"/><div><strong>{{ layer.name }}</strong><small>Layer</small></div></div>
       <section v-if="mergedLayers.length > 1" class="property-section merged-layer-section">
         <h3>Merged Layers</h3>
@@ -174,40 +202,20 @@ onMounted(() => reference.loadAll());
             :class="{ active: member.id === layer.id }"
             @click="editingMergedLayerId = member.id"
           >
-            <span class="layer-dot" :style="{ background: member.color }"/>
-            <span><strong :style="{ color: member.color }">{{ member.name }}</strong><small>{{ member.step || 'Step 미지정' }}</small></span>
+            <span class="layer-dot" :style="{ background: member.color || '#101828' }"/>
+            <span><strong :style="{ color: readableLayerColor(member.color) }">{{ member.name }}</strong><small>{{ member.step || 'Layer 번호 미지정' }}</small></span>
           </button>
         </div>
       </section>
-      <section class="property-section">
+      <section class="property-section layer-basic-section">
         <h3>기본 정보</h3>
         <label>이름<input :value="layer.name" @change="updateLayer({ name: value($event) })"></label>
-        <ColorPickerField label="Color" :model-value="layer.color" @update:model-value="updateLayer({ color: $event })"/>
-        <label>Step<input :value="layer.step" @change="updateLayer({ step: value($event) || null })"></label>
+        <ColorPickerField label="Color" :model-value="layer.color || '#101828'" @update:model-value="updateLayer({ color: $event })"/>
+        <label>Layer 번호<input :value="layer.step" @change="updateLayer({ step: value($event) || null })"></label>
         <label>Group<input :value="layer.pending_group" @change="graph.mutateGraph('그룹 저장', () => api.updateGroup(project.projectId, layer!.id, value($event) || null))"></label>
       </section>
-      <section v-if="layout" class="property-section">
-        <h3>위치 및 크기</h3>
-        <label class="property-check"><input type="checkbox" :checked="layout.pinned" @change="updateLayout({ pinned: ($event.target as HTMLInputElement).checked })">자동 배치에서 위치 고정</label>
-        <div class="property-grid">
-          <label>X<input type="number" :value="layout.x" @change="updateLayout({ x: numberValue($event) })"></label>
-          <label>Y<input type="number" :value="layout.y" @change="updateLayout({ y: numberValue($event) })"></label>
-          <label>Width<input type="number" min="60" :value="layout.width" @change="updateLayout({ width: numberValue($event) })"></label>
-          <label>Height<input type="number" min="36" :value="layout.height" @change="updateLayout({ height: numberValue($event) })"></label>
-        </div>
-      </section>
-      <section v-if="style" class="property-section">
-        <h3>스타일</h3>
-        <label>Box Type<select :value="layer.box_preset_id || ''" @change="applyBoxPreset"><option value="" disabled>선택</option><option v-for="preset in reference.boxPresets" :key="preset.id" :value="preset.id">{{ preset.name }}</option></select></label>
-        <ColorPickerField label="Fill" :model-value="style.fill_color" @update:model-value="updateStyle({ fill_color: $event })"/>
-        <div class="color-swatches"><button v-for="color in COLOR_SWATCHES" :key="color" type="button" class="color-swatch" :class="{ active: style.fill_color.toLowerCase() === color }" :style="{ background: color }" :aria-label="`Fill ${color}`" :title="color" @click="updateStyle({ fill_color: color })"/></div>
-        <ColorPickerField label="Stroke" :model-value="style.stroke_color" @update:model-value="updateStyle({ stroke_color: $event })"/>
-        <ColorPickerField label="Text" :model-value="style.text_color" @update:model-value="updateStyle({ text_color: $event })"/>
-        <div class="property-grid">
-          <label>Font size<input type="number" min="8" max="72" :value="style.font_size" @change="updateStyle({ font_size: numberValue($event) })"></label>
-          <label>Stroke width<input type="number" min="1" max="12" :value="style.stroke_width" @change="updateStyle({ stroke_width: numberValue($event) })"></label>
-        </div>
-      </section>
+      <LayerMasterPropertySection :layer-master="layerMaster" :expanded="props.expanded" @toggle-expanded="emit('toggleExpanded')"/>
+      <LayerCanvasSettings :layer="layer"/>
       <button v-if="canSplitLayer" @click="graph.mutateGraph('Layer 분할', () => api.split(project.projectId, layer!.id))">Split Layer</button>
     </div>
     <div v-else-if="selectedRelation" class="property-form relation-properties">

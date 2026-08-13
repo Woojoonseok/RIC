@@ -666,8 +666,36 @@ class LayerMasterRead(OrmModel, LayerMasterBase):
     priorities: dict[uuid.UUID, str | None] = Field(default_factory=dict)
 
 
+class AlignKeyRowBase(BaseModel):
+    key_name: str = Field(default="", max_length=160)
+    key_type: str = Field(default="", max_length=160)
+    layer: str = Field(default="", max_length=160)
+    comment: str = Field(default="", max_length=2000)
+    sort_order: int = 0
+
+
+class AlignKeyRowCreate(AlignKeyRowBase):
+    pass
+
+
+class AlignKeyRowUpdate(BaseModel):
+    key_name: str | None = Field(default=None, max_length=160)
+    key_type: str | None = Field(default=None, max_length=160)
+    layer: str | None = Field(default=None, max_length=160)
+    comment: str | None = Field(default=None, max_length=2000)
+    sort_order: int | None = None
+
+
+class AlignKeyRowRead(OrmModel, AlignKeyRowBase):
+    id: uuid.UUID
+    project_id: uuid.UUID
+
+
 VALIDATION_RULE_FIELDS: dict[str, set[str]] = {
-    "layer": {"name", "step", "layer_property", "align", "align_side", "description"},
+    "layer": {
+        "name", "step", "color", "mask_main_fld", "mask_sl_fld", "pr_wf", "dev_wf",
+        "pr_type", "light_source", "pr_open_close", "group", "validation_rule", "comment",
+    },
     "relation": {
         "relation_type", "key_priority", "priority_rule", "final_type", "key_purpose",
         "placement", "stack_type", "inregi", "inner_size", "outer_size",

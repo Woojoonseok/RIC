@@ -17,7 +17,7 @@ const busy = ref(false);
 const error = ref("");
 
 const labels: Record<WorkflowStatus, string> = {
-  draft: "Draft",
+  draft: "초안",
   in_review: "검토 중",
   approved: "승인 완료",
   published: "공식 배포",
@@ -30,10 +30,10 @@ const descriptions: Record<WorkflowStatus, string> = {
 };
 const actionCopy: Record<WorkflowAction, { title: string; placeholder: string; submit: string }> = {
   request: { title: "검토 요청", placeholder: "변경 사유와 검토가 필요한 내용을 입력하세요.", submit: "검토 요청" },
-  reject: { title: "검토 반려", placeholder: "수정해야 할 내용과 반려 사유를 입력하세요.", submit: "Draft로 반려" },
+  reject: { title: "검토 반려", placeholder: "수정해야 할 내용과 반려 사유를 입력하세요.", submit: "초안으로 반려" },
   approve: { title: "검토 승인", placeholder: "승인 근거 또는 확인한 내용을 입력하세요.", submit: "승인" },
   publish: { title: "공식 배포", placeholder: "배포 목적 또는 적용 대상을 입력하세요.", submit: "공식 배포" },
-  reopen: { title: "새 Draft 시작", placeholder: "승인본 이후 수정이 필요한 이유를 입력하세요.", submit: "Draft 시작" },
+  reopen: { title: "새 초안 시작", placeholder: "승인본 이후 수정이 필요한 이유를 입력하세요.", submit: "초안 시작" },
 };
 
 const status = computed<WorkflowStatus>(() => project.workflowStatus as WorkflowStatus);
@@ -125,10 +125,10 @@ async function submit() {
           <button class="primary" type="button" @click="choose('approve')"><Check :size="16"/>승인</button>
         </template>
         <template v-else-if="status === 'approved'">
-          <button v-if="project.canEditProject" type="button" @click="choose('reopen')"><RotateCcw :size="16"/>새 Draft</button>
+          <button v-if="project.canEditProject" type="button" @click="choose('reopen')"><RotateCcw :size="16"/>새 초안</button>
           <button v-if="project.canAdminProject" class="primary" type="button" @click="choose('publish')"><Upload :size="16"/>공식 배포</button>
         </template>
-        <button v-else-if="status === 'published' && project.canEditProject" type="button" @click="choose('reopen')"><RotateCcw :size="16"/>새 Draft 시작</button>
+        <button v-else-if="status === 'published' && project.canEditProject" type="button" @click="choose('reopen')"><RotateCcw :size="16"/>새 초안 시작</button>
         <p v-else>현재 권한에서 실행할 수 있는 Workflow 작업이 없습니다.</p>
       </div>
 

@@ -1,5 +1,5 @@
 import type {
-  AlignTree, AlignTreeCreate, AnonymousSession, AuditEvent, AutoLayoutRequest, BoxPreset, EditLease, Graph, GraphBatchUpdate,
+  AlignKeyRow, AlignKeyRowCreate, AlignKeyRowUpdate, AlignTree, AlignTreeCreate, AnonymousSession, AuditEvent, AutoLayoutRequest, BoxPreset, EditLease, Graph, GraphBatchUpdate,
   GraphRestore, KeyDrawingType, KeyLayoutType, KeyShape, Layer, LayerCreate, LayerMaster, LayerMasterCreate,
   LayerMasterImportCommitResult, LayerMasterImportPreview, LayerMasterImportRequest, LayerMasterUpdate,
   LayerImpactReport, LayerMergeRequest, LayerSplitRequest, LayerUpdate, Layout, LayoutUpdate, Project,
@@ -139,6 +139,10 @@ export const api = {
   projectAuditEvents: (id: string, options: AuditEventQuery = {}) => request<AuditEvent[]>(auditEventPath(id, options)),
 
   listAlignTrees: (id: string) => request<AlignTree[]>(`/projects/${id}/align-trees`),
+  alignKeyRows: (projectId: string) => request<AlignKeyRow[]>(`/projects/${projectId}/align-key-rows`),
+  createAlignKeyRow: (projectId: string, body: AlignKeyRowCreate) => request<AlignKeyRow>(`/projects/${projectId}/align-key-rows`, json("POST", body)),
+  updateAlignKeyRow: (projectId: string, id: string, body: AlignKeyRowUpdate) => request<AlignKeyRow>(`/projects/${projectId}/align-key-rows/${id}`, json("PUT", body)),
+  deleteAlignKeyRow: (projectId: string, id: string) => request<void>(`/projects/${projectId}/align-key-rows/${id}`, json("DELETE")),
   createAlignTree: (id: string, body: AlignTreeCreate) => request<AlignTree>(`/projects/${id}/align-trees`, json("POST", body)),
   getAlignTree: (projectId: string, treeId: string) => request<AlignTree>(`/projects/${projectId}/align-trees/${treeId}`),
   updateAlignTree: (projectId: string, treeId: string, body: Partial<AlignTreeCreate>) => request<AlignTree>(`/projects/${projectId}/align-trees/${treeId}`, json("PATCH", body)),

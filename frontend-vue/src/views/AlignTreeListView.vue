@@ -13,7 +13,7 @@ const branchOpen = ref(false);
 const branchName = ref("");
 const branchDescription = ref("");
 const editor = computed(() => project.alignTrees[0] ?? null);
-const workflowLabels = { draft: "Draft", in_review: "검토 중", approved: "승인 완료", published: "공식 배포" } as const;
+const workflowLabels = { draft: "초안", in_review: "검토 중", approved: "승인 완료", published: "공식 배포" } as const;
 const editorCards = computed(() => {
   const current = editor.value;
   if (!current) return [];
@@ -107,7 +107,7 @@ onMounted(() => project.loadAlignTrees());
         </div>
         <dl>
           <div><dt>{{ card.detailLabel }}</dt><dd>{{ card.detailValue }}</dd></div>
-          <div><dt>Revision</dt><dd>{{ card.revision }}</dd></div>
+          <div><dt>버전</dt><dd>{{ card.revision }}</dd></div>
         </dl>
         <RouterLink
           class="button-link primary"

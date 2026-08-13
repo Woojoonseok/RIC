@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { AlertTriangle, CheckCircle2, ChevronDown, ClipboardPaste, Download, FilterX, Plus, Search, Trash2, X } from "@lucide/vue";
-import * as XLSX from "xlsx-js-style";
 import SpreadsheetGrid from "../components/grid/SpreadsheetGrid.vue";
 import { api } from "../api/client";
 import { formatLayerNumber } from "../domain/finalTable";
@@ -151,7 +150,8 @@ function relationFileName(suffix: string) {
   const projectName = project.currentProject?.name || "RIC";
   return `${projectName}_${suffix}`.replace(/[\\/:*?"<>|]+/g, "_");
 }
-function downloadRelationWorkbook(columns: GridColumn[], rows: Row[], fileName: string) {
+async function downloadRelationWorkbook(columns: GridColumn[], rows: Row[], fileName: string) {
+  const XLSX = await import("xlsx-js-style");
   const matrix = [
     columns.map((column) => column.label),
     ...rows.map((row) => columns.map((column) => relationDownloadValue(row, column))),
@@ -171,12 +171,12 @@ function downloadRelationWorkbook(columns: GridColumn[], rows: Row[], fileName: 
   XLSX.utils.book_append_sheet(workbook, sheet, "Layer Relation");
   XLSX.writeFile(workbook, fileName);
 }
-function downloadRelationTemplate() {
-  downloadRelationWorkbook(relationPasteColumns.value, [], "RIC_Layer_Relation_Template.xlsx");
+async function downloadRelationTemplate() {
+  await downloadRelationWorkbook(relationPasteColumns.value, [], "RIC_Layer_Relation_Template.xlsx");
   app.status = "Layer Relation 템플릿을 다운로드했습니다.";
 }
-function downloadCurrentRelationTable() {
-  downloadRelationWorkbook(
+async function downloadCurrentRelationTable() {
+  await downloadRelationWorkbook(
     relationColumns.value,
     displayedRelationRows.value,
     `${relationFileName("Layer_Relation")}.xlsx`,
@@ -556,7 +556,7 @@ onMounted(async () => {
     </div>
     <div v-if="graph.rawGraph" class="panel data-panel relation-data-panel">
       <div class="panel-heading data-actions">
-        <div><h2>Layer Relation</h2><span>{{ displayedRelationRows.length }}<template v-if="Object.keys(columnFilters).length">/{{ relationRows.length }}</template> rows</span></div>
+        <div><h2>Layer Relation</h2><span>{{ displayedRelationRows.length }}<template v-if="Object.keys(columnFilters).length">/{{ relationRows.length }}</template>개 행</span></div>
         <div class="relation-data-toolbar">
           <button v-if="Object.keys(columnFilters).length" type="button" title="모든 필터 해제" @click="columnFilters = {}"><FilterX :size="15"/>필터 해제</button>
           <button class="primary" :disabled="!project.canEdit" @click="editRelation()"><Plus :size="16"/>Relation 추가</button>

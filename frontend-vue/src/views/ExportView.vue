@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { ArrowDownAZ, ArrowUpAZ, Download, Filter, PanelLeft, PanelRight, Search, X as CloseIcon } from "@lucide/vue";
-import * as XLSX from "xlsx-js-style";
+import type { Range } from "xlsx-js-style";
 import { api } from "../api/client";
 import { buildFinalTable } from "../domain/finalTable";
 import { useGraphStore } from "../stores/graph";
@@ -239,10 +239,11 @@ async function saveRelationField(relationId: string, field: FinalField, nextValu
 
 async function exportFinalExcel() {
   if (!graph.rawGraph?.align_tree || !finalTable.value) return;
+  const XLSX = await import("xlsx-js-style");
   const table = document.querySelector<HTMLTableElement>(".final-table");
   if (!table) return;
   exporting.value = true;
-  const merges: XLSX.Range[] = [];
+  const merges: Range[] = [];
   const cellClasses: string[][][] = [];
   const headerRowIndex = tableView.value === "right" ? 3 : 0;
   const matrix = Array.from(table.rows).map((row, rowIndex) => {

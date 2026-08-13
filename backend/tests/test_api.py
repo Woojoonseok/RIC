@@ -18,6 +18,7 @@ from app.database import Base, get_db, settings, validate_identity_secret
 from app.main import configure_cors
 from app.routers import (
     align_trees,
+    align_key_rows,
     graph,
     layer_master_imports,
     leases,
@@ -59,6 +60,7 @@ def client() -> Generator[TestClient, None, None]:
         projects.router,
         project_governance.router,
         align_trees.router,
+        align_key_rows.router,
         leases.router,
         graph.router,
         validation.router,
@@ -140,6 +142,27 @@ def create_tree(client: TestClient, project_id: str, name: str) -> str:
     response = client.post(f"/api/projects/{project_id}/align-trees", json={"name": name})
     assert response.status_code == 201, response.text
     return response.json()["id"]
+
+
+def test_align_key_rows_round_trip(client: TestClient) -> None:
+    project_id = create_project(client)
+    base = f"/api/projects/{project_id}/align-key-rows"
+
+    created = client.post(base, json={"key_name": "AK-01", "key_type": "Box", "layer": "38", "comment": "first", "sort_order": 0})
+    assert created.status_code == 201, created.text
+    row_id = created.json()["id"]
+
+    listed = client.get(base)
+    assert listed.status_code == 200, listed.text
+    assert [(row["key_name"], row["layer"]) for row in listed.json()] == [("AK-01", "38")]
+
+    updated = client.put(f"{base}/{row_id}", json={"comment": "saved"})
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["comment"] == "saved"
+
+    deleted = client.delete(f"{base}/{row_id}")
+    assert deleted.status_code == 204, deleted.text
+    assert client.get(base).json() == []
 
 
 def test_layer_color_round_trip_survives_merge(client: TestClient) -> None:
@@ -838,10 +861,10 @@ def test_configurable_validation_rules_are_applied_and_manageable(client: TestCl
     rules_url = f"/api/projects/{project_id}/reference/validation-rules"
 
     payload = {
-        "name": "Align side required",
+        "name": "Mask main required",
         "target_type": "layer",
         "rule_type": "required",
-        "field_name": "align_side",
+        "field_name": "mask_main_fld",
         "expected_values": [],
         "severity": "warning",
         "message": "{target}: {field} is required",
@@ -857,7 +880,7 @@ def test_configurable_validation_rules_are_applied_and_manageable(client: TestCl
     assert len(custom_issues) == 1
     assert custom_issues[0]["rule_name"] == payload["name"]
     assert custom_issues[0]["severity"] == "warning"
-    assert custom_issues[0]["message"] == "Layer 'A': align_side is required"
+    assert custom_issues[0]["message"] == "Layer 'A': mask_main_fld is required"
 
     duplicate = client.post(rules_url, json=payload)
     assert duplicate.status_code == 409, duplicate.text

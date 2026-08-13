@@ -13,6 +13,8 @@ const app = useAppStore();
 const graph = useGraphStore();
 const project = useProjectStore();
 const rules = ref<ValidationRule[]>([]);
+const rulesLoading = ref(true);
+const rulesError = ref("");
 const editorOpen = ref(false);
 const editingId = ref<string | null>(null);
 
@@ -28,9 +30,12 @@ const ruleOptions = [
 ] as const;
 const fields: Record<ValidationRuleTarget, { value: string; label: string }[]> = {
   layer: [
-    { value: "name", label: "Layer 명" }, { value: "step", label: "Step" },
-    { value: "layer_property", label: "Layer Property" }, { value: "align", label: "Align" },
-    { value: "align_side", label: "Align Side" }, { value: "description", label: "Description" },
+    { value: "name", label: "Layer 명" }, { value: "step", label: "Layer 번호" }, { value: "color", label: "Color" },
+    { value: "mask_main_fld", label: "Mask MAIN FLD" }, { value: "mask_sl_fld", label: "Mask SL FLD" },
+    { value: "pr_wf", label: "Mask PR" }, { value: "dev_wf", label: "WF Dev" },
+    { value: "pr_type", label: "WF PR 종류" }, { value: "light_source", label: "광원" },
+    { value: "pr_open_close", label: "PR Open/Close" }, { value: "group", label: "Group" },
+    { value: "validation_rule", label: "검증 Rule" }, { value: "comment", label: "Comment" },
   ],
   relation: [
     { value: "relation_type", label: "Relation Type" }, { value: "key_priority", label: "Key Priority" },
@@ -77,7 +82,11 @@ function payload(): ValidationRuleInput {
 
 async function loadRules() {
   if (!project.currentProjectId) { rules.value = []; return }
-  rules.value = await app.run("검증 규칙 불러오기", () => api.validationRules());
+  rulesLoading.value = true;
+  rulesError.value = "";
+  try { rules.value = await app.run("검증 규칙 불러오기", () => api.validationRules()) }
+  catch (error) { rulesError.value = error instanceof Error ? error.message : "검증 규칙을 불러오지 못했습니다." }
+  finally { rulesLoading.value = false }
 }
 async function validate() {
   if (!project.currentTreeId) return;
@@ -160,7 +169,9 @@ onMounted(loadRules);
           <small>오류 규칙을 위반하면 검토 요청이 제한됩니다.</small>
         </div>
         <div class="validation-rule-list">
-          <p v-if="!rules.length" class="empty">추가된 프로젝트 규칙이 없습니다.</p>
+          <p v-if="rulesLoading" class="empty">검증 규칙을 불러오는 중입니다.</p>
+          <p v-else-if="rulesError" class="empty">{{ rulesError }} <button @click="loadRules">다시 시도</button></p>
+          <p v-else-if="!rules.length" class="empty">추가된 프로젝트 규칙이 없습니다.</p>
           <article v-for="rule in rules" :key="rule.id" class="validation-rule-row" :class="{ disabled: !rule.enabled }">
             <button class="rule-toggle" :class="{ on: rule.enabled }" :disabled="!canManageRules" :aria-label="`${rule.name} ${rule.enabled ? '끄기' : '켜기'}`" @click="toggleRule(rule)"><span/></button>
             <div class="validation-rule-copy"><strong>{{ rule.name }}</strong><p>{{ targetLabel(rule.target_type) }} · {{ fieldLabel(rule) }} · {{ ruleLabel(rule.rule_type) }}<template v-if="rule.expected_values.length"> · {{ rule.expected_values.join(', ') }}</template></p></div>
@@ -188,7 +199,7 @@ onMounted(loadRules);
       <section class="panel paste-panel validation-rule-editor" @click.stop>
         <div class="panel-heading"><div><p class="eyebrow">VALIDATION RULE</p><h2>{{ editingId ? '검증 규칙 수정' : '검증 규칙 추가' }}</h2></div><button class="rule-icon-button" title="닫기" @click="closeEditor"><X :size="18"/></button></div>
         <div class="validation-rule-form">
-          <label class="wide"><span>규칙 이름</span><input v-model="draft.name" autofocus maxlength="160" placeholder="예: Align Side 필수"></label>
+          <label class="wide"><span>규칙 이름</span><input v-model="draft.name" autofocus maxlength="160" placeholder="예: Mask MAIN FLD 필수"></label>
           <label><span>대상</span><select v-model="draft.target_type"><option v-for="option in targetOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select></label>
           <label><span>필드</span><select v-model="draft.field_name"><option v-for="field in availableFields" :key="field.value" :value="field.value">{{ field.label }}</option></select></label>
           <label><span>검사 방식</span><select v-model="draft.rule_type"><option v-for="option in ruleOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select></label>

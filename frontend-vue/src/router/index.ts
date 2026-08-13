@@ -1,17 +1,18 @@
 import { createRouter, createWebHistory } from "vue-router";
-import ProjectLayout from "../layouts/ProjectLayout.vue";
-import TreeWorkspaceLayout from "../layouts/TreeWorkspaceLayout.vue";
-import AlignTreeListView from "../views/AlignTreeListView.vue";
-import AlignKeyEditorView from "../views/AlignKeyEditorView.vue";
-import DataView from "../views/DataView.vue";
-import EditorView from "../views/EditorView.vue";
-import ExportView from "../views/ExportView.vue";
-import HomeView from "../views/HomeView.vue";
-import LayerMasterView from "../views/LayerMasterView.vue";
-import ProjectHomeView from "../views/ProjectHomeView.vue";
-import ProjectSettingsView from "../views/ProjectSettingsView.vue";
-import ReferenceView from "../views/ReferenceView.vue";
-import ValidationView from "../views/ValidationView.vue";
+
+const ProjectLayout = () => import("../layouts/ProjectLayout.vue");
+const TreeWorkspaceLayout = () => import("../layouts/TreeWorkspaceLayout.vue");
+const AlignTreeListView = () => import("../views/AlignTreeListView.vue");
+const AlignKeyEditorView = () => import("../views/AlignKeyEditorView.vue");
+const DataView = () => import("../views/DataView.vue");
+const EditorView = () => import("../views/EditorView.vue");
+const ExportView = () => import("../views/ExportView.vue");
+const HomeView = () => import("../views/HomeView.vue");
+const LayerMasterView = () => import("../views/LayerMasterView.vue");
+const ProjectHomeView = () => import("../views/ProjectHomeView.vue");
+const ProjectSettingsView = () => import("../views/ProjectSettingsView.vue");
+const ReferenceView = () => import("../views/ReferenceView.vue");
+const ValidationView = () => import("../views/ValidationView.vue");
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -25,7 +26,7 @@ export const router = createRouter({
         { path: "reference", name: "project-reference", component: ReferenceView, meta: { requiresMembership: true, projectEditor: true } },
         { path: "layers", name: "project-layers", component: LayerMasterView, meta: { requiresMembership: true, projectEditor: true } },
         { path: "align-trees", name: "align-tree-list", component: AlignTreeListView, meta: { requiresMembership: true } },
-        { path: "align-key-editor", name: "align-key-editor", component: AlignKeyEditorView, meta: { requiresMembership: true } },
+        { path: "align-key-editor", name: "align-key-editor", component: AlignKeyEditorView, meta: { requiresMembership: true, projectEditor: true } },
         { path: "settings", name: "project-settings", component: ProjectSettingsView, meta: { requiresMembership: true, requiresAdmin: true, projectEditor: true } },
         {
           path: "align-trees/:treeId",

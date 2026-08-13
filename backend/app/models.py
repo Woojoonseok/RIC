@@ -100,6 +100,7 @@ class Project(Base, TimestampMixin):
     layouts: Mapped[list[GraphLayout]] = relationship(back_populates="project", cascade="all, delete-orphan")
     styles: Mapped[list[ShapeStyle]] = relationship(back_populates="project", cascade="all, delete-orphan")
     text_boxes: Mapped[list[TextBox]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    align_key_rows: Mapped[list[AlignKeyRow]] = relationship(back_populates="project", cascade="all, delete-orphan")
 
 
 class ProjectMember(Base, TimestampMixin):
@@ -197,6 +198,20 @@ class AlignTree(Base, TimestampMixin):
 
     project: Mapped[Project] = relationship(back_populates="align_trees")
     created_by: Mapped[Actor | None] = relationship()
+
+
+class AlignKeyRow(Base, TimestampMixin):
+    __tablename__ = "align_key_rows"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    key_name: Mapped[str] = mapped_column(String(160), nullable=False, default="", server_default="")
+    key_type: Mapped[str] = mapped_column(String(160), nullable=False, default="", server_default="")
+    layer: Mapped[str] = mapped_column(String(160), nullable=False, default="", server_default="")
+    comment: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+
+    project: Mapped[Project] = relationship(back_populates="align_key_rows")
 
 
 class ProjectAccess(Base, TimestampMixin):

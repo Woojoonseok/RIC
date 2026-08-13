@@ -421,6 +421,9 @@ export type KeyShapeUpdate = Partial<KeyShapeCreate>;
 export interface LayerMaster { id: string; name: string; layer_number: string | null; mask_main_fld: string | null; mask_sl_fld: string | null; pr_wf: string | null; dev_wf: string | null; pr_type: string | null; light_source: string | null; pr_open_close: string | null; group: string | null; validation_rule: string | null; comment: string | null; priorities: Record<string, string | null> }
 export type LayerMasterCreate = Omit<LayerMaster, "id" | "layer_number"> & { layer_number: string };
 export type LayerMasterUpdate = Partial<LayerMasterCreate>;
+export interface AlignKeyRow { id: string; project_id: string; key_name: string; key_type: string; layer: string; comment: string; sort_order: number }
+export type AlignKeyRowCreate = Omit<AlignKeyRow, "id" | "project_id">;
+export type AlignKeyRowUpdate = Partial<AlignKeyRowCreate>;
 export interface LayerMasterImportRow { row_number: number; layer: LayerMasterCreate }
 export interface LayerMasterImportRequest { rows: LayerMasterImportRow[] }
 export interface LayerMasterImportIssue { row_number: number | null; code: string; message: string }

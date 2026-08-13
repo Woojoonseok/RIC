@@ -75,8 +75,8 @@ const masters: LayerMaster[] = [
 
 describe("final table", () => {
   it("formats layer numbers and Open/Close markers", () => {
-    expect(formatLayerNumber("38")).toBe("38.0");
-    expect(formatLayerNumber("39.04")).toBe("39.0");
+    expect(formatLayerNumber("38")).toBe("38");
+    expect(formatLayerNumber("39.04")).toBe("39.04");
     expect(openCloseMarker("Open")).toBe("O");
     expect(openCloseMarker("Close")).toBe("X");
   });
@@ -92,12 +92,12 @@ describe("final table", () => {
       }],
     );
     expect(table.layers.map((layer) => [layer.number, layer.marker])).toEqual([
-      ["38.0", "O"],
-      ["39.0", "X"],
+      ["38", "O"],
+      ["39", "X"],
     ]);
-    expect(table.rows.map((row) => row.keyName)).toEqual(["380to390", "380to3902"]);
-    expect(table.rows[0].inner).toBe("38.0");
-    expect(table.rows[0].outer).toBe("39.0");
+    expect(table.rows.map((row) => row.keyName)).toEqual(["38to39", "38to392"]);
+    expect(table.rows[0].inner).toBe("38");
+    expect(table.rows[0].outer).toBe("39");
     expect(finalTableMatrix(
       table,
       { "layer-38": "PROC-38", "layer-39": "PROC-39" },
@@ -116,7 +116,7 @@ describe("final table", () => {
     expect(matrix[0].slice(11, 13)).toEqual(["LAYER", ""]);
     expect(matrix[1].slice(11, 13)).toEqual(["STEP", ""]);
     expect(matrix[2].slice(11, 13)).toEqual(["GDS", ""]);
-    expect(matrix[3].slice(-2)).toEqual(["38.0", "39.0"]);
+    expect(matrix[3].slice(-2)).toEqual(["38", "39"]);
     expect(matrix[4].slice(-2)).toEqual(["CUSTOM", ""]);
     expect(matrix[5].slice(-2)).toEqual(["O", "X"]);
   });
@@ -145,8 +145,8 @@ describe("final table", () => {
     };
     const table = buildFinalTable(spareGraph, masters, [], []);
     expect(table.rows.map((row) => [row.keyName, row.inner, row.outer])).toEqual([
-      ["380toSPARE", "38.0", "SPARE"],
-      ["SPAREto390", "SPARE", "39.0"],
+      ["38toSPARE", "38", "SPARE"],
+      ["SPAREto39", "SPARE", "39"],
       ["SPAREtoSPARE", "SPARE", "SPARE"],
       ["SPAREtoSPARE2", "SPARE", "SPARE"],
     ]);
@@ -162,9 +162,9 @@ describe("final table", () => {
     const table = buildFinalTable(restoredGraph, masters, [], []);
 
     expect(table.rows[0]).toMatchObject({
-      keyName: "380to390",
-      inner: "38.0",
-      outer: "39.0",
+      keyName: "38to39",
+      inner: "38",
+      outer: "39",
     });
   });
 });
