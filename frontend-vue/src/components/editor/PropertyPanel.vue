@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Maximize2 } from "@lucide/vue";
+import { Maximize2, Pencil } from "@lucide/vue";
 import { computed, onMounted, ref, watch } from "vue";
 import { api } from "../../api/client";
 import { formatLayerNumber } from "../../domain/finalTable";
@@ -106,6 +106,10 @@ function closeExpandedOrClearSelection() {
   if (props.expanded) emit("toggleExpanded");
   else app.clearSelection();
 }
+function editMergedLayer(layerId: string) {
+  editingMergedLayerId.value = layerId;
+  if (!props.expanded) emit("toggleExpanded");
+}
 function selectedPort(event: Event): PortName {
   const value = (event.target as HTMLSelectElement).value;
   return value === "top" || value === "right" || value === "bottom" || value === "left" ? value : "bottom";
@@ -200,13 +204,20 @@ onMounted(() => reference.loadAll());
             :key="member.id"
             type="button"
             :class="{ active: member.id === layer.id }"
-            @click="editingMergedLayerId = member.id"
+            :aria-pressed="member.id === layer.id"
+            :title="`${member.name} Layer 편집`"
+            @click="editMergedLayer(member.id)"
           >
             <span class="layer-dot" :style="{ background: member.color || '#101828' }"/>
-            <span><strong :style="{ color: readableLayerColor(member.color) }">{{ member.name }}</strong><small>{{ member.step || 'Layer 번호 미지정' }}</small></span>
+            <span class="merged-layer-member-copy"><strong :style="{ color: readableLayerColor(member.color) }">{{ member.name }}</strong><small>{{ member.step || 'Layer 번호 미지정' }}</small></span>
+            <span class="merged-layer-edit-label"><Pencil :size="12"/>편집</span>
           </button>
         </div>
       </section>
+      <div v-if="mergedLayers.length > 1" class="merged-layer-editing-banner">
+        <span class="layer-dot" :style="{ background: layer.color || '#101828' }"/>
+        <span><small>현재 편집 중</small><strong>{{ layer.name }}<template v-if="layer.step"> · {{ layer.step }}</template></strong></span>
+      </div>
       <section class="property-section layer-basic-section">
         <h3>기본 정보</h3>
         <label>이름<input :value="layer.name" @change="updateLayer({ name: value($event) })"></label>

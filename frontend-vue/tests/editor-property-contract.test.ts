@@ -22,6 +22,13 @@ describe("editor property UI regression contract", () => {
     expect(validationSource).toContain("mask_main_fld");
   });
 
+  it("opens a merged member in the full property editor", () => {
+    expect(propertyPanelSource).toContain("function editMergedLayer(layerId: string)");
+    expect(propertyPanelSource).toContain('if (!props.expanded) emit("toggleExpanded")');
+    expect(propertyPanelSource).toContain('@click="editMergedLayer(member.id)"');
+    expect(propertyPanelSource).toContain("현재 편집 중");
+  });
+
   it("persists Align Key rows through the project API", () => {
     expect(alignKeySource).toContain("api.alignKeyRows");
     expect(alignKeySource).toContain("api.updateAlignKeyRow");
